@@ -117,15 +117,16 @@ class App:
         tk.Label(frame, text=legend, bg=BG, fg="#666", font=FONT_SMALL, justify=tk.LEFT).grid(
             row=5, column=0, columnspan=2, pady=(4, 0))
 
-        # Manual refresh
+        # Manual refresh — btn_frame ใช้ pack ภายใน, ไม่ conflict กับ grid ของ frame หลัก
+        btn_frame = tk.Frame(frame, bg=BG)
+        btn_frame.grid(row=6, column=0, columnspan=2, pady=(8, 0))
+
         def btn(text, cmd):
-            b = tk.Button(frame, text=text, command=cmd,
+            b = tk.Button(btn_frame, text=text, command=cmd,
                           bg="#3A3020", fg=FG, activebackground=ACC, activeforeground="#000",
                           relief=tk.FLAT, font=FONT, padx=8, pady=3, cursor="hand2")
             return b
 
-        btn_frame = tk.Frame(frame, bg=BG)
-        btn_frame.grid(row=6, column=0, columnspan=2, pady=(8, 0))
         btn("Refresh Prices", self._load_prices_async).pack(side=tk.LEFT, padx=4)
         btn("Settings (F8)", self._open_settings).pack(side=tk.LEFT, padx=4)
 
