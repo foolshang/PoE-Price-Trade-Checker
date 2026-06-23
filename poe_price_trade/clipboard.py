@@ -10,6 +10,11 @@ log = logging.getLogger(__name__)
 CF_UNICODETEXT = 13
 GMEM_MOVEABLE = 0x0002
 
+# 64-bit Windows: GlobalLock/GetClipboardData return pointers — must be c_void_p
+ctypes.windll.kernel32.GlobalLock.restype = ctypes.c_void_p
+ctypes.windll.kernel32.GlobalAlloc.restype = ctypes.c_void_p
+ctypes.windll.user32.GetClipboardData.restype = ctypes.c_void_p
+
 
 def read_text() -> Optional[str]:
     """Return clipboard text content, or None if clipboard is empty/non-text."""
@@ -27,7 +32,7 @@ def read_text() -> Optional[str]:
                 text = ctypes.wstring_at(ptr)
                 return text
             finally:
-                ctypes.windll.kernel32.GlobalUnlock(handle)
+                ctypes.windll.kernel32.GlobalUnlock(ctypes.c_void_p(handle))
         finally:
             ctypes.windll.user32.CloseClipboard()
     except Exception as e:
@@ -43,11 +48,12 @@ def write_text(text: str) -> bool:
         h_mem = ctypes.windll.kernel32.GlobalAlloc(GMEM_MOVEABLE, size)
         if not h_mem:
             return False
-        ptr = ctypes.windll.kernel32.GlobalLock(h_mem)
+        ptr = ctypes.windll.kernel32.GlobalLock(ctypes.c_void_p(h_mem))
         if not ptr:
-            ctypes.windll.kernel32.GlobalFree(h_mem)
+            ctypes.windll.kernel32.GlobalFree(ctypes.c_void_p(h_mem))
             return False
         ctypes.memmove(ptr, encoded, size)
+        ctypes.windll.kernel32.GlobalUnlock(ctypes.c_void_p(h_mem))
         ctypes.windll.kernel32.GlobalUnlock(h_mem)
 
         if not ctypes.windll.user32.OpenClipboard(None):

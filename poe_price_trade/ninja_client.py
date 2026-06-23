@@ -103,35 +103,63 @@ def _parse_item_overview(data: dict, category: str, game_version: str) -> list[P
 
 
 def _parse_exchange_overview(data: dict, category: str, game_version: str) -> list[PriceEntry]:
-    """PoE2 exchange overview. Tries 'lines' key first (same as PoE1), then 'result' dict.
-    Since the PoE2 endpoint is not guaranteed stable, fall back gracefully."""
-    # Try lines-based format (same as PoE1 — poe.ninja may use this for PoE2 too)
-    if "lines" in data:
-        # Could be currencyoverview or itemoverview format
-        lines = data["lines"]
-        if lines and "currencyTypeName" in lines[0]:
-            return _parse_currency_overview(data, category, game_version)
-        if lines and "name" in lines[0]:
-            return _parse_item_overview(data, category, game_version)
-        # Generic fallback: try both name fields
-        return _parse_item_overview(data, category, game_version)
+    """PoE2 exchange/current/overview JSON structure:
+    {
+      "core": {"items": [{"id","name","image",...}], "rates": {"chaos":2.17,"exalted":468}, "primary":"divine"},
+      "lines": [{"id":"whetstone","primaryValue":0.004,...}, ...]
+    }
+    Falls back to PoE1 currencyoverview format if 'core' key is absent."""
 
-    # Try result-dict format: {"result": {"ItemName": {"value": ..., "text": ...}}}
+    # PoE1 currencyoverview fallback (in case endpoint changes)
+    if "core" not in data:
+        if "lines" in data and data["lines"] and "currencyTypeName" in data["lines"][0]:
+            return _parse_currency_overview(data, category, game_version)
+        if "lines" in data and data["lines"] and "name" in data["lines"][0]:
+            return _parse_item_overview(data, category, game_version)
+        return []
+
+    core = data["core"]
+    # Build id → display info from core.items (small list of reference currencies)
+    core_items_raw = core.get("items", [])
+    id_to_info: dict[str, dict] = {}
+    if isinstance(core_items_raw, list):
+        id_to_info = {item["id"]: item for item in core_items_raw if "id" in item}
+
+    # Exchange rates: 1 primary (divine) = N of each other currency
+    rates = core.get("rates", {})
+    chaos_per_divine = float(rates.get("chaos", 1.0) or 1.0)
+    primary = core.get("primary", "divine")
+
     entries = []
-    for name, info in data.get("result", {}).items():
-        chaos = float(info.get("value", 0) or 0)
-        divine = float(info.get("divineValue", 0) or 0)
+    for line in data.get("lines", []):
+        item_id = line.get("id", "")
+        if not item_id:
+            continue
+
+        # primaryValue is in units of the primary currency (e.g. divine)
+        primary_val = float(line.get("primaryValue", 0) or 0)
+        divine_val = primary_val if primary == "divine" else primary_val / chaos_per_divine
+        chaos_val = divine_val * chaos_per_divine
+
+        # Display name: from core.items lookup, else capitalize the trade id
+        info = id_to_info.get(item_id, {})
+        name = info.get("name") or item_id.replace("-", " ").title()
+        icon_url = info.get("image", "")
+        if icon_url and icon_url.startswith("/"):
+            icon_url = "https://poe.ninja" + icon_url
+
         entries.append(PriceEntry(
-            item_name=info.get("text", name).strip(),
-            normalized_name=normalize(info.get("text", name)),
-            chaos_value=chaos,
-            divine_value=divine,
-            listing_count=int(info.get("listingCount", 0) or 0),
+            item_name=name,
+            normalized_name=normalize(name),
+            chaos_value=chaos_val,
+            divine_value=divine_val,
+            listing_count=int(line.get("volumePrimaryValue", 0) or 0),
             game_version=game_version,
             category=category,
-            trade_id=info.get("id"),
-            icon_url=info.get("image"),
+            trade_id=item_id,
+            icon_url=icon_url or None,
         ))
+
     return entries
 
 
