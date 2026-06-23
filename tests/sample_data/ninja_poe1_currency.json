@@ -1,0 +1,41 @@
+{
+  "lines": [
+    {
+      "currencyTypeName": "Chaos Orb",
+      "chaosEquivalent": 1.0,
+      "count": 500,
+      "detailsId": "chaos-orb"
+    },
+    {
+      "currencyTypeName": "Divine Orb",
+      "chaosEquivalent": 200.0,
+      "count": 300,
+      "detailsId": "divine-orb"
+    },
+    {
+      "currencyTypeName": "Orb of Alteration",
+      "chaosEquivalent": 0.25,
+      "count": 200,
+      "detailsId": "orb-of-alteration"
+    },
+    {
+      "currencyTypeName": "Exalted Orb",
+      "chaosEquivalent": 50.0,
+      "count": 150,
+      "detailsId": "exalted-orb"
+    },
+    {
+      "currencyTypeName": "Mirror of Kalandra",
+      "chaosEquivalent": 80000.0,
+      "count": 5,
+      "detailsId": "mirror-of-kalandra"
+    }
+  ],
+  "currencyDetails": [
+    {"id": 1, "name": "Chaos Orb",        "tradeId": "chaos",  "icon": "https://example.com/chaos.png"},
+    {"id": 2, "name": "Divine Orb",       "tradeId": "divine", "icon": "https://example.com/divine.png"},
+    {"id": 3, "name": "Orb of Alteration","tradeId": "alt",    "icon": "https://example.com/alt.png"},
+    {"id": 4, "name": "Exalted Orb",      "tradeId": "exalted","icon": "https://example.com/ex.png"},
+    {"id": 5, "name": "Mirror of Kalandra","tradeId": "mirror", "icon": "https://example.com/mirror.png"}
+  ]
+}

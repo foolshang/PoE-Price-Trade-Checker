@@ -1,0 +1,56 @@
+##RARE_ITEM##
+Item Class: Body Armours
+Rarity: Rare
+Dire Carapace
+Astral Plate
+--------
+Quality: +20% (augmented)
+Armour: 1092 (augmented)
+--------
+Requirements:
+Level: 62
+Str: 180
+--------
+Sockets: R-R-R-R-G-B
+--------
+Item Level: 85
+--------
++92 to maximum Life
+Regenerate 5.3 Life per second
++39% to Fire Resistance
++41% to Cold Resistance
++35% to Lightning Resistance
++12% to Chaos Resistance
+
+##CURRENCY##
+Item Class: Stackable Currency
+Rarity: Currency
+Chaos Orb
+--------
+Stack Size: 20/20
+--------
+Reforges a magic or rare item with new random modifiers.
+Right click this item then left click a magic or rare item to apply it.
+
+##UNIQUE##
+Item Class: Flasks
+Rarity: Unique
+Dying Sun
+Ruby Flask
+--------
+Quality: +20% (augmented)
+Lasts 5.00 Seconds
+Consumes 40 of 60 Charges on use
+Currently has 60 Charges
+--------
+Requirements:
+Level: 68
+--------
+Item Level: 73
+--------
++50% to Fire Resistance (implicit)
+--------
+-10% to Maximum Fire Resistance
++6% to Maximum Fire Resistances
+Skills fire 2 additional Projectiles during Flask Effect
+20% increased Area of Effect during Flask Effect

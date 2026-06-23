@@ -1,0 +1,25 @@
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+dist/
+build/
+*.spec
+*.egg-info/
+.pytest_cache/
+*.log
+log.txt
+
+# DPAPI-encrypted session file
+*.dpapi
+session.bin
+
+# Local data cache
+cache/
+*.cache.json
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.user

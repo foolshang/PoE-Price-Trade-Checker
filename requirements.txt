@@ -1,0 +1,11 @@
+# Windows OCR bindings (Python 3.13+)
+# Install: pip install winrt-runtime winrt-Windows.Media.Ocr winrt-Windows.Graphics.Imaging winrt-Windows.Storage.Streams winrt-Windows.Globalization winrt-Windows.Foundation
+winrt-runtime>=2.0
+winrt-Windows.Media.Ocr>=2.0
+winrt-Windows.Graphics.Imaging>=2.0
+winrt-Windows.Storage.Streams>=2.0
+winrt-Windows.Globalization>=2.0
+winrt-Windows.Foundation>=2.0
+
+# Build
+pyinstaller>=6.0
