@@ -222,7 +222,7 @@ class App:
                 self._root.after_idle(lambda: self._show_scan_results(results))
             except Exception as e:
                 log.exception("Scan error")
-                self._root.after_idle(lambda: self._log(f"✗ Scan error: {e}", "err"))
+                self._root.after_idle(lambda err=e: self._log(f"✗ Scan error: {err}", "err"))
 
         threading.Thread(target=_run, daemon=True).start()
 
@@ -265,7 +265,7 @@ class App:
                 self._root.after_idle(lambda: self._on_session_expired())
             except Exception as e:
                 log.exception("Trade lookup error")
-                self._root.after_idle(lambda: self._log(f"✗ Trade error: {e}", "err"))
+                self._root.after_idle(lambda err=e: self._log(f"✗ Trade error: {err}", "err"))
 
         threading.Thread(target=_run, daemon=True).start()
 
@@ -334,7 +334,7 @@ class App:
                 leagues = self._fetch_leagues_for_gv(gv)
                 self._root.after_idle(lambda: self._update_league_menu(leagues))
             except Exception as e:
-                self._root.after_idle(lambda: self._log(f"✗ ดึง league ไม่ได้: {e}", "err"))
+                self._root.after_idle(lambda err=e: self._log(f"✗ ดึง league ไม่ได้: {err}", "err"))
 
         threading.Thread(target=_run, daemon=True).start()
 
