@@ -40,13 +40,24 @@ class PriceEntry:
         return self.chaos_value
 
     def format_price(self, currency: str, divine_chaos_rate: float) -> str:
+        div_val = self.divine_value if self.divine_value else self.chaos_value / (divine_chaos_rate or 1)
+
+        # Items cheaper than 1 divine: show in chaos (more readable and not "0.00 div")
+        if currency == "divine" and div_val < 1.0:
+            c = self.chaos_value
+            if c >= 1000:
+                return f"{c/1000:.1f}k c"
+            if c >= 1:
+                return f"{round(c)}c"
+            return f"{c:.2f}c"
+
         val = self.value_in(currency, divine_chaos_rate)
         suffix = {"divine": "div", "exalted": "ex", "chaos": "c"}.get(currency, "c")
         if val >= 1000:
             return f"{val/1000:.1f}k {suffix}"
         if val >= 10:
-            return f"{val:.1f} {suffix}"
-        return f"{val:.2f} {suffix}"
+            return f"{round(val)} {suffix}"
+        return f"{val:.1f} {suffix}"
 
 
 @dataclass
