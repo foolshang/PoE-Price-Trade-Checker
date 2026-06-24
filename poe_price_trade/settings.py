@@ -7,7 +7,6 @@ from tkinter import messagebox, ttk
 from typing import Callable, Optional
 
 from .config import AppConfig
-from .profiles import PROFILES, GameProfile
 
 log = logging.getLogger(__name__)
 
@@ -106,27 +105,19 @@ class SettingsWindow:
         gv_cb = self._combo(f, "game_version", ["poe2", "poe1"], 0, 1, width=10)
         gv_cb.bind("<<ComboboxSelected>>", self._on_game_version_changed)
 
-        self._lbl(f, "League:", 1, 0)
-        self._league_combo = self._combo(f, "league", [], 1, 1, width=22)
+        tk.Label(f, text="(League is selected in the main window)", bg=_BG, fg="#666",
+                 font=_SMALL_FONT).grid(row=1, column=0, columnspan=3, sticky="w", padx=6, pady=2)
 
-        tk.Button(f, text="Refresh Leagues", command=self._fetch_leagues,
-                  bg=_BUTTON_BG, fg=_FG, activebackground=_ACCENT,
-                  relief=tk.FLAT, font=_SMALL_FONT).grid(row=1, column=2, padx=4)
+        self._lbl(f, "Overlay Opacity:", 2, 0)
+        self._scale(f, "overlay_opacity", 2, 1)
 
-        self._lbl(f, "Currency Unit:", 2, 0)
-        self._combo(f, "currency_unit", ["divine", "chaos", "exalted"], 2, 1, width=10)
-
-        self._lbl(f, "Overlay Opacity:", 3, 0)
-        self._scale(f, "overlay_opacity", 3, 1)
-
-        self._lbl(f, "Price X-offset (px):", 4, 0)
-        self._entry(f, "price_offset_px", 4, 1, width=6)
+        self._lbl(f, "Price X-offset (px):", 3, 0)
+        self._entry(f, "price_offset_px", 3, 1, width=6)
 
     def _build_hotkeys_tab(self, f: tk.Frame) -> None:
         specs = [
-            ("hotkey_scan",     "Scan Prices (Mode A):"),
-            ("hotkey_currency", "Cycle Currency:"),
-            ("hotkey_trade",    "Check Trade (Mode B):"),
+            ("hotkey_scan",     "Scan Prices (F9):"),
+            ("hotkey_trade",    "Check Trade / F5 (Ctrl+C ก่อน):"),
             ("hotkey_settings", "Settings:"),
             ("hotkey_quit",     "Quit:"),
         ]
@@ -179,9 +170,8 @@ class SettingsWindow:
     # ------------------------------------------------------------------
 
     def _load_from_config(self) -> None:
-        for key in ("game_version", "league", "currency_unit", "overlay_opacity",
-                    "price_offset_px", "hotkey_scan", "hotkey_currency",
-                    "hotkey_trade", "hotkey_settings", "hotkey_quit",
+        for key in ("game_version", "overlay_opacity", "price_offset_px",
+                    "hotkey_scan", "hotkey_trade", "hotkey_settings", "hotkey_quit",
                     "log_level", "match_threshold"):
             if key in self._vars:
                 self._vars[key].set(self._config.get(key, ""))
@@ -191,33 +181,8 @@ class SettingsWindow:
             self._vars["poesessid"].set("")
             self._session_status.configure(text="Session saved (leave blank to keep)")
 
-        # Populate league list
-        self._refresh_league_list()
-
-    def _refresh_league_list(self) -> None:
-        gv = self._vars.get("game_version")
-        profile = PROFILES.get(gv.get() if gv else "poe2", PROFILES["poe2"])
-        leagues = profile.default_leagues
-        self._league_combo.configure(values=leagues)
-        current = self._config.get("league", "")
-        if current in leagues:
-            self._vars["league"].set(current)
-        elif leagues:
-            self._vars["league"].set(leagues[0])
-
     def _on_game_version_changed(self, _event=None) -> None:
-        self._refresh_league_list()
-
-    def _fetch_leagues(self) -> None:
-        if self._on_fetch_leagues:
-            gv = self._vars["game_version"].get()
-            try:
-                leagues = self._on_fetch_leagues(gv)
-                if leagues:
-                    self._league_combo.configure(values=leagues)
-                    self._vars["league"].set(leagues[0])
-            except Exception as e:
-                messagebox.showerror("Error", f"Could not fetch leagues:\n{e}", parent=self._win)
+        pass  # league is managed in main window
 
     def _clear_session(self) -> None:
         if messagebox.askyesno("Clear Session", "Clear saved POESESSID?", parent=self._win):
@@ -226,9 +191,8 @@ class SettingsWindow:
             self._session_status.configure(text="Session cleared")
 
     def _apply(self) -> None:
-        for key in ("game_version", "league", "currency_unit", "hotkey_scan",
-                    "hotkey_currency", "hotkey_trade", "hotkey_settings",
-                    "hotkey_quit", "log_level"):
+        for key in ("game_version", "hotkey_scan", "hotkey_trade",
+                    "hotkey_settings", "hotkey_quit", "log_level"):
             if key in self._vars:
                 self._config.set(key, self._vars[key].get())
 

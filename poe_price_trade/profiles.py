@@ -105,7 +105,7 @@ POE2_PROFILE = GameProfile(
     trade_fetch_url="https://www.pathofexile.com/api/trade2/fetch/{ids}",
     trade_stats_url="https://www.pathofexile.com/api/trade2/data/stats",
     ninja_leagues_url="https://poe.ninja/api/data/leagues",
-    default_leagues=["Standard", "Hardcore", "Dawn of the Hunt", "HC Dawn of the Hunt"],
+    default_leagues=["Runes of Aldur", "HC Runes of Aldur", "Standard", "Hardcore"],
 )
 
 PROFILES: dict[str, GameProfile] = {

@@ -5,6 +5,57 @@
 
 ---
 
+## 2026-06-24 — bug fixes จาก live run (session 3)
+
+**สรุป:** รัน app จริง พบและแก้ 2 bugs + เพิ่ม screen size logging
+
+**ปัญหาที่แก้:**
+- `config.py`: เปลี่ยน `encoding="utf-8"` → `"utf-8-sig"` แก้ `Config load failed: Unexpected UTF-8 BOM` — config.json บน Windows อาจมี BOM ทำให้ json.load() ล้มเหลวและ settings ไม่ถูก save/load
+- `app.py` + `capture.py`: เพิ่ม `get_screen_size()` และ log จอที่ startup (`จอ 3440×1440 DPI×1.00`) — ยืนยันว่า detect ถูก
+- `app.py`: เพิ่ม single-instance mutex (`PoePriceTrade_SingleInstance`) — ป้องกัน 2 instance รันพร้อมกัน ซึ่งทำให้ `RegisterHotKey failed err=1409` ทุก hotkey
+
+**ยืนยันจาก live log:**
+- Screen: 3440×1440 DPI scale: 1.00 ✓
+- Hotkeys registered (ไม่มี failure) ✓
+- Loaded 48 price entries (poe.ninja Runes of Aldur) ✓
+- Scan ทำงาน ✓
+
+**ไฟล์ที่แก้:**
+```
+poe_price_trade/config.py, app.py, capture.py
+```
+
+**ค้างอยู่:**
+- ทดสอบ overlay ขณะเล่นเกมจริง (windowed fullscreen 3440×1440)
+- Trade API ยังไม่ได้ทดสอบด้วย POESESSID จริง
+
+---
+
+## 2026-06-23 — แก้ UI + bug fixes (session 2)
+
+**สรุป:** แก้ปัญหาราคาไม่แสดง + เพิ่ม status log + ลบ currency selector
+
+**ปัญหาที่แก้:**
+- `clipboard.py`: เพิ่ม `.restype = ctypes.c_void_p` ให้ GlobalLock/GlobalAlloc/GetClipboardData — แก้ access violation บน 64-bit Windows
+- `ninja_client.py`: เขียน `_parse_exchange_overview()` ใหม่ทั้งหมด รองรับ PoE2 JSON จริง (`core.items`, `core.rates.chaos`, `lines[].primaryValue`) — ก่อนหน้านี้ได้ 0 entries
+- `ocr/windows_ocr.py`: ติดตั้ง `winrt-Windows.Foundation.Collections` — แก้ `No module named 'winrt.windows.foundation.collections'`
+- `tests/sample_data/sample_items.txt`: เปลี่ยน delimiter เป็น `##MARKER##` — แก้ parse ไม่ผ่านเพราะ `----` ชนกับ `--------` ใน PoE item text
+- `app.py`: ลบ `_currency_var` + currency radio buttons ออก; แทนที่ด้วย `_log_text` widget (6 บรรทัด, color tags); ลบ `_on_f6_currency` + F6 hotkey; แสดงสถานะ real-time ทุกขั้นตอน
+- `requirements.txt`: เพิ่ม `winrt-Windows.Foundation.Collections>=2.0`
+
+**ไฟล์ที่แก้:**
+```
+poe_price_trade/app.py, clipboard.py, ninja_client.py,
+ocr/windows_ocr.py, requirements.txt,
+tests/sample_data/sample_items.txt, tests/test_item_parser.py
+```
+
+**ค้างอยู่:**
+- ทดสอบ overlay บนเครื่องจริงขณะเล่นเกม
+- Trade API ยังไม่ได้ทดสอบด้วย POESESSID จริง
+
+---
+
 ## 2026-06-23 — เขียนโค้ดทั้งหมดครั้งแรก (Phase A1–B6 ทั้งหมด)
 
 **สรุป:** สร้าง project ใหม่ทั้งหมดตาม PLAN.md ครบทั้ง Phase 1 (A1–A6) และ Phase 2 (B1–B6)

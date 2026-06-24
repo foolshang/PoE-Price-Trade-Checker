@@ -6,6 +6,7 @@ winrt-Windows.Graphics.Imaging>=2.0
 winrt-Windows.Storage.Streams>=2.0
 winrt-Windows.Globalization>=2.0
 winrt-Windows.Foundation>=2.0
+winrt-Windows.Foundation.Collections>=2.0
 
 # Build
 pyinstaller>=6.0

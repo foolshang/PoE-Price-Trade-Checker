@@ -90,7 +90,7 @@ class AppConfig:
         path = self._dir / _CONFIG_FILE
         if path.exists():
             try:
-                with open(path, encoding="utf-8") as f:
+                with open(path, encoding="utf-8-sig") as f:
                     saved = json.load(f)
                 # Merge: only accept known keys
                 for k in _DEFAULTS:

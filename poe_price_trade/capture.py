@@ -59,6 +59,12 @@ def get_dpi_scale() -> float:
     return dpi / 96.0
 
 
+def get_screen_size() -> tuple[int, int]:
+    """Return primary monitor physical size (width, height) in pixels."""
+    user32 = ctypes.windll.user32
+    return user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
+
+
 def capture_screen() -> tuple[bytes, int, int]:
     """Capture primary display. Returns (bgra_bytes, width_px, height_px)."""
     user32 = ctypes.windll.user32

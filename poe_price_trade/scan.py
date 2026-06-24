@@ -37,11 +37,12 @@ class Scanner:
         results: list[ScanResult] = []
         seen: set[str] = set()
 
-        # Try matching multi-word phrases (2-word, 3-word) then single words
+        # Try matching multi-word phrases (3-word, 2-word) — skip single words to avoid
+        # false positives from map mods / HUD text (e.g. "Runes" → Rune item)
         for line in ocr_result.lines:
             words = line.words
             n = len(words)
-            for window in (3, 2, 1):
+            for window in (3, 2):
                 for i in range(n - window + 1):
                     phrase_words = words[i:i + window]
                     phrase = " ".join(pw.text for pw in phrase_words)
@@ -54,6 +55,7 @@ class Scanner:
 
                     entry = self._repo.lookup(phrase, threshold)
                     if entry is not None:
+                        log.debug("Match: OCR '%s' → '%s' %.2fc", phrase, entry.item_name, entry.chaos_value)
                         seen.add(key)
                         # Bounding box spans all words in the phrase
                         first_bb = phrase_words[0].bbox
