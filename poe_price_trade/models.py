@@ -32,32 +32,31 @@ class PriceEntry:
     trade_id: Optional[str] = None
     icon_url: Optional[str] = None
 
-    def value_in(self, currency: str, divine_chaos_rate: float) -> float:
-        if currency == "divine":
-            return self.divine_value if self.divine_value else self.chaos_value / divine_chaos_rate
-        if currency == "exalted":
-            return self.chaos_value
-        return self.chaos_value
+    def format_price(self, rates: dict[str, float]) -> str:
+        """Pick the most natural in-game currency denomination.
+        rates: {display_suffix -> chaos_value}, e.g. {"div": 8.7, "c": 1.0, "alch": 0.025}
+        """
+        c = self.chaos_value
+        div_rate  = rates.get("div",  rates.get("divine", 200.0))
+        alch_rate = rates.get("alch", 0.0)
 
-    def format_price(self, currency: str, divine_chaos_rate: float) -> str:
-        div_val = self.divine_value if self.divine_value else self.chaos_value / (divine_chaos_rate or 1)
+        if c >= div_rate:
+            v = c / div_rate
+            if v >= 1000: return f"{v/1000:.1f}k div"
+            if v >= 10:   return f"{round(v)} div"
+            return f"{v:.1f} div"
 
-        # Items cheaper than 1 divine: show in chaos (more readable and not "0.00 div")
-        if currency == "divine" and div_val < 1.0:
-            c = self.chaos_value
-            if c >= 1000:
-                return f"{c/1000:.1f}k c"
-            if c >= 1:
-                return f"{round(c)}c"
-            return f"{c:.2f}c"
+        if c >= 1.0:
+            if c >= 1000: return f"{c/1000:.1f}k c"
+            if c >= 10:   return f"{round(c)}c"
+            return f"{c:.1f}c"
 
-        val = self.value_in(currency, divine_chaos_rate)
-        suffix = {"divine": "div", "exalted": "ex", "chaos": "c"}.get(currency, "c")
-        if val >= 1000:
-            return f"{val/1000:.1f}k {suffix}"
-        if val >= 10:
-            return f"{round(val)} {suffix}"
-        return f"{val:.1f} {suffix}"
+        if alch_rate > 0 and c >= alch_rate * 0.5:
+            v = c / alch_rate
+            if v >= 10: return f"{round(v)} alch"
+            return f"{v:.1f} alch"
+
+        return f"{c:.2f}c"
 
 
 @dataclass

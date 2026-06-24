@@ -117,12 +117,12 @@ class PriceOverlay:
     # Public API (all called from main thread via root.after_idle)
     # ------------------------------------------------------------------
 
-    def show_prices(self, results: list[ScanResult], currency: str, divine_rate: float) -> None:
+    def show_prices(self, results: list[ScanResult], rates: dict) -> None:
         self._clear_labels()
         for r in results:
             if r.price_entry is None:
                 continue
-            price_text = r.price_entry.format_price(currency, divine_rate)
+            price_text = r.price_entry.format_price(rates)
             label = PriceLabel(
                 self._canvas, r.bbox_x + r.bbox_w, r.bbox_y,
                 price_text, self._offset_px
@@ -134,11 +134,11 @@ class PriceOverlay:
         else:
             self.hide()
 
-    def toggle(self, results: list[ScanResult], currency: str, divine_rate: float) -> None:
+    def toggle(self, results: list[ScanResult], rates: dict) -> None:
         if self._visible:
             self.hide()
         else:
-            self.show_prices(results, currency, divine_rate)
+            self.show_prices(results, rates)
 
     def hide(self) -> None:
         self._clear_labels()

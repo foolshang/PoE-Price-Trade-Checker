@@ -18,6 +18,14 @@ log = logging.getLogger(__name__)
 
 _CACHE_TTL = 1800  # 30 minutes
 
+# normalized item name → display suffix for exchange-rate tracking
+_RATE_MAP: dict[str, str] = {
+    "divine orb":     "div",
+    "chaos orb":      "c",
+    "alch":           "alch",   # PoE2 short name
+    "orb of alchemy": "alch",   # PoE1 full name
+}
+
 
 class PriceRepository:
     def __init__(self, profile: GameProfile, cache_dir: Optional[Path] = None):
@@ -28,6 +36,7 @@ class PriceRepository:
         self._lock = threading.Lock()
         self._cache_dir = cache_dir
         self._divine_chaos_rate: float = 200.0
+        self._key_rates: dict[str, float] = {"div": 200.0, "c": 1.0}
         self._loading = False
 
     # ------------------------------------------------------------------
@@ -94,6 +103,11 @@ class PriceRepository:
         with self._lock:
             return self._divine_chaos_rate
 
+    def key_rates(self) -> dict[str, float]:
+        """Return {display_suffix: chaos_value} for smart price formatting."""
+        with self._lock:
+            return dict(self._key_rates)
+
     def snapshot(self) -> Optional[PriceSnapshot]:
         with self._lock:
             return self._snapshot
@@ -105,11 +119,14 @@ class PriceRepository:
     def _apply_snapshot(self, snapshot: PriceSnapshot) -> None:
         self._snapshot = snapshot
         self._matcher = ItemMatcher(snapshot.entries)
-        # Extract divine orb chaos value for conversion
+        rates: dict[str, float] = {"c": 1.0}
         for e in snapshot.entries:
-            if normalize(e.item_name) in ("divine orb",) and e.chaos_value > 1:
-                self._divine_chaos_rate = e.chaos_value
-                break
+            suffix = _RATE_MAP.get(normalize(e.item_name))
+            if suffix and e.chaos_value > 0:
+                rates[suffix] = e.chaos_value
+        if "div" in rates:
+            self._divine_chaos_rate = rates["div"]
+        self._key_rates = rates
 
     def _cache_path(self, league: str) -> Optional[Path]:
         if self._cache_dir is None:
