@@ -8,12 +8,12 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Optional
 
-from .capture import get_dpi_scale, get_screen_size, set_dpi_aware
+from .capture import get_cursor_pos, get_dpi_scale, get_screen_size, set_dpi_aware
 from .clipboard import read_text
 from .config import AppConfig
 from .hotkeys import HotkeyManager
 from .item_parser import parse_item
-from .models import ScanResult, TradeListing
+from .models import PriceEntry, ScanResult, TradeListing
 from .overlay import PriceOverlay
 from .profiles import PROFILES
 from .repository import PriceRepository
@@ -78,18 +78,21 @@ class App:
 
         self._last_clipboard_hash: int = 0
         self._last_auto_item: str = ""
+        self._hover_gen: int = 0          # increments on every mouse move to cancel stale scans
+        self._hover_ctrl_c_ts: float = 0.0  # timestamp of last hover-triggered Ctrl+C
 
         self._build_ui()
         self._build_overlay()
         self._build_trade_panel()
         self._start_hotkeys()
         self._start_clipboard_monitor()
+        self._start_hover_watcher()
 
         gv = self._config.get("game_version", "poe2").upper()
         league = self._config.get("league", "") or (self._profile.default_leagues[0] if self._profile.default_leagues else "Standard")
         sw, sh = get_screen_size()
         self._log(f"เริ่มต้น {gv} · league: {league} · จอ {sw}×{sh} DPI×{self._dpi_scale:.2f}", "dim")
-        self._log("Ctrl+C บน item = แสดงราคา  |  F5 = Trade search  |  F8 = Settings", "dim")
+        self._log("Ctrl+C บน item = ราคา (poe.ninja→trade)  |  F5 = Trade panel  |  F8 = Settings", "dim")
 
         self._load_prices_async()
 
@@ -156,14 +159,26 @@ class App:
         self._log_text.tag_config("info",  foreground="#AACCFF")
         self._log_text.tag_config("dim",   foreground="#666666")
 
+        # Hover mode toggle
+        self._hover_var = tk.BooleanVar(value=self._config.get("hover_mode", True))
+        hover_row = tk.Frame(frame, bg=BG)
+        hover_row.grid(row=4, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        tk.Checkbutton(
+            hover_row, text="Hover mode (เมาส์นิ่ง 0.4s → ราคาจาก poe.ninja/trade)",
+            variable=self._hover_var,
+            bg=BG, fg=FG, selectcolor="#2A2020", activebackground=BG,
+            font=FONT,
+            command=self._on_hover_toggle,
+        ).pack(side=tk.LEFT)
+
         # Hotkey legend
-        legend = "F9 Scan  |  F5 Check mod (Ctrl+C ก่อน)  |  F8 Settings  |  Ctrl+Alt+Q Quit"
+        legend = "F9 Scan  |  F5 Trade (ชี้ item)  |  F8 Settings  |  Ctrl+Alt+Q Quit"
         tk.Label(frame, text=legend, bg=BG, fg="#666", font=FONT_SMALL, justify=tk.LEFT).grid(
-            row=4, column=0, columnspan=2, pady=(6, 0))
+            row=5, column=0, columnspan=2, pady=(4, 0))
 
         # Buttons
         btn_frame = tk.Frame(frame, bg=BG)
-        btn_frame.grid(row=5, column=0, columnspan=2, pady=(8, 0))
+        btn_frame.grid(row=6, column=0, columnspan=2, pady=(8, 0))
 
         def btn(text, cmd):
             b = tk.Button(btn_frame, text=text, command=cmd,
@@ -237,10 +252,23 @@ class App:
         else:
             self._log("ไม่พบ item ที่ตรงกัน — ลองเปิด tooltip แล้วกด F9", "warn")
 
+    def _simulate_ctrl_c(self) -> None:
+        """Simulate Ctrl+C so PoE copies the hovered item to clipboard."""
+        VK_CONTROL, VK_C, KEYUP = 0x11, 0x43, 0x0002
+        ke = ctypes.windll.user32.keybd_event
+        ke(VK_CONTROL, 0, 0, 0)
+        ke(VK_C, 0, 0, 0)
+        ke(VK_C, 0, KEYUP, 0)
+        ke(VK_CONTROL, 0, KEYUP, 0)
+
     def _on_f5_trade(self) -> None:
+        # ส่ง Ctrl+C ไปให้เกม แล้วรอให้ clipboard อัปเดต
+        self._simulate_ctrl_c()
+        time.sleep(0.18)
+
         text = read_text()
-        if not text:
-            self._log("⚠ Clipboard ว่าง — Ctrl+C item ในเกมก่อน", "warn")
+        if not text or ("Rarity:" not in text and "Item Class:" not in text):
+            self._log("⚠ ชี้ที่ item แล้วกด F5 (ไม่พบข้อมูล item)", "warn")
             return
 
         game_version = self._gv_var.get()
@@ -369,6 +397,114 @@ class App:
         self._repo.load_async(league, on_done=_on_done, on_error=_on_error)
 
     # ------------------------------------------------------------------
+    # Hover mode — mouse still 400ms → auto scan region → show price
+    # ------------------------------------------------------------------
+
+    def _on_hover_toggle(self) -> None:
+        enabled = self._hover_var.get()
+        self._config.set("hover_mode", enabled)
+        state = "เปิด" if enabled else "ปิด"
+        self._log(f"Hover mode: {state}", "dim")
+        if not enabled and self._overlay:
+            self._overlay.hide()
+
+    def _start_hover_watcher(self) -> None:
+        threading.Thread(target=self._hover_loop, daemon=True, name="HoverWatcher").start()
+
+    def _hover_loop(self) -> None:
+        last_x, last_y = -9999, -9999
+        still_since: float = 0.0
+        triggered_gen: int = -1
+        STILL_DELAY = 0.4   # seconds before triggering scan
+        MOVE_THRESH = 8     # pixels of movement to reset timer
+
+        while True:
+            time.sleep(0.1)
+            try:
+                cx, cy = get_cursor_pos()
+            except Exception:
+                continue
+
+            moved = abs(cx - last_x) > MOVE_THRESH or abs(cy - last_y) > MOVE_THRESH
+            if moved:
+                last_x, last_y = cx, cy
+                still_since = time.time()
+                self._hover_gen += 1
+                self._last_auto_item = ""  # reset so re-hovering same item shows price again
+                # Hide overlay on mouse move (if hover mode is on)
+                if self._hover_var.get() and self._overlay and self._overlay._visible:
+                    self._root.after_idle(self._overlay.hide)
+            else:
+                elapsed = time.time() - still_since
+                cur_gen = self._hover_gen
+                if elapsed >= STILL_DELAY and triggered_gen != cur_gen:
+                    triggered_gen = cur_gen
+                    if self._hover_var.get():
+                        self._trigger_hover_price(cx, cy, cur_gen)
+
+    def _trigger_hover_price(self, cx: int, cy: int, gen: int) -> None:
+        """Simulate Ctrl+C, read clipboard, check poe.ninja then trade API; gen-guarded."""
+        def _run():
+            try:
+                # Mark hover-triggered Ctrl+C so clipboard monitor skips this change
+                self._hover_ctrl_c_ts = time.time()
+                self._simulate_ctrl_c()
+                time.sleep(0.22)
+
+                if self._hover_gen != gen:
+                    return
+
+                text = read_text() or ""
+                if "Rarity:" not in text and "Item Class:" not in text:
+                    return
+
+                gv = self._gv_var.get()
+                item = parse_item(text, gv)
+                if item is None:
+                    return
+
+                # 1. poe.ninja lookup (instant, ~500 currency/consumable items)
+                if self._repo.is_ready():
+                    entry = self._repo.lookup(item.item_name, 0.85)
+                    if entry:
+                        if self._hover_gen == gen:
+                            p = entry.format_price()
+                            def _show_ninja(e=entry, ps=p, n=item.item_name):
+                                self._log(f"💰 {n}: {ps}", "ok")
+                                self._show_price_at_cursor(e)
+                            self._root.after_idle(_show_ninja)
+                        return
+
+                # 2. PoE trade API fallback (covers all items incl. uniques, gems, etc.)
+                sid = self._config.load_session_id()
+                if not sid:
+                    return
+
+                league = self._league_var.get()
+                self._trade_client.update_session(sid)
+                query = build_query(item, [], league)
+                q_id, result_ids = self._trade_client.search(query, league)
+                if not result_ids or self._hover_gen != gen:
+                    return
+
+                listings = self._trade_client.fetch(result_ids[:5], q_id)
+                if not listings or self._hover_gen != gen:
+                    return
+
+                cheapest = min(listings, key=lambda l: l.price_amount)
+                entry = self._make_price_entry_from_listing(item.item_name, cheapest)
+                p = entry.format_price()
+
+                def _show_trade(e=entry, ps=p, n=item.item_name):
+                    self._log(f"💰 {n} (trade): {ps}", "ok")
+                    self._show_price_at_cursor(e)
+                self._root.after_idle(_show_trade)
+            except Exception as e:
+                log.debug("Hover price error: %s", e)
+
+        threading.Thread(target=_run, daemon=True, name=f"HoverPrice-{gen}").start()
+
+    # ------------------------------------------------------------------
     # Clipboard auto-detect (Ctrl+C on item → show price immediately)
     # ------------------------------------------------------------------
 
@@ -381,6 +517,9 @@ class App:
                     h = hash(text)
                     if h != self._last_clipboard_hash:
                         self._last_clipboard_hash = h
+                        # Skip if hover mode just triggered a Ctrl+C — hover handler processes it
+                        if time.time() - self._hover_ctrl_c_ts < 0.8:
+                            continue
                         if "Rarity:" in text and "--------" in text:
                             self._root.after_idle(lambda t=text: self._on_clipboard_item(t))
                 except Exception:
@@ -406,9 +545,81 @@ class App:
             self._log(f"💰 {item.item_name}: {price_str}", "ok")
             self._show_price_at_cursor(entry)
         else:
-            self._log(f"? {item.item_name}: ไม่พบราคาใน poe.ninja", "dim")
-            if self._overlay:
-                self._overlay.hide()
+            # ไม่พบใน poe.ninja → ค้นหา trade API โดยตรง (cover unique items, gems, etc.)
+            self._log(f"⟳ {item.item_name}: ไม่พบใน poe.ninja — ค้นใน trade…", "info")
+            self._quick_trade_lookup_async(item)
+
+    def _quick_trade_lookup_async(self, item) -> None:
+        """Look up item price via PoE trade API; used as fallback when poe.ninja has no data."""
+        league = self._league_var.get()
+
+        def _run():
+            try:
+                sid = self._config.load_session_id()
+                if not sid:
+                    self._root.after_idle(lambda: self._log(
+                        f"? {item.item_name}: ไม่พบใน poe.ninja "
+                        "(ตั้ง POESESSID ใน Settings เพื่อค้น trade)", "dim"))
+                    return
+                self._trade_client.update_session(sid)
+                query = build_query(item, [], league)
+                q_id, result_ids = self._trade_client.search(query, league)
+                if not result_ids:
+                    self._root.after_idle(lambda: self._log(
+                        f"? {item.item_name}: ไม่พบ listing ใน trade", "dim"))
+                    return
+                listings = self._trade_client.fetch(result_ids[:5], q_id)
+                if not listings:
+                    return
+                cheapest = min(listings, key=lambda l: l.price_amount)
+                entry = self._make_price_entry_from_listing(item.item_name, cheapest)
+                p = entry.format_price()
+
+                def _show(e=entry, ps=p, n=item.item_name):
+                    self._log(f"💰 {n} (trade): {ps}", "ok")
+                    self._show_price_at_cursor(e)
+                self._root.after_idle(_show)
+            except SessionExpiredError:
+                self._root.after_idle(self._on_session_expired)
+            except Exception as e:
+                log.debug("Quick trade error: %s", e)
+
+        threading.Thread(target=_run, daemon=True, name="QuickTrade").start()
+
+    def _make_price_entry_from_listing(self, item_name: str, listing: TradeListing) -> PriceEntry:
+        """Convert cheapest TradeListing → PriceEntry for overlay display."""
+        gv = self._gv_var.get()
+        currency = listing.price_currency.lower()
+        amount = listing.price_amount
+
+        # Try to get real chaos-per-divine from cached poe.ninja data
+        chaos_per_div = 0.0
+        if self._repo.is_ready():
+            div_entry = self._repo.lookup("Divine Orb", 1.0)
+            if div_entry and div_entry.chaos_value > 0:
+                chaos_per_div = div_entry.chaos_value
+        if chaos_per_div <= 0:
+            chaos_per_div = 400.0  # PoE2 rough estimate
+
+        if currency in ("divine", "div"):
+            divine_v = amount
+            chaos_v = amount * chaos_per_div
+        elif currency == "chaos":
+            chaos_v = amount
+            divine_v = amount / chaos_per_div
+        else:
+            chaos_v = amount
+            divine_v = 0.0
+
+        return PriceEntry(
+            item_name=item_name,
+            normalized_name=item_name.lower(),
+            chaos_value=chaos_v,
+            divine_value=divine_v,
+            listing_count=1,
+            game_version=gv,
+            category="Trade",
+        )
 
     def _show_price_at_cursor(self, entry) -> None:
         """แสดง price label ใกล้ cursor position ปัจจุบัน"""

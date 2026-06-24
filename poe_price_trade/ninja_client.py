@@ -105,12 +105,10 @@ def _parse_item_overview(data: dict, category: str, game_version: str) -> list[P
 def _parse_exchange_overview(data: dict, category: str, game_version: str) -> list[PriceEntry]:
     """PoE2 exchange/current/overview JSON structure:
     {
-      "core": {"items": [{"id","name","image",...}], "rates": {"chaos":2.17,"exalted":468}, "primary":"divine"},
-      "lines": [{"id":"whetstone","primaryValue":0.004,...}, ...]
-    }
-    Falls back to PoE1 currencyoverview format if 'core' key is absent."""
-
-    # PoE1 currencyoverview fallback (in case endpoint changes)
+      "core": {"items": [...], "rates": {"chaos": 8.7, "exalted": 361}, "primary": "divine"},
+      "lines": [{"id": "whetstone", "primaryValue": 0.004, ...}, ...],
+      "items": [{"id": "whetstone", "name": "Whetstone", "image": "...", ...}, ...]  <- full item details
+    }"""
     if "core" not in data:
         if "lines" in data and data["lines"] and "currencyTypeName" in data["lines"][0]:
             return _parse_currency_overview(data, category, game_version)
@@ -119,16 +117,20 @@ def _parse_exchange_overview(data: dict, category: str, game_version: str) -> li
         return []
 
     core = data["core"]
-    # Build id → display info from core.items (small list of reference currencies)
-    core_items_raw = core.get("items", [])
-    id_to_info: dict[str, dict] = {}
-    if isinstance(core_items_raw, list):
-        id_to_info = {item["id"]: item for item in core_items_raw if "id" in item}
 
-    # Exchange rates: 1 primary (divine) = N of each other currency
-    rates = core.get("rates", {})
+    # Top-level "items" list has full details for every traded item (49/142/82/... entries)
+    # core.items has only 3 reference currencies (divine/chaos/exalted)
+    id_to_info: dict[str, dict] = {}
+    for item in data.get("items", []):
+        if "id" in item:
+            id_to_info[item["id"]] = item
+    for item in core.get("items", []) if isinstance(core, dict) else []:
+        if "id" in item and item["id"] not in id_to_info:
+            id_to_info[item["id"]] = item
+
+    rates = core.get("rates", {}) if isinstance(core, dict) else {}
     chaos_per_divine = float(rates.get("chaos", 1.0) or 1.0)
-    primary = core.get("primary", "divine")
+    primary = core.get("primary", "divine") if isinstance(core, dict) else "divine"
 
     entries = []
     for line in data.get("lines", []):
@@ -136,12 +138,10 @@ def _parse_exchange_overview(data: dict, category: str, game_version: str) -> li
         if not item_id:
             continue
 
-        # primaryValue is in units of the primary currency (e.g. divine)
         primary_val = float(line.get("primaryValue", 0) or 0)
         divine_val = primary_val if primary == "divine" else primary_val / chaos_per_divine
         chaos_val = divine_val * chaos_per_divine
 
-        # Display name: from core.items lookup, else capitalize the trade id
         info = id_to_info.get(item_id, {})
         name = info.get("name") or item_id.replace("-", " ").title()
         icon_url = info.get("image", "")

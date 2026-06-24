@@ -65,6 +65,44 @@ def get_screen_size() -> tuple[int, int]:
     return user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
 
 
+def get_cursor_pos() -> tuple[int, int]:
+    """Return current cursor position in physical pixels."""
+    class _POINT(ctypes.Structure):
+        _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+    pt = _POINT()
+    ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+    return pt.x, pt.y
+
+
+def capture_region(x: int, y: int, w: int, h: int) -> tuple[bytes, int, int]:
+    """Capture a rectangular subregion of the primary display."""
+    user32 = ctypes.windll.user32
+    gdi32 = ctypes.windll.gdi32
+
+    screen_dc = user32.GetDC(None)
+    mem_dc = gdi32.CreateCompatibleDC(screen_dc)
+    bitmap = gdi32.CreateCompatibleBitmap(screen_dc, w, h)
+    gdi32.SelectObject(mem_dc, bitmap)
+    gdi32.BitBlt(mem_dc, 0, 0, w, h, screen_dc, x, y, _SRCCOPY)
+
+    bmi = BITMAPINFO()
+    bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+    bmi.bmiHeader.biWidth = w
+    bmi.bmiHeader.biHeight = -h
+    bmi.bmiHeader.biPlanes = 1
+    bmi.bmiHeader.biBitCount = 32
+    bmi.bmiHeader.biCompression = _BI_RGB
+
+    buf = ctypes.create_string_buffer(w * h * 4)
+    gdi32.GetDIBits(mem_dc, bitmap, 0, h, buf, ctypes.byref(bmi), _DIB_RGB_COLORS)
+
+    gdi32.DeleteObject(bitmap)
+    gdi32.DeleteDC(mem_dc)
+    user32.ReleaseDC(None, screen_dc)
+
+    return bytes(buf), w, h
+
+
 def capture_screen() -> tuple[bytes, int, int]:
     """Capture primary display. Returns (bgra_bytes, width_px, height_px)."""
     user32 = ctypes.windll.user32

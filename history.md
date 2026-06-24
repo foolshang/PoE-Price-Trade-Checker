@@ -5,6 +5,103 @@
 
 ---
 
+## 2026-06-24 — trade fallback + hover redesign (session 5)
+
+**สรุป:** เพิ่ม PoE trade API fallback เมื่อ poe.ninja ไม่มีข้อมูล (unique items, gems, ฯลฯ) + redesign hover mode ใช้ Ctrl+C แทน OCR
+
+**ฟีเจอร์ใหม่:**
+
+1. **Trade fallback** (`app.py`):
+   - เมื่อ Ctrl+C item → ค้น poe.ninja ก่อน (เร็ว) → ถ้าไม่เจอ → ค้น trade.pathofexile.com โดยตรง
+   - ครอบคลุม unique weapon/armour/gem ทุก item ที่ poe.ninja ไม่มี
+   - แสดงราคาถูกสุดจาก 5 listing แรก ในรูปแบบเดียวกับ poe.ninja (div/chaos)
+   - `_quick_trade_lookup_async()` + `_make_price_entry_from_listing()` (convert TradeListing → PriceEntry)
+   - ถ้าไม่มี POESESSID: แจ้งให้ตั้งใน Settings แทน error
+
+2. **Hover mode redesign** (`app.py`):
+   - เปลี่ยนจาก OCR + poe.ninja → simulate Ctrl+C + poe.ninja + trade fallback
+   - ครอบคลุม item ทุกประเภท (currency, unique, gem, rare)
+   - gen-guarded: ถ้าเมาส์ขยับระหว่าง trade lookup → ไม่แสดงผลเก่า
+   - `_trigger_hover_price(cx, cy, gen)` แทน `_trigger_hover_scan()`
+
+3. **Clipboard monitor** (`app.py`):
+   - เพิ่ม `_hover_ctrl_c_ts` timestamp suppression (0.8s) — ป้องกัน double-process เมื่อ hover trigger Ctrl+C
+   - Reset `_last_auto_item = ""` เมื่อเมาส์ขยับ — re-hover บน item เดิมแสดงราคาได้ใหม่
+
+**ไฟล์ที่แก้:**
+```
+poe_price_trade/app.py
+```
+
+**ค้างอยู่:**
+- ทดสอบ overlay ขณะเล่นเกมจริง (windowed fullscreen 3440×1440)
+- Trade API ยังไม่ได้ทดสอบด้วย POESESSID จริง
+
+---
+
+## 2026-06-24 — hover mode + F5 auto Ctrl+C + launcher + categories เพิ่ม (session 4b)
+
+**สรุป:** เพิ่ม hover mode, auto Ctrl+C ใน F5, สร้าง launcher ไม่ต้องมี CMD, เพิ่ม categories ใน poe.ninja ครบ 497 entries
+
+**ฟีเจอร์ใหม่:**
+
+1. **Hover mode** (`app.py`, `scan.py`, `capture.py`):
+   - เมาส์นิ่ง 0.4s → auto scan region รอบ cursor → แสดงราคาจาก poe.ninja
+   - gen-guarded (increment `_hover_gen` ทุกครั้งเมาส์ขยับ) ป้องกันผล OCR เก่าโผล่
+   - `capture_region(x, y, w, h)` + `get_cursor_pos()` ใน capture.py
+   - `Scanner.scan_region(cx, cy, threshold)` ใน scan.py
+
+2. **F5 auto Ctrl+C** (`app.py`):
+   - `_simulate_ctrl_c()` ส่ง Ctrl+C ไปที่เกม → อ่าน clipboard หลัง 0.18s
+   - ชี้ item แล้วกด F5 เพียงอย่างเดียว ไม่ต้องกด Ctrl+C เอง
+
+3. **Launcher** (`launch.vbs` + desktop shortcut):
+   - `launch.vbs` ใช้ pythonw.exe → ไม่มีหน้าต่าง CMD โผล่
+   - Desktop shortcut: `PoE Price Checker.lnk` → double-click เปิดได้เลย
+
+4. **PoE2 categories เพิ่ม** (`profiles.py`):
+   - เพิ่ม Abyss (AbyssalBones 15), UncutGems (42), Idols (28), Expedition (24), Verisium (23)
+   - รวมทั้งหมด: 497 entries (Currency+Fragments+Abyss+UncutGems+Essences+SoulCores+Idols+Runes+Expedition+Breach+Verisium)
+
+5. **price display** (`models.py`):
+   - PoE2: แสดง chaos สำหรับ item ถูก (< 1 div) แทนที่จะแสดง div เพียงอย่างเดียว
+   - เพิ่ม `< 0.01c` branch สำหรับ item ถูกมาก
+
+**ไฟล์ที่แก้:**
+```
+poe_price_trade/app.py, scan.py, capture.py, models.py, profiles.py
+launch.vbs (ใหม่)
+```
+
+---
+
+## 2026-06-24 — แก้ PoE2 poe.ninja endpoints (session 4)
+
+**สรุป:** แก้ปัญหา `Scan done: 0 matches` เกือบตลอดเวลา เพราะ PoE2 categories ใช้ API type name ผิด
+
+**ปัญหาที่แก้:**
+- `profiles.py`: เปลี่ยน PoE2 category type names เป็น plural form ที่ถูกต้อง (poe.ninja PoE2 API ต้องการ plural)
+  - `Rune` → `Runes` (142 entries), `Essence` → `Essences` (82), `SoulCore` → `SoulCores` (42)
+  - `BreachSplinter` → `Breach` (28), `Fragment` → `Fragments` (22)
+  - ลบ categories ที่ไม่มีข้อมูลใน exchange API: UniqueWeapon, UniqueArmour, UniqueAccessory, UniqueFlask, UniqueJewel, SkillGem, Map, UniqueMap, DivinationCard, Catalyst, DistilledEmotion
+- `ninja_client.py`: แก้ `_parse_exchange_overview()` ให้ใช้ top-level `items` list สำหรับ name lookup แทน `core.items` (ซึ่งมีแค่ 3 reference currencies)
+
+**ผลลัพธ์:** เพิ่ม price entries จาก 49 → 365 entries
+- Currency: 49, Rune: 142, Essence: 82, SoulCore: 42, Breach: 28, Fragment: 22
+
+**ไฟล์ที่แก้:**
+```
+poe_price_trade/profiles.py, ninja_client.py
+```
+
+**หมายเหตุ:** PoE2 poe.ninja exchange API ไม่มีข้อมูล Unique items, Maps, Gems — มีแค่ currency-like items ที่อยู่ใน in-game currency exchange
+
+**ค้างอยู่:**
+- ทดสอบ overlay ขณะเล่นเกมจริง (windowed fullscreen 3440×1440)
+- Trade API ยังไม่ได้ทดสอบด้วย POESESSID จริง
+
+---
+
 ## 2026-06-24 — bug fixes จาก live run (session 3)
 
 **สรุป:** รัน app จริง พบและแก้ 2 bugs + เพิ่ม screen size logging
