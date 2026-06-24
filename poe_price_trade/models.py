@@ -32,31 +32,23 @@ class PriceEntry:
     trade_id: Optional[str] = None
     icon_url: Optional[str] = None
 
-    def format_price(self, rates: dict[str, float]) -> str:
-        """Pick the most natural in-game currency denomination.
-        rates: {display_suffix -> chaos_value}, e.g. {"div": 8.7, "c": 1.0, "alch": 0.025}
+    def format_price(self) -> str:
+        """Display the raw poe.ninja value — no conversion table.
+        PoE2: divine_value (primaryValue from exchange API) shown in div.
+        PoE1: chaos_value (chaosEquivalent from API) shown in c.
         """
-        c = self.chaos_value
-        div_rate  = rates.get("div",  rates.get("divine", 200.0))
-        alch_rate = rates.get("alch", 0.0)
-
-        if c >= div_rate:
-            v = c / div_rate
-            if v >= 1000: return f"{v/1000:.1f}k div"
-            if v >= 10:   return f"{round(v)} div"
-            return f"{v:.1f} div"
-
-        if c >= 1.0:
+        if self.game_version == "poe2":
+            v = self.divine_value
+            if v >= 100: return f"{round(v)} div"
+            if v >= 10:  return f"{v:.1f} div"
+            if v >= 1:   return f"{v:.2f} div"
+            return f"{v:.3f} div"
+        else:
+            c = self.chaos_value
             if c >= 1000: return f"{c/1000:.1f}k c"
             if c >= 10:   return f"{round(c)}c"
-            return f"{c:.1f}c"
-
-        if alch_rate > 0 and c >= alch_rate * 0.5:
-            v = c / alch_rate
-            if v >= 10: return f"{round(v)} alch"
-            return f"{v:.1f} alch"
-
-        return f"{c:.2f}c"
+            if c >= 1:    return f"{c:.1f}c"
+            return f"{c:.2f}c"
 
 
 @dataclass

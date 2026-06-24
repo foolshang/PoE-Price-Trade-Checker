@@ -228,7 +228,7 @@ class App:
 
     def _show_scan_results(self, results: list[ScanResult]) -> None:
         self._last_scan_results = results
-        self._overlay.show_prices(results, self._repo.key_rates())
+        self._overlay.show_prices(results)
         count = len(results)
         if count:
             names = ", ".join(r.item_name for r in results[:3])
@@ -401,17 +401,16 @@ class App:
             return
 
         entry = self._repo.lookup(item.item_name, 0.85)
-        rates = self._repo.key_rates()
         if entry:
-            price_str = entry.format_price(rates)
+            price_str = entry.format_price()
             self._log(f"💰 {item.item_name}: {price_str}", "ok")
-            self._show_price_at_cursor(entry, rates)
+            self._show_price_at_cursor(entry)
         else:
             self._log(f"? {item.item_name}: ไม่พบราคาใน poe.ninja", "dim")
             if self._overlay:
                 self._overlay.hide()
 
-    def _show_price_at_cursor(self, entry, rates: dict) -> None:
+    def _show_price_at_cursor(self, entry) -> None:
         """แสดง price label ใกล้ cursor position ปัจจุบัน"""
         class _POINT(ctypes.Structure):
             _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
@@ -429,7 +428,7 @@ class App:
             bbox_h=0,
             confidence=1.0,
         )
-        self._overlay.show_prices([result], rates)
+        self._overlay.show_prices([result])
         # ซ่อนอัตโนมัติหลัง 6 วินาที
         self._root.after(6000, self._overlay.hide)
 
