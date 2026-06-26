@@ -6,7 +6,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-DEBUG = True   # ตอน build ตัวจริง เปลี่ยนเป็น False
+DEBUG = False  # ตั้ง True ระหว่าง dev เพื่อเปิด session log
 
 log = logging.getLogger("poe.debug")
 _session: list[str] = []
