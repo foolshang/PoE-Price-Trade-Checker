@@ -5,6 +5,79 @@
 
 ---
 
+## 2026-06-26 — Refactor ใหญ่ STEP 0-8 + build exe (session 6)
+
+**สรุป:** ยุบสถาปัตยกรรมจาก 4 ทางเข้า → 2 ทางเข้า (F4 scan+hover, F5 browser trade) ลบ POESESSID/trade API dependency ทั้งหมด
+
+**Probe results (STEP 0):**
+- poe.ninja leagues endpoint → 404; เปลี่ยนไปใช้ GGG trade/trade2 API แทน
+- PoE2 ninja endpoint (exchange/current/overview) → ✅ ใช้ได้ ไม่ต้องแก้ parser
+- PoE2 league ปัจจุบัน: "Runes of Aldur"; PoE1: "Mirage"
+- Trade URL `?q=` → ✅ browser โหลด + search อัตโนมัติ
+
+**ฟีเจอร์ใหม่:**
+
+1. **F4 scan → hover reveal** (`app.py`, `scan.py`, `overlay.py`):
+   - กด F4 → scan จอทั้งหมด 1 ครั้ง → เก็บ bbox ทุก item ที่เจอ
+   - เลื่อน hover ไปบน item → ราคาขึ้น (ไม่ OCR ซ้ำ แค่เช็ค cursor ใน bbox)
+   - Safety timer 25s auto-clear
+   - DPI fix: ลบ `/dpi_scale` division ออก ใช้ physical px ตรง
+
+2. **auto-clear ตอนเดิน** (`motion.py` ใหม่):
+   - frame-diff บน grid 64px; 35% pixel เปลี่ยน 2 เฟรมติด = เดิน → clear ทันที
+   - Esc hotkey clear ด้วยมือ
+
+3. **F5 browser trade** (`trade_url.py` ใหม่):
+   - ชี้ item → F5 → build URL `?q=` → เปิด browser หน้า trade พร้อม filter
+   - unique → ค้นด้วยชื่อ; rare ส่องแล้ว → ใส่ mod filter; unidentified → base+ilvl
+   - Status: `"any"` (buyout and in person)
+   - **ไม่มี API call, ไม่มี POESESSID**
+
+4. **Auto-league** (`ninja_client.py`, `profiles.py`, `app.py`):
+   - ดึงลีกจาก GGG trade API ตอนเปิดโปรแกรม
+   - เลือก challenge league SC/HC อัตโนมัติตาม prefer_hardcore setting
+
+5. **format_price()** (`models.py`):
+   - แสดงทั้งสองหน่วย เช่น "1.23 div (11c)"
+
+6. **สี overlay ตาม PoE rarity** (`overlay.py`):
+   - Currency/Rune/Essence = `#AA9E82` (tan), Unique = `#AF6025` (orange)
+   - Gem = `#1BA29B` (teal), Divination Card = `#C8C8C8` (white)
+
+7. **Debug logging** (`debug.py` ใหม่):
+   - `DEBUG=False` ใน production; ตั้ง `True` ระหว่าง dev → session log + last_session.md
+
+8. **scan window 4 คำ** (`scan.py`):
+   - เพิ่ม window ขนาด 4 คำ ครอบคลุมชื่อยาว เช่น "Ancient Rune of Animosity"
+
+**ไฟล์ใหม่:**
+```
+poe_price_trade/debug.py, motion.py, trade_url.py
+tools/probe_leagues.py, probe_ninja_poe2.py, probe_trade_url.py
+```
+
+**ไฟล์ที่ลบ:**
+```
+poe_price_trade/trade_client.py, trade_panel.py
+```
+
+**ไฟล์ที่แก้:**
+```
+poe_price_trade/app.py (rewrite), profiles.py, ninja_client.py,
+config.py, models.py, scan.py, overlay.py, hotkeys.py, settings.py,
+capture.py (ใช้ get_screen_size ใน overlay)
+```
+
+**Build:**
+- `dist/PoE-Price-Trade-Checker.exe` (14 MB, --onefile --noconsole)
+- `DEBUG=False` ก่อน build
+
+**ค้างอยู่:**
+- ทดสอบ OCR match rate ใน inventory (by design: F4 อ่าน ground label เท่านั้น; inventory ใช้ F5)
+- ปรับ motion threshold ถ้า auto-clear ไวหรือช้าเกินไป (_FRAC_THRESH, _DIFF_THRESH ใน motion.py)
+
+---
+
 ## 2026-06-24 — trade fallback + hover redesign (session 5)
 
 **สรุป:** เพิ่ม PoE trade API fallback เมื่อ poe.ninja ไม่มีข้อมูล (unique items, gems, ฯลฯ) + redesign hover mode ใช้ Ctrl+C แทน OCR
