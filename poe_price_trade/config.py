@@ -100,6 +100,13 @@ class AppConfig:
                         self._data[k] = saved[k]
             except Exception as e:
                 log.warning("Config load failed: %s", e)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        # F9 → F4: hotkey_scan เปลี่ยนใน STEP 2 (ถ้า user ยังเซฟ F9 เก่าอยู่)
+        if self._data.get("hotkey_scan") == "F9":
+            self._data["hotkey_scan"] = "F4"
+            log.info("Migrated hotkey_scan F9 → F4")
 
     def save(self) -> None:
         path = self._dir / _CONFIG_FILE

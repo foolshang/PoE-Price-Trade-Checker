@@ -4,6 +4,7 @@ import logging
 from typing import Optional
 
 from .capture import capture_screen, capture_region, get_screen_size, bgra_to_bmp
+from . import debug
 from .models import ScanResult
 from .repository import PriceRepository
 from .ocr.windows_ocr import WindowsOcrEngine
@@ -66,10 +67,11 @@ class Scanner:
         results: list[ScanResult] = []
         seen: set[str] = set()
 
+        # ลอง window 4 คำก่อน (เช่น "Ancient Rune of Animosity") แล้วค่อย 3, 2
         for line in ocr_result.lines:
             words = line.words
             n = len(words)
-            for window in (3, 2):
+            for window in (4, 3, 2):
                 for i in range(n - window + 1):
                     phrase_words = words[i:i + window]
                     phrase = " ".join(pw.text for pw in phrase_words)
@@ -83,14 +85,16 @@ class Scanner:
                     entry = self._repo.lookup(phrase, threshold)
                     if entry is not None:
                         seen.add(key)
+                        # mark all sub-phrases as seen to avoid duplicate labels
+                        for sub in range(2, window):
+                            for j in range(window - sub + 1):
+                                seen.add(" ".join(pw.text for pw in phrase_words[j:j+sub]).lower())
                         first_bb = phrase_words[0].bbox
                         last_bb = phrase_words[-1].bbox
-                        # Add region origin to get screen-space coordinates
                         px = first_bb.x + offset_x
                         py = first_bb.y + offset_y
                         pw = last_bb.right - first_bb.x
                         ph = max(bb.bbox.height for bb in phrase_words)
-
                         results.append(ScanResult(
                             item_name=entry.item_name,
                             price_entry=entry,
@@ -101,5 +105,9 @@ class Scanner:
                             confidence=1.0,
                         ))
                         log.debug("Match: '%s' → '%s'", phrase, entry.item_name)
+                    else:
+                        # log near-misses (ต่ำกว่า threshold เล็กน้อย) เพื่อ tune matcher
+                        if window >= 2:
+                            log.debug("nomatch: '%s'", phrase)
 
         return results
