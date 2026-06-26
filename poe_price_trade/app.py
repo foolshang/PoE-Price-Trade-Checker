@@ -227,7 +227,8 @@ class App:
         self._scan_results = results
         self._scan_active = bool(results)
         count = len(results)
-        debug.event(f"F4 scan: matched={count} took={ms}ms")
+        names = [r.item_name for r in results]
+        debug.event(f"F4 scan: matched={count} took={ms}ms items={names}")
         if count:
             self._log(f"✓ scan {count} รายการ ({ms}ms) — hover เพื่อดูราคา", "ok")
             self._start_safety_timer()

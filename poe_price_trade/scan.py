@@ -67,11 +67,12 @@ class Scanner:
         results: list[ScanResult] = []
         seen: set[str] = set()
 
-        # ลอง window 4 คำก่อน (เช่น "Ancient Rune of Animosity") แล้วค่อย 3, 2
+        # ลอง window 4 คำก่อน (เช่น "Ancient Rune of Animosity") แล้วค่อย 3, 2, 1
+        # window=1 จำเป็นสำหรับ unique ชื่อเดียว เช่น "Temporalis", "Mageblood"
         for line in ocr_result.lines:
             words = line.words
             n = len(words)
-            for window in (4, 3, 2):
+            for window in (4, 3, 2, 1):
                 for i in range(n - window + 1):
                     phrase_words = words[i:i + window]
                     phrase = " ".join(pw.text for pw in phrase_words)
@@ -85,8 +86,8 @@ class Scanner:
                     entry = self._repo.lookup(phrase, threshold)
                     if entry is not None:
                         seen.add(key)
-                        # mark all sub-phrases as seen to avoid duplicate labels
-                        for sub in range(2, window):
+                        # mark all sub-phrases (รวม individual words) as seen
+                        for sub in range(1, window):
                             for j in range(window - sub + 1):
                                 seen.add(" ".join(pw.text for pw in phrase_words[j:j+sub]).lower())
                         first_bb = phrase_words[0].bbox
