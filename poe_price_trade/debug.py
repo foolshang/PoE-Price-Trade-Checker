@@ -1,58 +1,65 @@
-"""Debug logging — เปิด/ปิดด้วย DEBUG flag. ตอน build จริงตั้ง DEBUG=False บรรทัดเดียว."""
+"""Session logger — always-on. DEBUG=True เพิ่ม verbose FileHandler สำหรับ dev."""
 from __future__ import annotations
 import logging
 import subprocess
-import time
 from datetime import datetime
 from pathlib import Path
 
-DEBUG = False  # ตั้ง True ระหว่าง dev เพื่อเปิด session log
+DEBUG = False  # True = verbose .log file; session_*.md เปิดอยู่เสมอ
 
 log = logging.getLogger("poe.debug")
 _session: list[str] = []
+_session_ts: str = ""
+_MAX_SESSIONS = 10
 
 
 def _git_hash() -> str:
     try:
         return subprocess.check_output(
             ["git", "rev-parse", "--short", "HEAD"],
-            cwd=Path(__file__).resolve().parent.parent, stderr=subprocess.DEVNULL
+            cwd=Path(__file__).resolve().parent.parent, stderr=subprocess.DEVNULL,
         ).decode().strip()
     except Exception:
         return "nogit"
 
 
 def setup(debug_dir: Path) -> None:
-    """เรียกครั้งเดียวตอนเปิดโปรแกรม."""
-    if not DEBUG:
-        return
+    global _session_ts
     debug_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    logfile = debug_dir / f"session_{ts}.log"
-    handler = logging.FileHandler(logfile, mode="w", encoding="utf-8")
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-    root = logging.getLogger()
-    root.setLevel(logging.DEBUG)
-    root.addHandler(handler)
-    header = f"=== SESSION {ts} | git={_git_hash()} ==="
-    log.info(header)
+    _session_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    if DEBUG:
+        logfile = debug_dir / f"session_{_session_ts}.log"
+        handler = logging.FileHandler(logfile, mode="w", encoding="utf-8")
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        root = logging.getLogger()
+        root.setLevel(logging.DEBUG)
+        root.addHandler(handler)
+
+    header = f"=== {_session_ts} | git={_git_hash()} ==="
     _session.append(header)
+    log.info(header)
 
 
 def event(msg: str) -> None:
-    """บันทึก event สำคัญสำหรับ summary (F4/F5/ninja/ลีก/จอ)."""
-    if not DEBUG:
-        return
+    """บันทึก event สำคัญ — เรียกได้เสมอ ไม่ขึ้นกับ DEBUG."""
     line = f"{datetime.now().strftime('%H:%M:%S')} {msg}"
     _session.append(line)
     log.info(msg)
 
 
 def write_summary(debug_dir: Path) -> None:
-    """เรียกตอนปิดโปรแกรม — เขียนสรุปสั้นๆ ให้ Claude อ่านง่าย."""
-    if not DEBUG:
-        return
+    """เรียกตอนปิดโปรแกรม — เขียน session_*.md + last_session.md เสมอ; rotate เก็บ 10 ไฟล์ล่าสุด."""
     debug_dir.mkdir(parents=True, exist_ok=True)
-    out = debug_dir / "last_session.md"
-    body = "# Session Summary\n\n```\n" + "\n".join(_session) + "\n```\n"
-    out.write_text(body, encoding="utf-8")
+
+    existing = sorted(debug_dir.glob("session_*.md"))
+    for old in existing[:max(0, len(existing) - (_MAX_SESSIONS - 1))]:
+        try:
+            old.unlink()
+        except Exception:
+            pass
+
+    body = "# PoE Price & Trade Checker — Session Log\n\n```\n" + "\n".join(_session) + "\n```\n"
+    fname = f"session_{_session_ts}.md" if _session_ts else "last_session.md"
+    (debug_dir / fname).write_text(body, encoding="utf-8")
+    (debug_dir / "last_session.md").write_text(body, encoding="utf-8")
