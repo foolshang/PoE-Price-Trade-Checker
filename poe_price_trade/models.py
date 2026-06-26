@@ -33,19 +33,22 @@ class PriceEntry:
     icon_url: Optional[str] = None
 
     def format_price(self) -> str:
+        c = self.chaos_value
+        d = self.divine_value
         if self.game_version == "poe2":
-            d = self.divine_value
             if d >= 1:
-                if d >= 100: return f"{round(d)} div"
-                if d >= 10:  return f"{d:.1f} div"
-                return f"{d:.2f} div"
-            c = self.chaos_value
+                if d >= 100: main = f"{round(d)} div"
+                elif d >= 10: main = f"{d:.1f} div"
+                else: main = f"{d:.2f} div"
+                return f"{main} ({round(c)}c)" if c > 0 else main
             if c >= 10:   return f"{round(c)}c"
             if c >= 1:    return f"{c:.1f}c"
             if c >= 0.01: return f"{c:.2f}c"
             return "< 0.01c"
         else:
-            c = self.chaos_value
+            if d >= 1:
+                main = f"{round(d)} div" if d >= 10 else f"{d:.1f} div"
+                return f"{main} ({round(c)}c)"
             if c >= 1000: return f"{c/1000:.1f}k c"
             if c >= 10:   return f"{round(c)}c"
             if c >= 1:    return f"{c:.1f}c"

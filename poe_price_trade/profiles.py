@@ -20,14 +20,18 @@ class GameProfile:
     ninja_item_url: str
     categories: list[CategoryConfig]
 
-    # PoE official trade endpoints
+    # PoE official trade endpoints (API — ไม่ใช้แล้วหลัง STEP 6)
     trade_search_url: str
     trade_fetch_url: str
     trade_stats_url: str
 
-    # League fetch (from poe.ninja or hardcoded fallback)
+    # GGG trade API for league list (probe confirmed: poe.ninja leagues 404)
     ninja_leagues_url: str
+    leagues_realm: str       # filter field ใน result[].realm
     default_leagues: list[str]
+
+    # Web trade URL สำหรับเปิด browser (F5) — ไม่ใช่ /api
+    trade_web_url: str = ""
 
     display_name: str = ""
 
@@ -70,21 +74,22 @@ POE1_PROFILE = GameProfile(
     trade_search_url="https://www.pathofexile.com/api/trade/search/{league}",
     trade_fetch_url="https://www.pathofexile.com/api/trade/fetch/{ids}",
     trade_stats_url="https://www.pathofexile.com/api/trade/data/stats",
-    ninja_leagues_url="https://poe.ninja/api/data/leagues",
-    default_leagues=["Standard", "Hardcore", "Settlers", "HC Settlers"],
+    # probe confirmed: GGG trade API works (poe.ninja leagues → 404)
+    ninja_leagues_url="https://www.pathofexile.com/api/trade/data/leagues",
+    leagues_realm="pc",
+    default_leagues=["Mirage", "Hardcore Mirage", "Standard", "Hardcore"],
+    trade_web_url="https://www.pathofexile.com/trade/search/{league}",
 )
 
-# NOTE: PoE2 endpoints — verify at https://poe.ninja before first run.
-# PLAN.md §5.1 specifies: /poe2/api/economy/exchange/current/overview?league=<>&type=<>
-# The JSON structure may differ from PoE1; ninja_client.py handles both formats.
+# PoE2: probe 2026-06-26 confirmed endpoint A (exchange/current/overview) works.
+# Response: {core, lines, items} — primaryValue = price in divine.
+# Unique/Rare/Gems not in poe.ninja API → use F5 browser trade instead.
 POE2_PROFILE = GameProfile(
     game_version="poe2",
     display_name="Path of Exile 2",
     ninja_currency_url="https://poe.ninja/poe2/api/economy/exchange/current/overview",
     ninja_item_url="https://poe.ninja/poe2/api/economy/exchange/current/overview",
     categories=[
-        # Verified working — probed 2026-06-24 against Runes of Aldur league
-        # GENERAL
         CategoryConfig("Currency",     "exchange_overview", "Currency"),
         CategoryConfig("Fragment",     "exchange_overview", "Fragments"),
         CategoryConfig("AbyssalBone",  "exchange_overview", "Abyss"),
@@ -96,14 +101,15 @@ POE2_PROFILE = GameProfile(
         CategoryConfig("Expedition",   "exchange_overview", "Expedition"),
         CategoryConfig("Catalyst",     "exchange_overview", "Breach"),
         CategoryConfig("Verisium",     "exchange_overview", "Verisium"),
-        # NOTE: Lineage Gems / Omens / Liquid Emotions / Unique items
-        # ไม่มีใน poe.ninja public API — ใช้ F5 Trade search แทน
     ],
     trade_search_url="https://www.pathofexile.com/api/trade2/search/{league}",
     trade_fetch_url="https://www.pathofexile.com/api/trade2/fetch/{ids}",
     trade_stats_url="https://www.pathofexile.com/api/trade2/data/stats",
-    ninja_leagues_url="https://poe.ninja/api/data/leagues",
+    # probe confirmed: GGG trade2 API works (poe.ninja leagues → 404)
+    ninja_leagues_url="https://www.pathofexile.com/api/trade2/data/leagues",
+    leagues_realm="poe2",
     default_leagues=["Runes of Aldur", "HC Runes of Aldur", "Standard", "Hardcore"],
+    trade_web_url="https://www.pathofexile.com/trade2/search/{league}",
 )
 
 PROFILES: dict[str, GameProfile] = {

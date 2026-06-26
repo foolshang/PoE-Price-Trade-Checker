@@ -211,9 +211,24 @@ class NinjaClient:
         )
 
     def fetch_leagues(self) -> list[str]:
+        """ดึงรายชื่อลีกจาก GGG trade API (probe confirmed: poe.ninja leagues → 404).
+        Response: {"result": [{"id": "Mirage", "realm": "pc", ...}]}
+        กรองเฉพาะ realm ที่ตรง + ตัด Ruthless ออก (ไม่มีข้อมูล poe.ninja)."""
         try:
             data = _get(self._profile.ninja_leagues_url)
-            return [item.get("id", "") for item in data if item.get("id")]
+            realm = self._profile.leagues_realm
+            out = []
+            for item in data.get("result", []):
+                if item.get("realm") != realm:
+                    continue
+                name = item.get("id", "")
+                if not name:
+                    continue
+                if "Ruthless" in name:
+                    continue
+                out.append(name)
+            if out:
+                return out
         except Exception as e:
             log.warning("League fetch failed: %s — using defaults", e)
-            return list(self._profile.default_leagues)
+        return list(self._profile.default_leagues)

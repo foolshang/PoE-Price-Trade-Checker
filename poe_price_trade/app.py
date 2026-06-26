@@ -97,7 +97,10 @@ class App:
         self._log(f"เริ่มต้น {gv} · league: {league} · จอ {sw}×{sh} DPI×{self._dpi_scale:.2f}", "dim")
         self._log("Ctrl+C บน item = ราคา (poe.ninja→trade)  |  F5 = Trade panel  |  F8 = Settings", "dim")
 
-        self._load_prices_async()
+        if self._config.get("auto_league", True):
+            self._fetch_leagues_for_current_gv(auto_pick=True)
+        else:
+            self._load_prices_async()
 
     # ------------------------------------------------------------------
     # Build
@@ -354,27 +357,40 @@ class App:
         client = NinjaClient(profile)
         return client.fetch_leagues()
 
-    def _fetch_leagues_for_current_gv(self) -> None:
+    def _fetch_leagues_for_current_gv(self, auto_pick: bool = False) -> None:
         self._log("⟳ ดึงรายชื่อ league…", "info")
         gv = self._gv_var.get()
 
         def _run():
             try:
                 leagues = self._fetch_leagues_for_gv(gv)
-                self._root.after_idle(lambda: self._update_league_menu(leagues))
+                self._root.after_idle(lambda: self._update_league_menu(leagues, auto_pick=auto_pick))
             except Exception as e:
                 self._root.after_idle(lambda err=e: self._log(f"✗ ดึง league ไม่ได้: {err}", "err"))
 
         threading.Thread(target=_run, daemon=True).start()
 
-    def _update_league_menu(self, leagues: list[str]) -> None:
+    def _update_league_menu(self, leagues: list[str], auto_pick: bool = False) -> None:
         if not leagues:
             return
         self._league_cb.configure(values=leagues)
-        current = self._league_var.get()
-        if current not in leagues:
-            self._league_var.set(leagues[0])  # trace fires → reload
+        if auto_pick:
+            self._auto_pick_league(leagues)
+        else:
+            current = self._league_var.get()
+            if current not in leagues:
+                self._league_var.set(leagues[0])  # trace fires → reload
         self._log(f"✓ พบ {len(leagues)} leagues", "ok")
+
+    def _auto_pick_league(self, leagues: list[str]) -> None:
+        pref_hc = self._config.get("prefer_hardcore", False)
+        challenge = [l for l in leagues if l not in ("Standard", "Hardcore")]
+        def is_hc(name): return "Hardcore" in name or name.upper().startswith("HC")
+        pool = [l for l in challenge if is_hc(l) == pref_hc] or challenge or leagues
+        picked = pool[0] if pool else (leagues[0] if leagues else "")
+        if picked:
+            self._league_var.set(picked)  # trace fires → _load_prices_async
+        debug.event(f"auto-league pref_hc={pref_hc} picked={picked}")
 
     def _load_prices_async(self) -> None:
         league = self._league_var.get() or (
