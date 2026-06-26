@@ -18,6 +18,9 @@ session.bin
 cache/
 *.cache.json
 
+# Debug logs — ไม่ track อัตโนมัติ; commit ด้วยมือเฉพาะตอนต้องการ: git add -f debug_logs/last_session.md
+debug_logs/
+
 # IDE
 .vscode/
 .idea/

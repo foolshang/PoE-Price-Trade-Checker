@@ -11,6 +11,7 @@ from typing import Optional
 from .capture import get_cursor_pos, get_dpi_scale, get_screen_size, set_dpi_aware
 from .clipboard import read_text
 from .config import AppConfig
+from . import debug
 from .hotkeys import HotkeyManager
 from .item_parser import parse_item
 from .models import PriceEntry, ScanResult, TradeListing
@@ -53,6 +54,7 @@ class App:
             raise SystemExit(0)
         self._config = AppConfig()
         self._setup_logging()
+        debug.setup(self._config.app_dir() / "debug_logs")
 
         self._root = tk.Tk()
         self._root.title("PoE Price & Trade Checker")
@@ -91,6 +93,7 @@ class App:
         gv = self._config.get("game_version", "poe2").upper()
         league = self._config.get("league", "") or (self._profile.default_leagues[0] if self._profile.default_leagues else "Standard")
         sw, sh = get_screen_size()
+        debug.event(f"start gv={gv} league={league} screen={sw}x{sh} dpi={self._dpi_scale:.2f}")
         self._log(f"เริ่มต้น {gv} · league: {league} · จอ {sw}×{sh} DPI×{self._dpi_scale:.2f}", "dim")
         self._log("Ctrl+C บน item = ราคา (poe.ninja→trade)  |  F5 = Trade panel  |  F8 = Settings", "dim")
 
@@ -245,6 +248,7 @@ class App:
         self._last_scan_results = results
         self._overlay.show_prices(results)
         count = len(results)
+        debug.event(f"F9 scan: matched={count}")
         if count:
             names = ", ".join(r.item_name for r in results[:3])
             extra = f" (+{count-3} อื่น)" if count > 3 else ""
@@ -383,6 +387,7 @@ class App:
             count = len(snapshot.entries) if snapshot else 0
             def _update():
                 self._scanner = Scanner(self._repo, dpi_scale=self._dpi_scale)
+                debug.event(f"ninja loaded entries={count} league={league}")
                 if count == 0:
                     self._log(f"⚠ 0 รายการ ({league}) — league อาจหมดแล้ว ลองเปลี่ยนเป็น Standard", "warn")
                 else:
@@ -671,6 +676,7 @@ class App:
         self._log(msg)
 
     def _quit(self) -> None:
+        debug.write_summary(self._config.app_dir() / "debug_logs")
         if self._hotkeys:
             self._hotkeys.stop()
         if self._mutex:
