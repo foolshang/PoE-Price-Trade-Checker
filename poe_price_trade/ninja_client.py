@@ -103,63 +103,51 @@ def _parse_item_overview(data: dict, category: str, game_version: str) -> list[P
 
 
 def _parse_exchange_overview(data: dict, category: str, game_version: str) -> list[PriceEntry]:
-    """PoE2 exchange/current/overview JSON structure:
-    {
-      "core": {"items": [...], "rates": {"chaos": 8.7, "exalted": 361}, "primary": "divine"},
-      "lines": [{"id": "whetstone", "primaryValue": 0.004, ...}, ...],
-      "items": [{"id": "whetstone", "name": "Whetstone", "image": "...", ...}, ...]  <- full item details
-    }"""
-    if "core" not in data:
-        if "lines" in data and data["lines"] and "currencyTypeName" in data["lines"][0]:
-            return _parse_currency_overview(data, category, game_version)
-        if "lines" in data and data["lines"] and "name" in data["lines"][0]:
-            return _parse_item_overview(data, category, game_version)
-        return []
+    """PoE2 exchange/current/overview. primaryValue = ค่าไอเท็มเทียบ reference currency.
+    คิดเป็นอัตราส่วน: หารด้วย primaryValue ของ Divine/Exalted เพื่อได้หน่วยจริง (กันพลาดไม่ว่า reference จะเป็นอะไร)."""
+    id_to_name: dict[str, str] = {}
+    for it in data.get("items", []):
+        if it.get("id"):
+            id_to_name[it["id"]] = it.get("name") or it.get("text") or it["id"]
 
-    core = data["core"]
+    pv: dict[str, float] = {}
+    for ln in data.get("lines", []):
+        if ln.get("id"):
+            pv[ln["id"]] = float(ln.get("primaryValue", 0) or 0)
 
-    # Top-level "items" list has full details for every traded item (49/142/82/... entries)
-    # core.items has only 3 reference currencies (divine/chaos/exalted)
-    id_to_info: dict[str, dict] = {}
-    for item in data.get("items", []):
-        if "id" in item:
-            id_to_info[item["id"]] = item
-    for item in core.get("items", []) if isinstance(core, dict) else []:
-        if "id" in item and item["id"] not in id_to_info:
-            id_to_info[item["id"]] = item
+    def anchor(*keys: str) -> float:
+        for k in keys:
+            if pv.get(k, 0) > 0:
+                return pv[k]
+        for iid, nm in id_to_name.items():           # fallback หาโดยชื่อ
+            if nm.lower() in keys and pv.get(iid, 0) > 0:
+                return pv[iid]
+        return 0.0
 
-    rates = core.get("rates", {}) if isinstance(core, dict) else {}
-    chaos_per_divine = float(rates.get("chaos", 1.0) or 1.0)
-    primary = core.get("primary", "divine") if isinstance(core, dict) else "divine"
+    pv_div   = anchor("divine", "divine orb")
+    pv_exalt = anchor("exalted", "exalt", "exalted orb")
 
     entries = []
-    for line in data.get("lines", []):
-        item_id = line.get("id", "")
-        if not item_id:
+    for ln in data.get("lines", []):
+        iid = ln.get("id", "")
+        v = float(ln.get("primaryValue", 0) or 0)
+        if not iid or v <= 0:
             continue
-
-        primary_val = float(line.get("primaryValue", 0) or 0)
-        divine_val = primary_val if primary == "divine" else primary_val / chaos_per_divine
-        chaos_val = divine_val * chaos_per_divine
-
-        info = id_to_info.get(item_id, {})
-        name = info.get("name") or item_id.replace("-", " ").title()
-        icon_url = info.get("image", "")
-        if icon_url and icon_url.startswith("/"):
-            icon_url = "https://poe.ninja" + icon_url
-
+        name = id_to_name.get(iid) or iid.replace("-", " ").title()
         entries.append(PriceEntry(
             item_name=name,
             normalized_name=normalize(name),
-            chaos_value=chaos_val,
-            divine_value=divine_val,
-            listing_count=int(line.get("volumePrimaryValue", 0) or 0),
+            chaos_value=0.0,
+            divine_value=(v / pv_div) if pv_div > 0 else 0.0,
+            exalted_value=(v / pv_exalt) if pv_exalt > 0 else 0.0,
+            listing_count=int(ln.get("volumePrimaryValue", 0) or 0),
             game_version=game_version,
             category=category,
-            trade_id=item_id,
-            icon_url=icon_url or None,
+            trade_id=iid,
         ))
-
+    from . import debug
+    debug.event(f"ninja parse {category}: entries={len(entries)} pv_div={pv_div} pv_exalt={pv_exalt} "
+                f"sample={[ (e.item_name, round(e.exalted_value,2)) for e in entries[:4] ]}")
     return entries
 
 
