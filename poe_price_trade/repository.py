@@ -1,4 +1,4 @@
-"""Price cache: loads from poe.ninja, auto-refreshes every 30 min, answers lookups."""
+"""Price cache: loads from poe.ninja (+ poe2scout for PoE2), auto-refreshes every 30 min."""
 from __future__ import annotations
 import json
 import logging
@@ -13,6 +13,7 @@ from .models import PriceEntry, PriceSnapshot
 from .ninja_client import NinjaClient
 from .normalizer import normalize
 from .profiles import GameProfile
+from . import poe2scout_client
 
 log = logging.getLogger(__name__)
 
@@ -54,11 +55,15 @@ class PriceRepository:
 
             log.info("Fetching prices from poe.ninja — league=%s gv=%s", league, self._profile.game_version)
             snapshot = self._client.fetch_all(league)
+
+            if self._profile.is_poe2():
+                snapshot = self._merge_poe2scout(snapshot, league)
+
             with self._lock:
                 self._apply_snapshot(snapshot)
                 self._loading = False
             self._save_disk_cache(snapshot, league)
-            log.info("Loaded %d price entries", len(snapshot.entries))
+            log.info("Loaded %d price entries total", len(snapshot.entries))
         except Exception as e:
             with self._lock:
                 self._loading = False
@@ -103,6 +108,23 @@ class PriceRepository:
     # Internal
     # ------------------------------------------------------------------
 
+    def _merge_poe2scout(self, snapshot: PriceSnapshot, league: str) -> PriceSnapshot:
+        """Fetch poe2scout data and append entries not already covered by poe.ninja."""
+        try:
+            existing = {e.normalized_name for e in snapshot.entries}
+            scout_entries = poe2scout_client.fetch_all(league)
+            new_entries = [e for e in scout_entries if e.normalized_name not in existing]
+            log.info("poe2scout: added %d new entries (ninja had %d)", len(new_entries), len(snapshot.entries))
+            return PriceSnapshot(
+                entries=snapshot.entries + new_entries,
+                fetched_at=snapshot.fetched_at,
+                league=snapshot.league,
+                game_version=snapshot.game_version,
+            )
+        except Exception as e:
+            log.warning("poe2scout merge failed, using poe.ninja only: %s", e)
+            return snapshot
+
     def _apply_snapshot(self, snapshot: PriceSnapshot) -> None:
         self._snapshot = snapshot
         self._matcher = ItemMatcher(snapshot.entries)
@@ -133,6 +155,7 @@ class PriceRepository:
                         "normalized_name": e.normalized_name,
                         "chaos_value": e.chaos_value,
                         "divine_value": e.divine_value,
+                        "exalted_value": e.exalted_value,
                         "listing_count": e.listing_count,
                         "category": e.category,
                         "trade_id": e.trade_id,
@@ -159,6 +182,7 @@ class PriceRepository:
                     normalized_name=e["normalized_name"],
                     chaos_value=e["chaos_value"],
                     divine_value=e["divine_value"],
+                    exalted_value=e.get("exalted_value", 0.0),
                     listing_count=e["listing_count"],
                     game_version=data["game_version"],
                     category=e["category"],

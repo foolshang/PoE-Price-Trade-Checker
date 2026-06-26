@@ -32,8 +32,20 @@ _CATEGORY_COLORS: dict[str, str] = {
     "UncutGem": "#1BA29B",
     # Divination Card — normal (white)
     "DivinationCard": "#C8C8C8",
+    # poe2scout categories — currency tan (same as default but explicit)
+    "Rune":        "#AA9E82",
+    "Essence":     "#AA9E82",
+    "SoulCore":    "#AA9E82",
+    "Omen":        "#AA9E82",
+    "Artifact":    "#AA9E82",
+    "Catalyst":    "#AA9E82",
+    "AbyssalBone": "#AA9E82",
+    "Idol":        "#AA9E82",
+    "Verisium":    "#AA9E82",
+    "Fragment":    "#AA9E82",
+    "Delirium":    "#AA9E82",
 }
-_DEFAULT_COLOR = "#AA9E82"  # Currency rarity (tan) — currency/rune/essence/fragment/etc.
+_DEFAULT_COLOR = "#AA9E82"  # Currency rarity (tan) — default สำหรับทุก category ที่ไม่ระบุ
 
 _GWL_EXSTYLE = -20
 _WS_EX_LAYERED = 0x00080000
