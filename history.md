@@ -5,6 +5,27 @@
 
 ---
 
+## 2026-06-26 — ปรับ PoE2 price display + trade URL rarity filter (session 7)
+
+**Commits:** `2d0577e` → `e8b67cb` → `1d30b90` → `8d356e5`
+
+**ไฟล์ที่แก้:**
+
+- **`poe_price_trade/models.py`** — `PriceEntry` เพิ่ม `exalted_value: float = 0.0`; `format_price()` PoE2 แสดงหน่วย ex แทน c (e.g. "12.50ex", "1.23 div (45ex)", "?")
+- **`poe_price_trade/ninja_client.py`** — `_parse_exchange_overview()` เขียนใหม่: ใช้ anchor-ratio (หา `primaryValue` ของ divine/exalted จาก response โดยตรง) แทน `core.rates` — ถูกต้องไม่ว่า reference currency จะเปลี่ยน; เพิ่ม `exalted_value` ใน `PriceEntry`; เพิ่ม `debug.event()` log sample
+- **`poe_price_trade/trade_url.py`** — เพิ่ม `STATUS_OPTION = "online"` constant + comment; เพิ่ม `_RARITY_OPTION` dict; ใส่ `type_filters.rarity` ใน URL query ทุกครั้ง (เฉพาะ gear ที่มี rarity)
+
+**ลบ (chore):**
+- `poe_price_trade/trade_search.py` — ไม่มีที่ import แล้ว
+- `PLAN.md` — plan 8 STEP เสร็จหมดแล้ว
+- `build/`, `.pytest_cache/`, `__pycache__/`, `tools/probe_*_result.txt`
+
+**ค้างอยู่:**
+- หาค่า string จริงของ "Instant Buyout and In Person" จาก trade URL แล้วใส่ `STATUS_OPTION`
+- PoE2 `chaos_value` ยัง `0.0` (ไม่มี chaos rate ใน exchange overview) — ถ้าอยากได้ต้องดึง chaos anchor แยก
+
+---
+
 ## 2026-06-26 — Refactor ใหญ่ STEP 0-8 + build exe (session 6)
 
 **สรุป:** ยุบสถาปัตยกรรมจาก 4 ทางเข้า → 2 ทางเข้า (F4 scan+hover, F5 browser trade) ลบ POESESSID/trade API dependency ทั้งหมด
