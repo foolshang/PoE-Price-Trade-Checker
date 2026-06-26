@@ -110,11 +110,13 @@ class PriceRepository:
 
     def _merge_poe2scout(self, snapshot: PriceSnapshot, league: str) -> PriceSnapshot:
         """Fetch poe2scout data and append entries not already covered by poe.ninja."""
+        from . import debug
         try:
             existing = {e.normalized_name for e in snapshot.entries}
             scout_entries = poe2scout_client.fetch_all(league)
             new_entries = [e for e in scout_entries if e.normalized_name not in existing]
             log.info("poe2scout: added %d new entries (ninja had %d)", len(new_entries), len(snapshot.entries))
+            debug.event(f"poe2scout merged: ninja={len(snapshot.entries)} scout_new={len(new_entries)} total={len(snapshot.entries)+len(new_entries)}")
             return PriceSnapshot(
                 entries=snapshot.entries + new_entries,
                 fetched_at=snapshot.fetched_at,
@@ -122,6 +124,7 @@ class PriceRepository:
                 game_version=snapshot.game_version,
             )
         except Exception as e:
+            debug.event(f"poe2scout merge FAILED: {e}")
             log.warning("poe2scout merge failed, using poe.ninja only: %s", e)
             return snapshot
 
