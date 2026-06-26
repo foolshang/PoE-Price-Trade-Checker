@@ -18,29 +18,22 @@ _TRANSPARENT_COLOR = "#010101"
 _SHADOW_COLOR = "#000000"
 _BG_COLOR = "#1A1A1A"
 
-# สี label ตาม category — ใช้ convention สี PoE
+# สี label ตาม PoE Item Rarity (ใช้สีเดียวกับที่โชว์ใน client)
 _CATEGORY_COLORS: dict[str, str] = {
-    # Unique (orange)
-    "UniqueWeapon":    "#E07030",
-    "UniqueArmour":    "#E07030",
-    "UniqueAccessory": "#E07030",
-    "UniqueFlask":     "#E07030",
-    "UniqueJewel":     "#E07030",
-    "UniqueMap":       "#E07030",
-    # Gem (teal)
-    "SkillGem":  "#1BA29B",
-    "UncutGem":  "#1BA29B",
-    # Divination card (lavender)
-    "DivinationCard": "#B090D0",
-    # Essence (purple)
-    "Essence": "#CC77CC",
-    # Rune (cyan)
-    "Rune": "#66CCDD",
-    # Soul Core / Idol (amber)
-    "SoulCore": "#DD9944",
-    "Idol":     "#DD9944",
+    # Unique rarity — orange
+    "UniqueWeapon":    "#AF6025",
+    "UniqueArmour":    "#AF6025",
+    "UniqueAccessory": "#AF6025",
+    "UniqueFlask":     "#AF6025",
+    "UniqueJewel":     "#AF6025",
+    "UniqueMap":       "#AF6025",
+    # Gem — teal
+    "SkillGem": "#1BA29B",
+    "UncutGem": "#1BA29B",
+    # Divination Card — normal (white)
+    "DivinationCard": "#C8C8C8",
 }
-_DEFAULT_COLOR = "#FFD700"  # gold — currency / fragment / misc
+_DEFAULT_COLOR = "#AA9E82"  # Currency rarity (tan) — currency/rune/essence/fragment/etc.
 
 _GWL_EXSTYLE = -20
 _WS_EX_LAYERED = 0x00080000
