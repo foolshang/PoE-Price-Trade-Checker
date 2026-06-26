@@ -14,10 +14,33 @@ from .models import ScanResult
 
 log = logging.getLogger(__name__)
 
-_TRANSPARENT_COLOR = "#010101"   # Near-black, treated as transparent key
-_TEXT_COLOR = "#FFD700"          # Gold
+_TRANSPARENT_COLOR = "#010101"
 _SHADOW_COLOR = "#000000"
-_BG_COLOR = "#1A1A1A"            # Semi-dark background behind label
+_BG_COLOR = "#1A1A1A"
+
+# สี label ตาม category — ใช้ convention สี PoE
+_CATEGORY_COLORS: dict[str, str] = {
+    # Unique (orange)
+    "UniqueWeapon":    "#E07030",
+    "UniqueArmour":    "#E07030",
+    "UniqueAccessory": "#E07030",
+    "UniqueFlask":     "#E07030",
+    "UniqueJewel":     "#E07030",
+    "UniqueMap":       "#E07030",
+    # Gem (teal)
+    "SkillGem":  "#1BA29B",
+    "UncutGem":  "#1BA29B",
+    # Divination card (lavender)
+    "DivinationCard": "#B090D0",
+    # Essence (purple)
+    "Essence": "#CC77CC",
+    # Rune (cyan)
+    "Rune": "#66CCDD",
+    # Soul Core / Idol (amber)
+    "SoulCore": "#DD9944",
+    "Idol":     "#DD9944",
+}
+_DEFAULT_COLOR = "#FFD700"  # gold — currency / fragment / misc
 
 _GWL_EXSTYLE = -20
 _WS_EX_LAYERED = 0x00080000
@@ -36,12 +59,13 @@ def _set_click_through(hwnd: int) -> None:
 
 class PriceLabel:
     """A single price tag drawn on the overlay canvas."""
-    def __init__(self, canvas: tk.Canvas, x: int, y: int, text: str, offset_px: int):
+    def __init__(self, canvas: tk.Canvas, x: int, y: int, text: str, offset_px: int,
+                 color: str = _DEFAULT_COLOR):
         self._canvas = canvas
         self._ids: list[int] = []
-        self._draw(x, y, text, offset_px)
+        self._draw(x, y, text, offset_px, color)
 
-    def _draw(self, x: int, y: int, text: str, offset_px: int) -> None:
+    def _draw(self, x: int, y: int, text: str, offset_px: int, color: str) -> None:
         draw_x = x + offset_px
         draw_y = y
         fnt = ((_FONT_FAMILY, _FONT_SIZE, _FONT_WEIGHT))
@@ -63,7 +87,7 @@ class PriceLabel:
         ))
         # Main text
         self._ids.append(self._canvas.create_text(
-            draw_x, draw_y, text=text, fill=_TEXT_COLOR, font=fnt, anchor="w"
+            draw_x, draw_y, text=text, fill=color, font=fnt, anchor="w"
         ))
 
     def delete(self) -> None:
@@ -123,9 +147,10 @@ class PriceOverlay:
             if r.price_entry is None:
                 continue
             price_text = r.price_entry.format_price()
+            color = _CATEGORY_COLORS.get(r.price_entry.category, _DEFAULT_COLOR)
             label = PriceLabel(
                 self._canvas, r.bbox_x + r.bbox_w, r.bbox_y,
-                price_text, self._offset_px
+                price_text, self._offset_px, color=color,
             )
             self._labels.append(label)
 
