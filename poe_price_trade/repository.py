@@ -109,16 +109,35 @@ class PriceRepository:
     # ------------------------------------------------------------------
 
     def _merge_poe2scout(self, snapshot: PriceSnapshot, league: str) -> PriceSnapshot:
-        """Fetch poe2scout data and append entries not already covered by poe.ninja."""
+        """Merge poe2scout into poe.ninja snapshot.
+
+        Strategy:
+        - poe.ninja entry has valid price (div>0 or ex>0) → keep poe.ninja
+        - poe.ninja entry has zero price (anchor missing) → replace with poe2scout
+        - item only in poe2scout (e.g. uniques) → add as new
+        """
         from . import debug
         try:
-            existing = {e.normalized_name for e in snapshot.entries}
             scout_entries = poe2scout_client.fetch_all(league)
-            new_entries = [e for e in scout_entries if e.normalized_name not in existing]
-            log.info("poe2scout: added %d new entries (ninja had %d)", len(new_entries), len(snapshot.entries))
-            debug.event(f"poe2scout merged: ninja={len(snapshot.entries)} scout_new={len(new_entries)} total={len(snapshot.entries)+len(new_entries)}")
+            scout_by_name: dict[str, PriceEntry] = {e.normalized_name: e for e in scout_entries}
+
+            merged: list[PriceEntry] = []
+            replaced = 0
+            for e in snapshot.entries:
+                has_price = e.divine_value > 0 or e.exalted_value > 0
+                scout = scout_by_name.pop(e.normalized_name, None)
+                if not has_price and scout:
+                    merged.append(scout)   # แทนที่ด้วย poe2scout ที่มีราคาจริง
+                    replaced += 1
+                else:
+                    merged.append(e)       # poe.ninja มีราคา หรือ poe2scout ไม่มีข้อมูล
+
+            new_from_scout = list(scout_by_name.values())  # items ที่ poe.ninja ไม่มีเลย (uniques ฯลฯ)
+            total = len(merged) + len(new_from_scout)
+            debug.event(f"poe2scout merged: ninja={len(snapshot.entries)} replaced={replaced} new={len(new_from_scout)} total={total}")
+            log.info("poe2scout: replaced=%d new=%d total=%d", replaced, len(new_from_scout), total)
             return PriceSnapshot(
-                entries=snapshot.entries + new_entries,
+                entries=merged + new_from_scout,
                 fetched_at=snapshot.fetched_at,
                 league=snapshot.league,
                 game_version=snapshot.game_version,
