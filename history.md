@@ -5,6 +5,25 @@
 
 ---
 
+## 2026-06-26 — Always-on session log (session 8)
+
+**Commit:** `0467034`
+
+**ไฟล์ที่แก้:**
+
+- **`poe_price_trade/debug.py`** — เปลี่ยนจาก "เปิดได้เฉพาะ `DEBUG=True`" → event log ทำงานเสมอในทุก build
+  - `setup()` สร้าง `debug_logs/` และเริ่ม session list เสมอ; `DEBUG=True` เพิ่ม verbose `FileHandler` เท่านั้น
+  - `event()` append เสมอ (ลบ `if not DEBUG: return` ออก)
+  - `write_summary()` เขียน `session_YYYYMMDD_HHMMSS.md` + `last_session.md` เสมอ; rotate เก็บ 10 session ล่าสุด
+  - ชื่อ header เปลี่ยนเป็น `"PoE Price & Trade Checker — Session Log"`
+
+**ผลที่ได้:**
+- ทุกครั้งที่เปิดโปรแกรม (รวม .exe production) เขียน log ใน `%LOCALAPPDATA%\PoePriceTrade\debug_logs\`
+- ดู `last_session.md` ได้เลยโดยไม่ต้องหา timestamp
+- ตัวอย่าง session log จริง: startup, ninja 497 entries, F4 scan 3/6 items, hover, motion auto-clear, F5 trade URL
+
+---
+
 ## 2026-06-26 — ปรับ PoE2 price display + trade URL rarity filter (session 7)
 
 **Commits:** `2d0577e` → `e8b67cb` → `1d30b90` → `8d356e5`
