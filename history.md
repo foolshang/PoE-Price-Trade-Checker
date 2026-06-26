@@ -5,6 +5,46 @@
 
 ---
 
+## 2026-06-26 — poe2scout integration: PoE2 uniques + 15 currency categories (session 9)
+
+**Commit:** `edd375f`
+
+**ปัญหา:** poe.ninja PoE2 มีข้อมูลแค่ Currency (49) + Delirium (26) = 75 items ไม่มี unique เลย
+
+**Probe (tools/probe_poe2scout*.py):**
+- `poe2scout.com` มี FastAPI public (ไม่ต้อง key) — OpenAPI spec ที่ `/api/openapi.json`
+- Realm = `poe2`, endpoint pattern: `GET /api/poe2/Leagues/{league}/...`
+- ราคาหน่วย **exalted**; convert เป็น divine ด้วย `DivinePrice` จาก `/Leagues`
+- Runes of Aldur: DivinePrice = 357.43 ex/div
+
+**ไฟล์ใหม่/แก้:**
+
+- **`poe_price_trade/poe2scout_client.py`** (NEW):
+  - `fetch_all(league)` → ดึง 15 currency categories + unique items → list[PriceEntry]
+  - Currency categories: runes, essences, fragments, soul cores, omens, expedition, catalyst, breach, abyss, uncut gems, lineage support gems, incursion, idols, verisium, vaal (skip currency+delirium — poe.ninja ครอบแล้ว)
+  - Unique categories: weapon, armour, accessory, jewel, flask, map, sanctum
+  - Fix: skip items ที่ `CategoryApiId` ไม่อยู่ใน `_UNIQUE_CATEGORY` (กรอง currency items ที่ปนมา)
+
+- **`poe_price_trade/repository.py`**:
+  - `_merge_poe2scout()` — fetch poe2scout หลัง poe.ninja, dedup ด้วย `normalized_name` (poe.ninja เป็น primary)
+  - Disk cache เพิ่ม `exalted_value` field (backward-compat: `.get("exalted_value", 0.0)`)
+
+- **`poe_price_trade/overlay.py`**:
+  - เพิ่ม explicit color สำหรับ category ใหม่ (Rune, Essence, SoulCore, Omen ฯลฯ) ทั้งหมดเป็น currency tan
+
+**ผลลัพธ์ (Runes of Aldur):**
+```
+poe.ninja:   75 entries (Currency 49 + Delirium 26)
+poe2scout: 1023 entries (Rune 142, Essence 82, Unique 425+, ...)
+รวม:       ~1098 entries
+```
+
+**ค้างอยู่:**
+- ลบ disk cache เก่าก่อนรัน (ไม่มี exalted_value) หรือรอให้หมดอายุเองใน 30 นาที
+- rebuild .exe ให้รวม poe2scout_client.py
+
+---
+
 ## 2026-06-26 — Always-on session log (session 8)
 
 **Commit:** `0467034`
