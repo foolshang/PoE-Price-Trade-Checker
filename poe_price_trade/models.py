@@ -31,21 +31,21 @@ class PriceEntry:
     category: str
     trade_id: Optional[str] = None
     icon_url: Optional[str] = None
+    exalted_value: float = 0.0   # PoE2 ฐานเป็น exalted
 
     def format_price(self) -> str:
-        c = self.chaos_value
         d = self.divine_value
         if self.game_version == "poe2":
+            e = self.exalted_value
             if d >= 1:
-                if d >= 100: main = f"{round(d)} div"
-                elif d >= 10: main = f"{d:.1f} div"
-                else: main = f"{d:.2f} div"
-                return f"{main} ({round(c)}c)" if c > 0 else main
-            if c >= 10:   return f"{round(c)}c"
-            if c >= 1:    return f"{c:.1f}c"
-            if c >= 0.01: return f"{c:.2f}c"
-            return "< 0.01c"
+                main = f"{round(d)} div" if d >= 100 else (f"{d:.1f} div" if d >= 10 else f"{d:.2f} div")
+                return f"{main} ({round(e)}ex)" if e > 0 else main
+            if e >= 10:   return f"{round(e)}ex"
+            if e >= 1:    return f"{e:.1f}ex"
+            if e > 0:     return f"{e:.2f}ex"
+            return f"{d:.3f} div" if d > 0 else "?"
         else:
+            c = self.chaos_value
             if d >= 1:
                 main = f"{round(d)} div" if d >= 10 else f"{d:.1f} div"
                 return f"{main} ({round(c)}c)"
