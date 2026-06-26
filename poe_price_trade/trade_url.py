@@ -10,7 +10,7 @@ from .models import ParsedItem, Rarity
 def build_trade_url(item: ParsedItem, mod_db, league: str, profile,
                     min_pct: float = 0.8) -> str:
     q: dict = {
-        "query": {"status": {"option": "online"}, "stats": [], "filters": {}},
+        "query": {"status": {"option": "any"}, "stats": [], "filters": {}},
         "sort": {"price": "asc"},
     }
     query = q["query"]
