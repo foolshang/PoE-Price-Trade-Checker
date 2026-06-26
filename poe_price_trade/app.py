@@ -262,39 +262,37 @@ class App:
         ke(VK_CONTROL, 0, KEYUP, 0)
 
     def _on_f5_trade(self) -> None:
-        # ส่ง Ctrl+C ไปให้เกม แล้วรอให้ clipboard อัปเดต
-        self._simulate_ctrl_c()
-        time.sleep(0.18)
-
-        text = read_text()
-        if not text or ("Rarity:" not in text and "Item Class:" not in text):
-            self._log("⚠ ชี้ที่ item แล้วกด F5 (ไม่พบข้อมูล item)", "warn")
-            return
-
-        game_version = self._gv_var.get()
-        item = parse_item(text, game_version)
-        if item is None:
-            self._log("⚠ ไม่ใช่ข้อความ item ของ PoE", "warn")
-            return
-
-        league = self._league_var.get()
-        self._log(f"⟳ ค้นหา: {item.item_name}…", "info")
-
         def _run():
             try:
+                self._simulate_ctrl_c()
+                time.sleep(0.25)
+
+                text = read_text()
+                if not text or ("Rarity:" not in text and "Item Class:" not in text):
+                    self._root.after_idle(lambda: self._log("⚠ ชี้ที่ item แล้วกด F5 (ไม่พบข้อมูล item)", "warn"))
+                    return
+
+                game_version = self._gv_var.get()
+                item = parse_item(text, game_version)
+                if item is None:
+                    self._root.after_idle(lambda: self._log("⚠ ไม่ใช่ข้อความ item ของ PoE", "warn"))
+                    return
+
+                league = self._league_var.get()
+                self._root.after_idle(lambda n=item.item_name: self._log(f"⟳ ค้นหา: {n}…", "info"))
+
                 sid = self._config.load_session_id()
                 self._trade_client.update_session(sid)
-                # Build query with all mods, no filtering (show all listings)
                 query = build_query(item, [], league)
                 listings = self._trade_client.search_and_fetch(query, league)
-                self._root.after_idle(lambda: self._show_trade_results(listings, item))
+                self._root.after_idle(lambda l=listings, i=item: self._show_trade_results(l, i))
             except SessionExpiredError:
                 self._root.after_idle(lambda: self._on_session_expired())
             except Exception as e:
                 log.exception("Trade lookup error")
                 self._root.after_idle(lambda err=e: self._log(f"✗ Trade error: {err}", "err"))
 
-        threading.Thread(target=_run, daemon=True).start()
+        threading.Thread(target=_run, daemon=True, name="F5Trade").start()
 
     def _show_trade_results(self, listings: list[TradeListing], item) -> None:
         self._log(f"✓ Trade: {len(listings)} listings — {item.item_name}", "ok")

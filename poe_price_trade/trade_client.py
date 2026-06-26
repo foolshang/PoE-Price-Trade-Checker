@@ -5,6 +5,7 @@ import json
 import logging
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Optional
 
@@ -105,7 +106,7 @@ class TradeClient:
 
     def search(self, query: dict, league: str) -> tuple[str, list[str]]:
         """POST search query. Returns (query_id, list_of_result_ids)."""
-        url = self._profile.trade_search_url.format(league=league)
+        url = self._profile.trade_search_url.format(league=urllib.parse.quote(league, safe=""))
         log.debug("Trade search: %s", url)
         resp = _http_post(url, query, self._session_id)
         query_id = resp.get("id", "")

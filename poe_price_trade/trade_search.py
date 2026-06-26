@@ -42,11 +42,6 @@ def build_query(
         q["name"] = item.item_name
         q["type"] = item.base_type
 
-    # Item level filter (optional: only add if ilvl > 0)
-    if item.item_level > 0:
-        q["filters"].setdefault("misc_filters", {"filters": {}})
-        q["filters"]["misc_filters"]["filters"]["ilvl"] = {"min": item.item_level}
-
     # Mod filters
     if selected_stat_ids:
         stat_group = {
