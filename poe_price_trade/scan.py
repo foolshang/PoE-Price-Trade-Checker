@@ -16,9 +16,8 @@ _MAX_WORD_LEN = 60
 
 
 class Scanner:
-    def __init__(self, repository: PriceRepository, dpi_scale: float = 1.0):
+    def __init__(self, repository: PriceRepository):
         self._repo = repository
-        self._dpi = dpi_scale
         self._ocr = WindowsOcrEngine(language="en")
 
     def scan(self, threshold: float = 0.80) -> list[ScanResult]:
@@ -92,18 +91,13 @@ class Scanner:
                         pw = last_bb.right - first_bb.x
                         ph = max(bb.bbox.height for bb in phrase_words)
 
-                        lx = int(px / self._dpi)
-                        ly = int(py / self._dpi)
-                        lw = int(pw / self._dpi)
-                        lh = int(ph / self._dpi)
-
                         results.append(ScanResult(
                             item_name=entry.item_name,
                             price_entry=entry,
-                            bbox_x=lx,
-                            bbox_y=ly,
-                            bbox_w=lw,
-                            bbox_h=lh,
+                            bbox_x=px,
+                            bbox_y=py,
+                            bbox_w=pw,
+                            bbox_h=ph,
                             confidence=1.0,
                         ))
                         log.debug("Match: '%s' → '%s'", phrase, entry.item_name)

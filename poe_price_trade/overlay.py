@@ -9,6 +9,7 @@ import tkinter as tk
 from tkinter import font as tkfont
 from typing import Optional
 
+from .capture import get_screen_size
 from .models import ScanResult
 
 log = logging.getLogger(__name__)
@@ -90,8 +91,7 @@ class PriceOverlay:
         win.configure(bg=_TRANSPARENT_COLOR)
         win.withdraw()
 
-        sw = win.winfo_screenwidth()
-        sh = win.winfo_screenheight()
+        sw, sh = get_screen_size()   # physical px (DPI-aware)
         win.geometry(f"{sw}x{sh}+0+0")
 
         canvas = tk.Canvas(win, bg=_TRANSPARENT_COLOR, highlightthickness=0)

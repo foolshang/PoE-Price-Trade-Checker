@@ -1,9 +1,8 @@
-"""Settings window (F8). Allows changing game version, league, currency,
-opacity, hotkeys, and POESESSID."""
+"""Settings window (F8)."""
 from __future__ import annotations
 import logging
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import ttk
 from typing import Callable, Optional
 
 from .config import AppConfig
@@ -45,11 +44,11 @@ class SettingsWindow:
         tk.Label(parent, text=text, bg=_BG, fg=_FG, font=_PANEL_FONT, **kw).grid(
             row=row, column=col, sticky="w", padx=6, pady=3)
 
-    def _entry(self, parent, key: str, row, col, width=24, show=""):
+    def _entry(self, parent, key: str, row, col, width=24):
         var = tk.StringVar()
         self._vars[key] = var
         e = tk.Entry(parent, textvariable=var, bg=_INPUT_BG, fg=_FG, insertbackground=_FG,
-                     relief=tk.FLAT, font=_PANEL_FONT, width=width, show=show)
+                     relief=tk.FLAT, font=_PANEL_FONT, width=width)
         e.grid(row=row, column=col, sticky="w", padx=6, pady=3)
         return e
 
@@ -60,6 +59,14 @@ class SettingsWindow:
                           state="readonly", font=_PANEL_FONT)
         cb.grid(row=row, column=col, sticky="w", padx=6, pady=3)
         return cb
+
+    def _check(self, parent, key: str, text: str, row, col):
+        var = tk.BooleanVar()
+        self._vars[key] = var
+        tk.Checkbutton(parent, text=text, variable=var,
+                       bg=_BG, fg=_FG, selectcolor="#2A2020", activebackground=_BG,
+                       font=_PANEL_FONT).grid(row=row, column=col, sticky="w", padx=6, pady=3)
+        return var
 
     def _scale(self, parent, key: str, row, col, from_=0.1, to=1.0, resolution=0.05):
         var = tk.DoubleVar()
@@ -83,10 +90,8 @@ class SettingsWindow:
 
         self._build_game_tab(self._section(nb, "Game"))
         self._build_hotkeys_tab(self._section(nb, "Hotkeys"))
-        self._build_session_tab(self._section(nb, "Trade Auth"))
         self._build_advanced_tab(self._section(nb, "Advanced"))
 
-        # Bottom buttons
         btn_frame = tk.Frame(self._win, bg=_BG)
         btn_frame.pack(fill=tk.X, padx=8, pady=(0, 8))
 
@@ -102,22 +107,25 @@ class SettingsWindow:
 
     def _build_game_tab(self, f: tk.Frame) -> None:
         self._lbl(f, "Game Version:", 0, 0)
-        gv_cb = self._combo(f, "game_version", ["poe2", "poe1"], 0, 1, width=10)
-        gv_cb.bind("<<ComboboxSelected>>", self._on_game_version_changed)
+        self._combo(f, "game_version", ["poe2", "poe1"], 0, 1, width=10)
+
+        self._check(f, "auto_league", "Auto-detect league on startup", 1, 0)
+        self._check(f, "prefer_hardcore", "Prefer Hardcore league (HC)", 2, 0)
 
         tk.Label(f, text="(League is selected in the main window)", bg=_BG, fg="#666",
-                 font=_SMALL_FONT).grid(row=1, column=0, columnspan=3, sticky="w", padx=6, pady=2)
+                 font=_SMALL_FONT).grid(row=3, column=0, columnspan=3, sticky="w", padx=6, pady=2)
 
-        self._lbl(f, "Overlay Opacity:", 2, 0)
-        self._scale(f, "overlay_opacity", 2, 1)
+        self._lbl(f, "Overlay Opacity:", 4, 0)
+        self._scale(f, "overlay_opacity", 4, 1)
 
-        self._lbl(f, "Price X-offset (px):", 3, 0)
-        self._entry(f, "price_offset_px", 3, 1, width=6)
+        self._lbl(f, "Price X-offset (px):", 5, 0)
+        self._entry(f, "price_offset_px", 5, 1, width=6)
 
     def _build_hotkeys_tab(self, f: tk.Frame) -> None:
         specs = [
-            ("hotkey_scan",     "Scan Prices (F9):"),
-            ("hotkey_trade",    "Check Trade / F5 (Ctrl+C ก่อน):"),
+            ("hotkey_scan",     "Scan Prices (F4):"),
+            ("hotkey_trade",    "Trade Browser (F5):"),
+            ("hotkey_clear",    "Clear Overlay (Esc):"),
             ("hotkey_settings", "Settings:"),
             ("hotkey_quit",     "Quit:"),
         ]
@@ -125,38 +133,9 @@ class SettingsWindow:
             self._lbl(f, label, row, 0)
             self._entry(f, key, row, 1, width=16)
 
-        tk.Label(f, text="Format: F9  or  Ctrl+Alt+Q  etc.",
+        tk.Label(f, text="Format: F4  or  Ctrl+Alt+Q  etc.",
                  bg=_BG, fg="#888", font=_SMALL_FONT).grid(
             row=len(specs), column=0, columnspan=3, sticky="w", padx=6, pady=(8, 0))
-
-    def _build_session_tab(self, f: tk.Frame) -> None:
-        tk.Label(f, text="POESESSID (from pathofexile.com cookies):",
-                 bg=_BG, fg=_FG, font=_PANEL_FONT).grid(row=0, column=0, columnspan=2, sticky="w", padx=6, pady=(6, 2))
-
-        var = tk.StringVar()
-        self._vars["poesessid"] = var
-        self._sess_entry = tk.Entry(f, textvariable=var, bg=_INPUT_BG, fg=_FG, insertbackground=_FG,
-                                    relief=tk.FLAT, font=_PANEL_FONT, width=48, show="●")
-        self._sess_entry.grid(row=1, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 4))
-
-        def toggle_show():
-            current = self._sess_entry.cget("show")
-            self._sess_entry.configure(show="" if current else "●")
-        tk.Button(f, text="Show/Hide", command=toggle_show,
-                  bg=_BUTTON_BG, fg=_FG, activebackground=_ACCENT,
-                  relief=tk.FLAT, font=_SMALL_FONT).grid(row=1, column=2, padx=4)
-
-        tk.Button(f, text="Clear Session", command=self._clear_session,
-                  bg="#4A1010", fg=_FG, activebackground="#7A2020",
-                  relief=tk.FLAT, font=_PANEL_FONT, padx=8, pady=3).grid(
-            row=2, column=0, sticky="w", padx=6, pady=8)
-
-        self._session_status = tk.Label(f, text="", bg=_BG, fg="#888", font=_SMALL_FONT)
-        self._session_status.grid(row=2, column=1, sticky="w", padx=6)
-
-        tk.Label(f, text="Note: POESESSID is encrypted with Windows DPAPI\n(accessible only on this machine by your user account).",
-                 bg=_BG, fg="#666", font=_SMALL_FONT).grid(
-            row=3, column=0, columnspan=3, sticky="w", padx=6, pady=(8, 0))
 
     def _build_advanced_tab(self, f: tk.Frame) -> None:
         self._lbl(f, "Log Level:", 0, 0)
@@ -164,59 +143,48 @@ class SettingsWindow:
 
         self._lbl(f, "Match Threshold:", 1, 0)
         self._entry(f, "match_threshold", 1, 1, width=6)
-        tk.Label(f, text="(0.0–1.0, higher = stricter)", bg=_BG, fg="#888", font=_SMALL_FONT).grid(
-            row=1, column=2, sticky="w", padx=4)
+        tk.Label(f, text="(0.0–1.0, higher = stricter)", bg=_BG, fg="#888",
+                 font=_SMALL_FONT).grid(row=1, column=2, sticky="w", padx=4)
 
     # ------------------------------------------------------------------
 
     def _load_from_config(self) -> None:
-        for key in ("game_version", "overlay_opacity", "price_offset_px",
-                    "hotkey_scan", "hotkey_trade", "hotkey_settings", "hotkey_quit",
-                    "log_level", "match_threshold"):
+        str_keys = ("game_version", "hotkey_scan", "hotkey_trade", "hotkey_clear",
+                    "hotkey_settings", "hotkey_quit", "log_level", "match_threshold",
+                    "price_offset_px")
+        for key in str_keys:
             if key in self._vars:
                 self._vars[key].set(self._config.get(key, ""))
-
-        # POESESSID: show placeholder if saved
-        if self._config.has_session_id():
-            self._vars["poesessid"].set("")
-            self._session_status.configure(text="Session saved (leave blank to keep)")
-
-    def _on_game_version_changed(self, _event=None) -> None:
-        pass  # league is managed in main window
-
-    def _clear_session(self) -> None:
-        if messagebox.askyesno("Clear Session", "Clear saved POESESSID?", parent=self._win):
-            self._config.clear_session_id()
-            self._vars["poesessid"].set("")
-            self._session_status.configure(text="Session cleared")
+        if "overlay_opacity" in self._vars:
+            self._vars["overlay_opacity"].set(self._config.get("overlay_opacity", 0.85))
+        if "auto_league" in self._vars:
+            self._vars["auto_league"].set(bool(self._config.get("auto_league", True)))
+        if "prefer_hardcore" in self._vars:
+            self._vars["prefer_hardcore"].set(bool(self._config.get("prefer_hardcore", False)))
 
     def _apply(self) -> None:
-        for key in ("game_version", "hotkey_scan", "hotkey_trade",
+        for key in ("game_version", "hotkey_scan", "hotkey_trade", "hotkey_clear",
                     "hotkey_settings", "hotkey_quit", "log_level"):
             if key in self._vars:
                 self._config.set(key, self._vars[key].get())
 
+        if "auto_league" in self._vars:
+            self._config.set("auto_league", bool(self._vars["auto_league"].get()))
+        if "prefer_hardcore" in self._vars:
+            self._config.set("prefer_hardcore", bool(self._vars["prefer_hardcore"].get()))
+
         try:
             self._config.set("overlay_opacity", float(self._vars["overlay_opacity"].get()))
-        except ValueError:
+        except (ValueError, KeyError):
             pass
         try:
             self._config.set("price_offset_px", int(self._vars["price_offset_px"].get()))
-        except ValueError:
+        except (ValueError, KeyError):
             pass
         try:
             self._config.set("match_threshold", float(self._vars["match_threshold"].get()))
-        except ValueError:
+        except (ValueError, KeyError):
             pass
-
-        # POESESSID: only save if user typed something
-        sess = self._vars.get("poesessid", tk.StringVar()).get().strip()
-        if sess:
-            try:
-                self._config.save_session_id(sess)
-                log.info("POESESSID saved")
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to save POESESSID:\n{e}", parent=self._win)
 
         self._config.save()
         if self._on_apply:

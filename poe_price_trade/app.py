@@ -1,4 +1,4 @@
-"""Main application: ties together overlay, hotkeys, repository, scan, and trade."""
+"""Main application: overlay, hotkeys, repository, F4 scan→hover, F5 browser trade."""
 from __future__ import annotations
 import ctypes
 import logging
@@ -8,21 +8,19 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Optional
 
-from .capture import get_cursor_pos, get_dpi_scale, get_screen_size, set_dpi_aware
+from .capture import get_cursor_pos, get_screen_size, set_dpi_aware
 from .clipboard import read_text
 from .config import AppConfig
 from . import debug
 from .hotkeys import HotkeyManager
 from .item_parser import parse_item
-from .models import PriceEntry, ScanResult, TradeListing
+from .models import ScanResult
 from .overlay import PriceOverlay
 from .profiles import PROFILES
 from .repository import PriceRepository
 from .scan import Scanner
 from .settings import SettingsWindow
-from .trade_client import SessionExpiredError, TradeClient
-from .trade_panel import TradePanel
-from .trade_search import build_query
+from .trade_url import open_trade
 from .mod_db import ModDatabase
 
 log = logging.getLogger(__name__)
@@ -31,7 +29,6 @@ _MUTEX_NAME = "PoePriceTrade_SingleInstance"
 
 
 def _acquire_single_instance_mutex() -> Optional[int]:
-    """Create a named mutex. Returns handle if this is the first instance, else None."""
     h = ctypes.windll.kernel32.CreateMutexW(None, True, _MUTEX_NAME)
     if ctypes.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
         ctypes.windll.kernel32.CloseHandle(h)
@@ -52,6 +49,7 @@ class App:
                                    "Check the taskbar or system tray.")
             _r.destroy()
             raise SystemExit(0)
+
         self._config = AppConfig()
         self._setup_logging()
         debug.setup(self._config.app_dir() / "debug_logs")
@@ -62,40 +60,36 @@ class App:
         self._root.resizable(False, False)
         self._root.protocol("WM_DELETE_WINDOW", self._quit)
 
-        self._dpi_scale = get_dpi_scale()
         sw, sh = get_screen_size()
-        log.info("Screen: %dx%d  DPI scale: %.2f", sw, sh, self._dpi_scale)
+        log.info("Screen: %dx%d", sw, sh)
 
         self._profile = PROFILES.get(self._config.get("game_version", "poe2"), PROFILES["poe2"])
         self._repo = PriceRepository(self._profile, cache_dir=self._config.app_dir() / "cache")
         self._scanner: Optional[Scanner] = None
-        self._last_scan_results: list[ScanResult] = []
-
-        self._trade_client = TradeClient(self._profile, self._config.load_session_id())
         self._mod_db = ModDatabase(self._profile, cache_dir=self._config.app_dir() / "cache")
 
         self._overlay: Optional[PriceOverlay] = None
-        self._trade_panel: Optional[TradePanel] = None
         self._hotkeys: Optional[HotkeyManager] = None
 
-        self._last_clipboard_hash: int = 0
-        self._last_auto_item: str = ""
-        self._hover_gen: int = 0          # increments on every mouse move to cancel stale scans
-        self._hover_ctrl_c_ts: float = 0.0  # timestamp of last hover-triggered Ctrl+C
+        # F4 scan state
+        self._scan_results: list[ScanResult] = []
+        self._scan_active = False
+        self._hover_shown_key = ""
+        self._safety_timer = None
+        self._motion = None  # MotionWatcher
 
         self._build_ui()
         self._build_overlay()
-        self._build_trade_panel()
         self._start_hotkeys()
-        self._start_clipboard_monitor()
-        self._start_hover_watcher()
+        self._start_hover_loop()
 
         gv = self._config.get("game_version", "poe2").upper()
-        league = self._config.get("league", "") or (self._profile.default_leagues[0] if self._profile.default_leagues else "Standard")
-        sw, sh = get_screen_size()
-        debug.event(f"start gv={gv} league={league} screen={sw}x{sh} dpi={self._dpi_scale:.2f}")
-        self._log(f"เริ่มต้น {gv} · league: {league} · จอ {sw}×{sh} DPI×{self._dpi_scale:.2f}", "dim")
-        self._log("Ctrl+C บน item = ราคา (poe.ninja→trade)  |  F5 = Trade panel  |  F8 = Settings", "dim")
+        league = self._config.get("league", "") or (
+            self._profile.default_leagues[0] if self._profile.default_leagues else "Standard"
+        )
+        debug.event(f"start gv={gv} league={league} screen={sw}x{sh}")
+        self._log(f"เริ่มต้น {gv} · league: {league} · จอ {sw}×{sh}", "dim")
+        self._log("F4 Scan+Hover  |  F5 Trade browser  |  Esc ล้าง  |  F8 Settings", "dim")
 
         if self._config.get("auto_league", True):
             self._fetch_leagues_for_current_gv(auto_pick=True)
@@ -103,7 +97,7 @@ class App:
             self._load_prices_async()
 
     # ------------------------------------------------------------------
-    # Build
+    # Build UI
     # ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
@@ -127,8 +121,9 @@ class App:
                            bg=BG, fg=FG, selectcolor="#2A2020", activebackground=BG,
                            command=self._on_game_version_changed, font=FONT).pack(side=tk.LEFT, padx=4)
 
-        # League — Combobox พิมพ์เองได้ หรือเลือกจาก dropdown
-        tk.Label(frame, text="League:", bg=BG, fg=FG, font=FONT).grid(row=2, column=0, sticky="w", pady=4)
+        # League
+        tk.Label(frame, text="League:", bg=BG, fg=FG, font=FONT).grid(
+            row=2, column=0, sticky="w", pady=4)
         saved_league = self._config.get("league", "") or (
             self._profile.default_leagues[0] if self._profile.default_leagues else "Standard"
         )
@@ -140,14 +135,12 @@ class App:
                                        values=self._profile.default_leagues,
                                        width=20, font=FONT, style="League.TCombobox")
         self._league_cb.grid(row=2, column=1, sticky="w")
-        # เปลี่ยน league → โหลดราคาใหม่ทันที (ทั้ง dropdown และพิมพ์)
         self._league_var.trace_add("write", lambda *_: self._load_prices_async())
         self._league_cb.bind("<Return>", lambda _: self._load_prices_async())
 
-        # Status log — แสดงขั้นตอนการทำงานแบบ real-time
+        # Status log
         tk.Label(frame, text="Status:", bg=BG, fg=FG, font=FONT).grid(
             row=3, column=0, sticky="nw", pady=(6, 2))
-
         log_frame = tk.Frame(frame, bg="#111")
         log_frame.grid(row=3, column=1, sticky="ew", pady=(6, 2))
         frame.columnconfigure(1, weight=1)
@@ -156,41 +149,27 @@ class App:
             log_frame, bg="#111", fg="#AADDAA", font=FONT_MONO,
             width=36, height=6, relief=tk.FLAT,
             state=tk.DISABLED, wrap=tk.WORD,
-            insertbackground=FG,
         )
         self._log_text.pack(fill=tk.BOTH)
-        self._log_text.tag_config("ok",    foreground="#88DD88")
-        self._log_text.tag_config("err",   foreground="#DD6666")
-        self._log_text.tag_config("warn",  foreground="#DDCC66")
-        self._log_text.tag_config("info",  foreground="#AACCFF")
-        self._log_text.tag_config("dim",   foreground="#666666")
+        self._log_text.tag_config("ok",   foreground="#88DD88")
+        self._log_text.tag_config("err",  foreground="#DD6666")
+        self._log_text.tag_config("warn", foreground="#DDCC66")
+        self._log_text.tag_config("info", foreground="#AACCFF")
+        self._log_text.tag_config("dim",  foreground="#666666")
 
-        # Hover mode toggle
-        self._hover_var = tk.BooleanVar(value=self._config.get("hover_mode", True))
-        hover_row = tk.Frame(frame, bg=BG)
-        hover_row.grid(row=4, column=0, columnspan=2, sticky="w", pady=(4, 0))
-        tk.Checkbutton(
-            hover_row, text="Hover mode (เมาส์นิ่ง 0.4s → ราคาจาก poe.ninja/trade)",
-            variable=self._hover_var,
-            bg=BG, fg=FG, selectcolor="#2A2020", activebackground=BG,
-            font=FONT,
-            command=self._on_hover_toggle,
-        ).pack(side=tk.LEFT)
-
-        # Hotkey legend
-        legend = "F9 Scan  |  F5 Trade (ชี้ item)  |  F8 Settings  |  Ctrl+Alt+Q Quit"
+        # Legend
+        legend = "F4 Scan+Hover  |  F5 Trade browser  |  Esc ล้าง  |  F8 Settings  |  Ctrl+Alt+Q Quit"
         tk.Label(frame, text=legend, bg=BG, fg="#666", font=FONT_SMALL, justify=tk.LEFT).grid(
-            row=5, column=0, columnspan=2, pady=(4, 0))
+            row=4, column=0, columnspan=2, pady=(4, 0))
 
         # Buttons
         btn_frame = tk.Frame(frame, bg=BG)
-        btn_frame.grid(row=6, column=0, columnspan=2, pady=(8, 0))
+        btn_frame.grid(row=5, column=0, columnspan=2, pady=(8, 0))
 
         def btn(text, cmd):
-            b = tk.Button(btn_frame, text=text, command=cmd,
-                          bg="#3A3020", fg=FG, activebackground=ACC, activeforeground="#000",
-                          relief=tk.FLAT, font=FONT, padx=8, pady=3, cursor="hand2")
-            return b
+            return tk.Button(btn_frame, text=text, command=cmd,
+                             bg="#3A3020", fg=FG, activebackground=ACC, activeforeground="#000",
+                             relief=tk.FLAT, font=FONT, padx=8, pady=3, cursor="hand2")
 
         btn("Refresh Prices", self._load_prices_async).pack(side=tk.LEFT, padx=4)
         btn("Refresh Leagues", self._fetch_leagues_for_current_gv).pack(side=tk.LEFT, padx=4)
@@ -203,64 +182,127 @@ class App:
             opacity=self._config.get("overlay_opacity", 0.9),
         )
 
-    def _build_trade_panel(self) -> None:
-        self._trade_panel = TradePanel(self._root, self._profile)
-        self._trade_panel.set_refresh_callback(self._on_trade_refresh)
-
     def _start_hotkeys(self) -> None:
         hkm = HotkeyManager(tk_root=self._root)
-        hkm.add(self._config.get("hotkey_scan", "F9"),      self._on_f9_scan)
-        hkm.add(self._config.get("hotkey_trade", "F5"),     self._on_f5_trade)
-        hkm.add(self._config.get("hotkey_settings", "F8"),  self._open_settings)
+        hkm.add(self._config.get("hotkey_scan", "F4"),         self._on_f4_scan)
+        hkm.add(self._config.get("hotkey_trade", "F5"),        self._on_f5_trade)
+        hkm.add(self._config.get("hotkey_settings", "F8"),     self._open_settings)
         hkm.add(self._config.get("hotkey_quit", "Ctrl+Alt+Q"), self._quit)
+        clear_key = self._config.get("hotkey_clear", "Esc")
+        try:
+            hkm.add(clear_key, self._clear_all)
+        except Exception:
+            log.warning("Could not register clear hotkey: %s", clear_key)
         hkm.start()
         hkm.wait_ready()
         self._hotkeys = hkm
         log.info("Hotkeys registered")
 
     # ------------------------------------------------------------------
-    # Hotkey handlers (called from main thread via after_idle)
+    # F4 scan → hover reveal
     # ------------------------------------------------------------------
 
-    def _on_f9_scan(self) -> None:
+    def _on_f4_scan(self) -> None:
         if not self._repo.is_ready():
             self._log("⚠ ราคายังโหลดไม่เสร็จ รอสักครู่…", "warn")
             return
         if self._scanner is None:
-            self._scanner = Scanner(self._repo, dpi_scale=self._dpi_scale)
-        if self._overlay and self._overlay._visible:
-            self._overlay.hide()
-            self._last_scan_results = []
-            self._log("ซ่อน overlay แล้ว", "dim")
-            return
-
-        self._log("⟳ กำลัง scan หน้าจอ…", "info")
-        threshold = float(self._config.get("match_threshold", 0.80))
+            self._scanner = Scanner(self._repo)
+        self._clear_all()
+        self._log("⟳ scan…", "info")
+        t0 = time.time()
 
         def _run():
             try:
-                results = self._scanner.scan(threshold)
-                self._root.after_idle(lambda: self._show_scan_results(results))
+                results = self._scanner.scan(float(self._config.get("match_threshold", 0.8)))
+                ms = int((time.time() - t0) * 1000)
+                self._root.after_idle(lambda: self._on_scan_done(results, ms))
             except Exception as e:
                 log.exception("Scan error")
-                self._root.after_idle(lambda err=e: self._log(f"✗ Scan error: {err}", "err"))
+                self._root.after_idle(lambda err=e: self._log(f"✗ scan: {err}", "err"))
 
-        threading.Thread(target=_run, daemon=True).start()
+        threading.Thread(target=_run, daemon=True, name="F4Scan").start()
 
-    def _show_scan_results(self, results: list[ScanResult]) -> None:
-        self._last_scan_results = results
-        self._overlay.show_prices(results)
+    def _on_scan_done(self, results: list[ScanResult], ms: int) -> None:
+        self._scan_results = results
+        self._scan_active = bool(results)
         count = len(results)
-        debug.event(f"F9 scan: matched={count}")
+        debug.event(f"F4 scan: matched={count} took={ms}ms")
         if count:
-            names = ", ".join(r.item_name for r in results[:3])
-            extra = f" (+{count-3} อื่น)" if count > 3 else ""
-            self._log(f"✓ พบ {count} รายการ: {names}{extra}", "ok")
+            self._log(f"✓ scan {count} รายการ ({ms}ms) — hover เพื่อดูราคา", "ok")
+            self._start_safety_timer()
+            self._start_motion_watch()
         else:
-            self._log("ไม่พบ item ที่ตรงกัน — ลองเปิด tooltip แล้วกด F9", "warn")
+            self._log("ไม่พบ item — เปิด tooltip ก่อนกด F4", "warn")
+
+    def _start_hover_loop(self) -> None:
+        threading.Thread(target=self._hover_loop, daemon=True, name="HoverLoop").start()
+
+    def _hover_loop(self) -> None:
+        """ตรวจตำแหน่ง cursor ทุก 80ms — ถ้าอยู่ใน bbox ของ item ไหน โชว์ราคา (ไม่ OCR ซ้ำ)."""
+        while True:
+            time.sleep(0.08)
+            if not self._scan_active:
+                continue
+            try:
+                cx, cy = get_cursor_pos()
+            except Exception:
+                continue
+            hit = None
+            for r in self._scan_results:
+                if (r.bbox_x <= cx <= r.bbox_x + max(r.bbox_w, 40) and
+                        r.bbox_y - 6 <= cy <= r.bbox_y + r.bbox_h + 6):
+                    hit = r
+                    break
+            key = hit.item_name if hit else ""
+            if key != self._hover_shown_key:
+                self._hover_shown_key = key
+                if hit:
+                    debug.event(f"hover '{hit.item_name}' @({cx},{cy})")
+                    self._root.after_idle(lambda h=hit: self._overlay.show_prices([h]))
+                else:
+                    self._root.after_idle(self._overlay.hide)
+
+    def _clear_all(self) -> None:
+        self._scan_active = False
+        self._scan_results = []
+        self._hover_shown_key = ""
+        if self._overlay:
+            self._overlay.hide()
+        if self._motion:
+            self._motion.stop()
+            self._motion = None
+        if self._safety_timer:
+            try:
+                self._root.after_cancel(self._safety_timer)
+            except Exception:
+                pass
+            self._safety_timer = None
+
+    def _start_safety_timer(self) -> None:
+        if self._safety_timer:
+            try:
+                self._root.after_cancel(self._safety_timer)
+            except Exception:
+                pass
+        self._safety_timer = self._root.after(25000, self._clear_all)
+
+    def _start_motion_watch(self) -> None:
+        from .motion import MotionWatcher
+        if self._motion:
+            self._motion.stop()
+        self._motion = MotionWatcher(on_motion=lambda: self._root.after_idle(self._on_walk))
+        self._motion.start()
+
+    def _on_walk(self) -> None:
+        debug.event("auto-clear: motion detected")
+        self._clear_all()
+
+    # ------------------------------------------------------------------
+    # F5 — open browser trade
+    # ------------------------------------------------------------------
 
     def _simulate_ctrl_c(self) -> None:
-        """Simulate Ctrl+C so PoE copies the hovered item to clipboard."""
         VK_CONTROL, VK_C, KEYUP = 0x11, 0x43, 0x0002
         ke = ctypes.windll.user32.keybd_event
         ke(VK_CONTROL, 0, 0, 0)
@@ -272,52 +314,26 @@ class App:
         def _run():
             try:
                 self._simulate_ctrl_c()
-                time.sleep(0.25)
-
-                text = read_text()
-                if not text or ("Rarity:" not in text and "Item Class:" not in text):
-                    self._root.after_idle(lambda: self._log("⚠ ชี้ที่ item แล้วกด F5 (ไม่พบข้อมูล item)", "warn"))
+                time.sleep(0.22)
+                text = read_text() or ""
+                if "Rarity:" not in text and "Item Class:" not in text:
+                    self._root.after_idle(lambda: self._log("⚠ ชี้ที่ item แล้วกด F5", "warn"))
                     return
-
-                game_version = self._gv_var.get()
-                item = parse_item(text, game_version)
-                if item is None:
-                    self._root.after_idle(lambda: self._log("⚠ ไม่ใช่ข้อความ item ของ PoE", "warn"))
+                item = parse_item(text, self._gv_var.get())
+                if not item:
+                    self._root.after_idle(lambda: self._log("⚠ อ่าน item ไม่ได้", "warn"))
                     return
-
-                league = self._league_var.get()
-                self._root.after_idle(lambda n=item.item_name: self._log(f"⟳ ค้นหา: {n}…", "info"))
-
-                sid = self._config.load_session_id()
-                self._trade_client.update_session(sid)
-                query = build_query(item, [], league)
-                listings = self._trade_client.search_and_fetch(query, league)
-                self._root.after_idle(lambda l=listings, i=item: self._show_trade_results(l, i))
-            except SessionExpiredError:
-                self._root.after_idle(lambda: self._on_session_expired())
+                self._mod_db.load()
+                url = open_trade(item, self._mod_db, self._league_var.get(), self._profile)
+                resolved = sum(1 for m in item.mods if self._mod_db.find_stat_id(m.text))
+                debug.event(f"F5 '{item.item_name}' mods={resolved}/{len(item.mods)} url={url[:80]}")
+                self._root.after_idle(
+                    lambda n=item.item_name: self._log(f"🔎 เปิด trade: {n}", "ok"))
             except Exception as e:
-                log.exception("Trade lookup error")
-                self._root.after_idle(lambda err=e: self._log(f"✗ Trade error: {err}", "err"))
+                log.exception("F5 trade error")
+                self._root.after_idle(lambda err=e: self._log(f"✗ F5: {err}", "err"))
 
-        threading.Thread(target=_run, daemon=True, name="F5Trade").start()
-
-    def _show_trade_results(self, listings: list[TradeListing], item) -> None:
-        self._log(f"✓ Trade: {len(listings)} listings — {item.item_name}", "ok")
-        if self._trade_panel:
-            self._trade_panel.show(listings, item, league=self._league_var.get())
-
-    def _on_trade_refresh(self) -> None:
-        text = read_text()
-        if text:
-            self._on_f5_trade()
-
-    def _on_session_expired(self) -> None:
-        self._log("✗ Session หมดอายุ — ใส่ POESESSID ใหม่ใน Settings (F8)", "err")
-        messagebox.showwarning(
-            "Session Expired",
-            "POESESSID is invalid or expired.\nOpen Settings (F8) and enter a new one.",
-            parent=self._root,
-        )
+        threading.Thread(target=_run, daemon=True, name="F5").start()
 
     # ------------------------------------------------------------------
     # Settings & price loading
@@ -334,7 +350,7 @@ class App:
         new_gv = self._config.get("game_version", "poe2")
         if new_gv != self._gv_var.get():
             self._gv_var.set(new_gv)
-            self._on_game_version_changed()  # handles league + reload via trace
+            self._on_game_version_changed()
         if self._overlay:
             self._overlay.set_opacity(self._config.get("overlay_opacity", 0.9))
             self._overlay.set_offset(self._config.get("price_offset_px", 2))
@@ -344,10 +360,14 @@ class App:
         self._config.set("game_version", gv)
         self._profile = PROFILES.get(gv, PROFILES["poe2"])
         self._repo = PriceRepository(self._profile, cache_dir=self._config.app_dir() / "cache")
+        self._mod_db = ModDatabase(self._profile, cache_dir=self._config.app_dir() / "cache")
         self._scanner = None
         self._league_cb.configure(values=self._profile.default_leagues)
-        if self._profile.default_leagues:
-            self._league_var.set(self._profile.default_leagues[0])  # trace fires → _load_prices_async
+        self._clear_all()
+        if self._config.get("auto_league", True):
+            self._fetch_leagues_for_current_gv(auto_pick=True)
+        elif self._profile.default_leagues:
+            self._league_var.set(self._profile.default_leagues[0])
         else:
             self._load_prices_async()
 
@@ -364,9 +384,11 @@ class App:
         def _run():
             try:
                 leagues = self._fetch_leagues_for_gv(gv)
-                self._root.after_idle(lambda: self._update_league_menu(leagues, auto_pick=auto_pick))
+                self._root.after_idle(
+                    lambda: self._update_league_menu(leagues, auto_pick=auto_pick))
             except Exception as e:
-                self._root.after_idle(lambda err=e: self._log(f"✗ ดึง league ไม่ได้: {err}", "err"))
+                self._root.after_idle(
+                    lambda err=e: self._log(f"✗ ดึง league ไม่ได้: {err}", "err"))
 
         threading.Thread(target=_run, daemon=True).start()
 
@@ -379,7 +401,7 @@ class App:
         else:
             current = self._league_var.get()
             if current not in leagues:
-                self._league_var.set(leagues[0])  # trace fires → reload
+                self._league_var.set(leagues[0])
         self._log(f"✓ พบ {len(leagues)} leagues", "ok")
 
     def _auto_pick_league(self, leagues: list[str]) -> None:
@@ -389,7 +411,7 @@ class App:
         pool = [l for l in challenge if is_hc(l) == pref_hc] or challenge or leagues
         picked = pool[0] if pool else (leagues[0] if leagues else "")
         if picked:
-            self._league_var.set(picked)  # trace fires → _load_prices_async
+            self._league_var.set(picked)
         debug.event(f"auto-league pref_hc={pref_hc} picked={picked}")
 
     def _load_prices_async(self) -> None:
@@ -402,10 +424,10 @@ class App:
         def _on_done(snapshot):
             count = len(snapshot.entries) if snapshot else 0
             def _update():
-                self._scanner = Scanner(self._repo, dpi_scale=self._dpi_scale)
+                self._scanner = Scanner(self._repo)
                 debug.event(f"ninja loaded entries={count} league={league}")
                 if count == 0:
-                    self._log(f"⚠ 0 รายการ ({league}) — league อาจหมดแล้ว ลองเปลี่ยนเป็น Standard", "warn")
+                    self._log(f"⚠ 0 รายการ ({league}) — ลองเปลี่ยนเป็น Standard", "warn")
                 else:
                     self._log(f"✓ พร้อม — {count} รายการ ({league})", "ok")
             self._root.after_idle(_update)
@@ -414,253 +436,6 @@ class App:
             self._root.after_idle(lambda: self._log(f"✗ โหลดราคาไม่สำเร็จ: {exc}", "err"))
 
         self._repo.load_async(league, on_done=_on_done, on_error=_on_error)
-
-    # ------------------------------------------------------------------
-    # Hover mode — mouse still 400ms → auto scan region → show price
-    # ------------------------------------------------------------------
-
-    def _on_hover_toggle(self) -> None:
-        enabled = self._hover_var.get()
-        self._config.set("hover_mode", enabled)
-        state = "เปิด" if enabled else "ปิด"
-        self._log(f"Hover mode: {state}", "dim")
-        if not enabled and self._overlay:
-            self._overlay.hide()
-
-    def _start_hover_watcher(self) -> None:
-        threading.Thread(target=self._hover_loop, daemon=True, name="HoverWatcher").start()
-
-    def _hover_loop(self) -> None:
-        last_x, last_y = -9999, -9999
-        still_since: float = 0.0
-        triggered_gen: int = -1
-        STILL_DELAY = 0.4   # seconds before triggering scan
-        MOVE_THRESH = 8     # pixels of movement to reset timer
-
-        while True:
-            time.sleep(0.1)
-            try:
-                cx, cy = get_cursor_pos()
-            except Exception:
-                continue
-
-            moved = abs(cx - last_x) > MOVE_THRESH or abs(cy - last_y) > MOVE_THRESH
-            if moved:
-                last_x, last_y = cx, cy
-                still_since = time.time()
-                self._hover_gen += 1
-                self._last_auto_item = ""  # reset so re-hovering same item shows price again
-                # Hide overlay on mouse move (if hover mode is on)
-                if self._hover_var.get() and self._overlay and self._overlay._visible:
-                    self._root.after_idle(self._overlay.hide)
-            else:
-                elapsed = time.time() - still_since
-                cur_gen = self._hover_gen
-                if elapsed >= STILL_DELAY and triggered_gen != cur_gen:
-                    triggered_gen = cur_gen
-                    if self._hover_var.get():
-                        self._trigger_hover_price(cx, cy, cur_gen)
-
-    def _trigger_hover_price(self, cx: int, cy: int, gen: int) -> None:
-        """Simulate Ctrl+C, read clipboard, check poe.ninja then trade API; gen-guarded."""
-        def _run():
-            try:
-                # Mark hover-triggered Ctrl+C so clipboard monitor skips this change
-                self._hover_ctrl_c_ts = time.time()
-                self._simulate_ctrl_c()
-                time.sleep(0.22)
-
-                if self._hover_gen != gen:
-                    return
-
-                text = read_text() or ""
-                if "Rarity:" not in text and "Item Class:" not in text:
-                    return
-
-                gv = self._gv_var.get()
-                item = parse_item(text, gv)
-                if item is None:
-                    return
-
-                # 1. poe.ninja lookup (instant, ~500 currency/consumable items)
-                if self._repo.is_ready():
-                    entry = self._repo.lookup(item.item_name, 0.85)
-                    if entry:
-                        if self._hover_gen == gen:
-                            p = entry.format_price()
-                            def _show_ninja(e=entry, ps=p, n=item.item_name):
-                                self._log(f"💰 {n}: {ps}", "ok")
-                                self._show_price_at_cursor(e)
-                            self._root.after_idle(_show_ninja)
-                        return
-
-                # 2. PoE trade API fallback (covers all items incl. uniques, gems, etc.)
-                sid = self._config.load_session_id()
-                if not sid:
-                    return
-
-                league = self._league_var.get()
-                self._trade_client.update_session(sid)
-                query = build_query(item, [], league)
-                q_id, result_ids = self._trade_client.search(query, league)
-                if not result_ids or self._hover_gen != gen:
-                    return
-
-                listings = self._trade_client.fetch(result_ids[:5], q_id)
-                if not listings or self._hover_gen != gen:
-                    return
-
-                cheapest = min(listings, key=lambda l: l.price_amount)
-                entry = self._make_price_entry_from_listing(item.item_name, cheapest)
-                p = entry.format_price()
-
-                def _show_trade(e=entry, ps=p, n=item.item_name):
-                    self._log(f"💰 {n} (trade): {ps}", "ok")
-                    self._show_price_at_cursor(e)
-                self._root.after_idle(_show_trade)
-            except Exception as e:
-                log.debug("Hover price error: %s", e)
-
-        threading.Thread(target=_run, daemon=True, name=f"HoverPrice-{gen}").start()
-
-    # ------------------------------------------------------------------
-    # Clipboard auto-detect (Ctrl+C on item → show price immediately)
-    # ------------------------------------------------------------------
-
-    def _start_clipboard_monitor(self) -> None:
-        def _loop():
-            while True:
-                time.sleep(0.35)
-                try:
-                    text = read_text() or ""
-                    h = hash(text)
-                    if h != self._last_clipboard_hash:
-                        self._last_clipboard_hash = h
-                        # Skip if hover mode just triggered a Ctrl+C — hover handler processes it
-                        if time.time() - self._hover_ctrl_c_ts < 0.8:
-                            continue
-                        if "Rarity:" in text and "--------" in text:
-                            self._root.after_idle(lambda t=text: self._on_clipboard_item(t))
-                except Exception:
-                    pass
-        threading.Thread(target=_loop, daemon=True, name="ClipboardMonitor").start()
-
-    def _on_clipboard_item(self, text: str) -> None:
-        gv = self._gv_var.get()
-        item = parse_item(text, gv)
-        if item is None:
-            return
-        if item.item_name == self._last_auto_item:
-            return  # same item, skip
-        self._last_auto_item = item.item_name
-
-        if not self._repo.is_ready():
-            self._log(f"? {item.item_name}: ราคายังโหลดไม่เสร็จ", "dim")
-            return
-
-        entry = self._repo.lookup(item.item_name, 0.85)
-        if entry:
-            price_str = entry.format_price()
-            self._log(f"💰 {item.item_name}: {price_str}", "ok")
-            self._show_price_at_cursor(entry)
-        else:
-            # ไม่พบใน poe.ninja → ค้นหา trade API โดยตรง (cover unique items, gems, etc.)
-            self._log(f"⟳ {item.item_name}: ไม่พบใน poe.ninja — ค้นใน trade…", "info")
-            self._quick_trade_lookup_async(item)
-
-    def _quick_trade_lookup_async(self, item) -> None:
-        """Look up item price via PoE trade API; used as fallback when poe.ninja has no data."""
-        league = self._league_var.get()
-
-        def _run():
-            try:
-                sid = self._config.load_session_id()
-                if not sid:
-                    self._root.after_idle(lambda: self._log(
-                        f"? {item.item_name}: ไม่พบใน poe.ninja "
-                        "(ตั้ง POESESSID ใน Settings เพื่อค้น trade)", "dim"))
-                    return
-                self._trade_client.update_session(sid)
-                query = build_query(item, [], league)
-                q_id, result_ids = self._trade_client.search(query, league)
-                if not result_ids:
-                    self._root.after_idle(lambda: self._log(
-                        f"? {item.item_name}: ไม่พบ listing ใน trade", "dim"))
-                    return
-                listings = self._trade_client.fetch(result_ids[:5], q_id)
-                if not listings:
-                    return
-                cheapest = min(listings, key=lambda l: l.price_amount)
-                entry = self._make_price_entry_from_listing(item.item_name, cheapest)
-                p = entry.format_price()
-
-                def _show(e=entry, ps=p, n=item.item_name):
-                    self._log(f"💰 {n} (trade): {ps}", "ok")
-                    self._show_price_at_cursor(e)
-                self._root.after_idle(_show)
-            except SessionExpiredError:
-                self._root.after_idle(self._on_session_expired)
-            except Exception as e:
-                log.debug("Quick trade error: %s", e)
-
-        threading.Thread(target=_run, daemon=True, name="QuickTrade").start()
-
-    def _make_price_entry_from_listing(self, item_name: str, listing: TradeListing) -> PriceEntry:
-        """Convert cheapest TradeListing → PriceEntry for overlay display."""
-        gv = self._gv_var.get()
-        currency = listing.price_currency.lower()
-        amount = listing.price_amount
-
-        # Try to get real chaos-per-divine from cached poe.ninja data
-        chaos_per_div = 0.0
-        if self._repo.is_ready():
-            div_entry = self._repo.lookup("Divine Orb", 1.0)
-            if div_entry and div_entry.chaos_value > 0:
-                chaos_per_div = div_entry.chaos_value
-        if chaos_per_div <= 0:
-            chaos_per_div = 400.0  # PoE2 rough estimate
-
-        if currency in ("divine", "div"):
-            divine_v = amount
-            chaos_v = amount * chaos_per_div
-        elif currency == "chaos":
-            chaos_v = amount
-            divine_v = amount / chaos_per_div
-        else:
-            chaos_v = amount
-            divine_v = 0.0
-
-        return PriceEntry(
-            item_name=item_name,
-            normalized_name=item_name.lower(),
-            chaos_value=chaos_v,
-            divine_value=divine_v,
-            listing_count=1,
-            game_version=gv,
-            category="Trade",
-        )
-
-    def _show_price_at_cursor(self, entry) -> None:
-        """แสดง price label ใกล้ cursor position ปัจจุบัน"""
-        class _POINT(ctypes.Structure):
-            _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
-        pt = _POINT()
-        ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
-        cx = int(pt.x / self._dpi_scale)
-        cy = int(pt.y / self._dpi_scale)
-
-        result = ScanResult(
-            item_name=entry.item_name,
-            price_entry=entry,
-            bbox_x=cx,
-            bbox_y=cy,
-            bbox_w=0,
-            bbox_h=0,
-            confidence=1.0,
-        )
-        self._overlay.show_prices([result])
-        # ซ่อนอัตโนมัติหลัง 6 วินาที
-        self._root.after(6000, self._overlay.hide)
 
     # ------------------------------------------------------------------
 
@@ -678,7 +453,6 @@ class App:
         )
 
     def _log(self, msg: str, tag: str = "info") -> None:
-        """Append a line to the status log text widget (main thread only)."""
         try:
             widget = self._log_text
             widget.configure(state=tk.NORMAL)
@@ -688,11 +462,9 @@ class App:
         except Exception:
             pass
 
-    def _set_status(self, msg: str) -> None:
-        self._log(msg)
-
     def _quit(self) -> None:
         debug.write_summary(self._config.app_dir() / "debug_logs")
+        self._clear_all()
         if self._hotkeys:
             self._hotkeys.stop()
         if self._mutex:
