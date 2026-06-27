@@ -19,28 +19,26 @@ _RARITY_OPTION = {
 
 
 def build_trade_url(item: ParsedItem, mod_db, league: str, profile, min_pct: float = 0.8) -> str:
-    query: dict = {"status": {"option": STATUS_OPTION}, "stats": [], "filters": {}}
+    query: dict = {"status": {"option": STATUS_OPTION}}
+    filters: dict = {}
 
-    # Type Filters: เลือก rarity ตามไอเท็มเสมอ (เฉพาะ gear — currency/gem ไม่มี rarity)
-    rarity_opt = _RARITY_OPTION.get(item.rarity)
-    if rarity_opt:
-        query["filters"]["type_filters"] = {"filters": {"rarity": {"option": rarity_opt}}}
-
-    if item.rarity == Rarity.UNIQUE:                 # unique → ค้นด้วยชื่อ
+    if item.rarity == Rarity.UNIQUE:
+        # unique → ชื่ออย่างเดียว (ไม่ซ้ำ) ไม่ใส่ type/rarity กัน "search invalid"
         query["name"] = item.item_name
-        if item.base_type and item.base_type != item.item_name:
-            query["type"] = item.base_type
 
     elif not item.identified:                         # ยังไม่ส่อง → base + ilvl
         if item.base_type:
             query["type"] = item.base_type
         if item.item_level:
-            query["filters"]["misc_filters"] = {"filters": {"ilvl": {"min": item.item_level}}}
+            filters["misc_filters"] = {"filters": {"ilvl": {"min": item.item_level}}}
 
     else:                                             # rare/magic ส่องแล้ว → ตาม mod
         if item.base_type:
             query["type"] = item.base_type
-        filters = []
+        rarity_opt = _RARITY_OPTION.get(item.rarity)
+        if rarity_opt:
+            filters["type_filters"] = {"filters": {"rarity": {"option": rarity_opt}}}
+        stat_filters = []
         for mod in item.mods:
             sid = mod_db.find_stat_id(mod.text)
             if not sid:
@@ -48,9 +46,12 @@ def build_trade_url(item: ParsedItem, mod_db, league: str, profile, min_pct: flo
             f = {"id": sid, "disabled": False}
             if mod.value is not None:
                 f["value"] = {"min": round(mod.value * min_pct, 2)}
-            filters.append(f)
-        if filters:
-            query["stats"].append({"type": "and", "filters": filters})
+            stat_filters.append(f)
+        if stat_filters:
+            query["stats"] = [{"type": "and", "filters": stat_filters}]
+
+    if filters:                                       # ใส่ filters เฉพาะตอนมีจริง (กัน {} ว่าง)
+        query["filters"] = filters
 
     payload = {"query": query, "sort": {"price": "asc"}}
     base = profile.trade_web_url.format(league=urllib.parse.quote(league, safe=""))
