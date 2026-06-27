@@ -1,0 +1,47 @@
+test session: 2026-06-27 — commit a25cd41/4f6b001
+league: Runes of Aldur | fresh cache (cleared before test)
+
+=== ninja parse — 23 หมวดครบ ไม่มี 0 ===
+Currency         entries=49  ex_per_div=385.7  Chaos=37.8ex ✅
+Fragment         entries=22  ✅
+AbyssalBone      entries=15  ✅
+UncutGem         entries=42  ✅
+LineageGem       entries=75  ✅
+Essence          entries=82  ✅
+SoulCore         entries=42  ✅
+Idol             entries=28  ✅
+Rune             entries=142 ✅
+Omen             entries=40  ✅
+Expedition       entries=24  ✅
+Delirium         entries=26  ✅
+Catalyst         entries=28  ✅
+Verisium         entries=24  ✅
+UniqueWeapon     entries=148 sample=[Bluetongue 1347225ex] ✅
+UniqueArmour     entries=440 sample=[Temporalis 1624480ex] ✅
+UniqueAccessory  entries=87  sample=[Mageblood 238205ex]  ✅
+UniqueFlask      entries=6   ✅
+UniqueCharm      entries=12  ✅
+UniqueJewel      entries=14  ✅
+UniqueRelic      entries=5   ✅
+UniqueTablet     entries=9   ✅
+PrecursorTablet  entries=21  ✅
+
+=== HEALTH zero-categories ===
+(ว่าง — ไม่มีหมวดใดได้ 0) ✅
+
+=== SENSOR new-categories(scout) ===
+{'talismans','abyss','ultimatum','runes','map','incursion','waystones','fragments',
+ 'vaultkeys','sanctum','essences','vaal','ritual','lineagesupportgems','breach','uncutgems'}
+→ ทั้งหมดเป็น false positive เพราะ plural/mapping ต่างกันระหว่าง scout vs ninja
+  (uncutgems≠uncutgem, essences≠essence, runes≠rune ฯลฯ)
+  หมวดจริงที่ยังไม่มีใน ninja: waystones, talismans, sanctum, incursion, map, vaultkeys, vaal
+
+=== hover test ===
+Chaos Orb    → ~37.8ex ✅ (ไม่ regression จาก 38ex)
+Orb of Chance → แสดงราคา ✅
+Ire of Aldur  → แสดงราคา ✅
+Verisium      → แสดงราคา ✅
+
+=== สรุป ===
+PASS — 23 หมวดครบ, HEALTH ว่าง, ราคา Currency/Unique ถูกต้อง
+poe2scout merged: ninja=1381 replaced=0 new=2 total=1383
