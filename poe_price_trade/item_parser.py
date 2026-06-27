@@ -79,12 +79,6 @@ def parse_item(text: str, game_version: str = GameVersion.POE2) -> Optional[Pars
     identified = True
     mods: list[ModValue] = []
 
-    # rare/unique ที่ส่องแล้วต้องมีชื่อพิเศษ (2 บรรทัด: ชื่อ+base)
-    # ถ้ามีแค่บรรทัดเดียว (base อย่างเดียว) = ยังไม่ส่อง
-    # ใช้ตัดสินแทนบรรทัด "Unidentified" ที่ของ desecrated บางตัวไม่มี
-    if rarity in (Rarity.RARE, Rarity.UNIQUE) and len(name_lines) <= 1:
-        identified = False
-
     for section in sections[1:]:
         for line in section:
             if not line:
@@ -117,6 +111,17 @@ def parse_item(text: str, game_version: str = GameVersion.POE2) -> Optional[Pars
                     text=line.strip(),
                     value=_extract_mod_value(line),
                 ))
+
+    # Desecrated items may omit "Unidentified" text. Rare/unique with only
+    # 1 name line (= no special rare name) AND no mods = truly unidentified.
+    # Items with mods are identified even if they share name and base type.
+    if rarity in (Rarity.RARE, Rarity.UNIQUE) and len(name_lines) <= 1 and not mods:
+        identified = False
+
+    # ไอเท็มที่มี quality เกมเติม prefix คุณภาพ (Superior/Anomalous/Divergent/...) ข้างหน้า base
+    # ตัดคำแรกออกเมื่อมี quality — ไม่ต้องเดาว่า prefix คือคำอะไร
+    if quality > 0 and " " in base_type:
+        base_type = base_type.split(" ", 1)[1].strip()
 
     if not item_name:
         return None
