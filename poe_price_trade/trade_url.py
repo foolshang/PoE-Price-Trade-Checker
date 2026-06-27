@@ -22,15 +22,21 @@ def build_trade_url(item: ParsedItem, mod_db, league: str, profile, min_pct: flo
     query: dict = {"status": {"option": STATUS_OPTION}}
     filters: dict = {}
 
-    if item.rarity == Rarity.UNIQUE:
-        # unique → ชื่ออย่างเดียว (ไม่ซ้ำ) ไม่ใส่ type/rarity กัน "search invalid"
-        query["name"] = item.item_name
-
-    elif not item.identified:                         # ยังไม่ส่อง → base + ilvl
+    if not item.identified:
+        # ของไม่ส่องทุกชนิด (unique/rare/magic) → ค้นด้วย base + rarity + identified=no
+        # (ไม่มี mod/ชื่อ unique ให้ค้น เพราะเกมยังไม่เผยจนกว่าจะส่อง)
         if item.base_type:
             query["type"] = item.base_type
-        if item.item_level:
-            filters["misc_filters"] = {"filters": {"ilvl": {"min": item.item_level}}}
+        rarity_opt = _RARITY_OPTION.get(item.rarity)
+        if rarity_opt:
+            filters["type_filters"] = {"filters": {"rarity": {"option": rarity_opt}}}
+        filters["misc_filters"] = {"filters": {"identified": {"option": False}}}
+
+    elif item.rarity == Rarity.UNIQUE:
+        # unique ส่องแล้ว → ค้นด้วยชื่อ + base
+        query["name"] = item.item_name
+        if item.base_type and item.base_type != item.item_name:
+            query["type"] = item.base_type
 
     else:                                             # rare/magic ส่องแล้ว → ตาม mod
         if item.base_type:
