@@ -79,6 +79,12 @@ def parse_item(text: str, game_version: str = GameVersion.POE2) -> Optional[Pars
     identified = True
     mods: list[ModValue] = []
 
+    # rare/unique ที่ส่องแล้วต้องมีชื่อพิเศษ (2 บรรทัด: ชื่อ+base)
+    # ถ้ามีแค่บรรทัดเดียว (base อย่างเดียว) = ยังไม่ส่อง
+    # ใช้ตัดสินแทนบรรทัด "Unidentified" ที่ของ desecrated บางตัวไม่มี
+    if rarity in (Rarity.RARE, Rarity.UNIQUE) and len(name_lines) <= 1:
+        identified = False
+
     for section in sections[1:]:
         for line in section:
             if not line:
