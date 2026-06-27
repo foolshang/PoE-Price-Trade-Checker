@@ -1,0 +1,22 @@
+======================================================================
+A: current code (exchange/current/overview)
+https://poe.ninja/poe2/api/economy/exchange/current/overview?league=Runes%20of%20Aldur&type=Currency
+HTTP 200 | top-level keys: ['core', 'lines', 'items']
+first line keys: ['id', 'primaryValue', 'volumePrimaryValue', 'maxVolumeCurrency', 'maxVolumeRate', 'sparkline']
+first line: {"id": "chaos", "primaryValue": 0.104, "volumePrimaryValue": 158605, "maxVolumeCurrency": "divine", "maxVolumeRate": 9.62, "sparkline": {"totalChange": -9.98, "data": [-9.34, -13.9, -6.55, 0.54, 1.99, 1.29, -9.98]}}
+
+======================================================================
+B: currencyexchange leagueName/overviewName
+https://poe.ninja/poe2/api/economy/currencyexchange/overview?leagueName=Runes%20of%20Aldur&overviewName=Currency
+HTTP ERROR 404
+
+======================================================================
+C: currencyoverview poe1-style path on poe2
+https://poe.ninja/poe2/api/data/currencyoverview?league=Runes%20of%20Aldur&type=Currency
+HTTP ERROR 404
+
+======================================================================
+D: itemoverview poe1-style
+https://poe.ninja/poe2/api/data/itemoverview?league=Runes%20of%20Aldur&type=Currency
+HTTP ERROR 404
+

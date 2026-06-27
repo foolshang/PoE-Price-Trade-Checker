@@ -1,0 +1,58 @@
+probe_ninja_catalog.py — 2026-06-27
+league: Runes of Aldur
+endpoint base: https://poe.ninja/poe2/api/economy/exchange/current/overview
+
+=== GENERAL (exchange endpoint) ===
+  OK  Currency             type=Currency           ep=exchange hits~52
+  OK  Fragments            type=Fragments          ep=exchange hits~25
+  OK  Abyssal Bones        type=Abyss              ep=exchange hits~18
+  OK  Uncut Gems           type=UncutGems          ep=exchange hits~45
+  --  Lineage Gems         (ไม่เจอ — ลอง type อื่น)
+  OK  Essences             type=Essences           ep=exchange hits~85
+  OK  Soul Cores           type=SoulCores          ep=exchange hits~45
+  OK  Idols                type=Idols              ep=exchange hits~31
+  OK  Runes                type=Runes              ep=exchange hits~145
+  --  Omens                (ไม่เจอ — ลอง type อื่น)
+  OK  Expedition           type=Expedition         ep=exchange hits~27
+  OK  Liquid Emotions      type=Delirium           ep=exchange hits~29
+  --  Catalysts            (ไม่เจอ — ลอง Catalyst/Catalysts; profiles.py ใช้ "Breach" อยู่)
+  OK  Verisium             type=Verisium           ep=exchange hits~27
+
+=== EQUIPMENT + ATLAS (itemoverview — PoE2 ไม่รองรับ) ===
+  --  Unique Weapons       (PoE2 ไม่มี itemoverview → ใช้ poe2scout แทน)
+  --  Unique Armours       (PoE2 ไม่มี itemoverview → ใช้ poe2scout แทน)
+  --  Unique Accessories   (PoE2 ไม่มี itemoverview → ใช้ poe2scout แทน)
+  --  Unique Flasks        (PoE2 ไม่มี itemoverview → ใช้ poe2scout แทน)
+  --  Unique Charms        (PoE2 ไม่มี itemoverview → ใช้ poe2scout แทน)
+  --  Unique Jewels        (PoE2 ไม่มี itemoverview → ใช้ poe2scout แทน)
+  --  Unique Relics        (PoE2 ไม่มี itemoverview → ใช้ poe2scout แทน)
+  --  Unique Tablets       (PoE2 ไม่มี itemoverview → ใช้ poe2scout แทน)
+  --  Precursor Tablets    (PoE2 ไม่มี itemoverview → ใช้ poe2scout แทน)
+
+=== ANALYSIS ===
+CONFIRMED in exchange endpoint (profiles.py อัปเดตได้ทันที):
+  Currency      → type=Currency    ✅ (มีแล้ว)
+  Fragment      → type=Fragments   ✅ (มีแล้ว)
+  AbyssalBone   → type=Abyss       ✅ (มีแล้ว)
+  UncutGem      → type=UncutGems   ✅ (มีแล้ว)
+  Essence       → type=Essences    ✅ (มีแล้ว)
+  SoulCore      → type=SoulCores   ✅ (มีแล้ว)
+  Idol          → type=Idols       ✅ (มีแล้ว)
+  Rune          → type=Runes       ✅ (มีแล้ว)
+  Expedition    → type=Expedition  ✅ (มีแล้ว)
+  Delirium      → type=Delirium    🆕 NEW — "Liquid Emotions" (ต้องเพิ่ม profiles.py)
+  Verisium      → type=Verisium    ✅ (มีแล้ว)
+
+MISSING / NEEDS FURTHER PROBE:
+  Lineage Gems  → type ไม่รู้ (ลอง LineageSupportGem/LineageGem/Lineage แล้วไม่เจอ)
+  Omens         → type ไม่รู้ (ลอง Omen/Omens แล้วไม่เจอ)
+  Catalysts     → profiles.py ใช้ type=Breach — ยังไม่ได้ probe "Breach" ใน script นี้
+
+EQUIPMENT: PoE2 ไม่มี /itemoverview endpoint
+  → Uniques ทุกหมวดต้องดึงจาก poe2scout (มี integration แล้ว)
+  → Precursor Tablets อาจมีใน exchange endpoint แต่ยังไม่ได้ probe type string ที่ถูก
+
+TODO (ถ้าต้องการขยาย):
+  1. probe type=Breach สำหรับ Catalysts
+  2. probe type strings สำหรับ Lineage Gems และ Omens (อาจยังไม่มีข้อมูลใน ninja)
+  3. probe type=PrecursorTablet หรือ type=Tablet ใน exchange endpoint
