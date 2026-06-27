@@ -7,7 +7,7 @@ from typing import Optional
 @dataclass
 class CategoryConfig:
     name: str
-    endpoint_type: str   # "currencyoverview" | "itemoverview" | "exchange_overview"
+    endpoint_type: str   # "currencyoverview" | "itemoverview" | "exchange_overview" | "stash_overview"
     api_type: str        # value passed as ?type= to poe.ninja
 
 
@@ -34,6 +34,9 @@ class GameProfile:
     trade_web_url: str = ""
 
     display_name: str = ""
+
+    # PoE2 equipment/unique endpoint (stash/current/item/overview)
+    ninja_stash_url: str = ""
 
     def get_category(self, name: str) -> Optional[CategoryConfig]:
         return next((c for c in self.categories if c.name == name), None)
@@ -81,26 +84,40 @@ POE1_PROFILE = GameProfile(
     trade_web_url="https://www.pathofexile.com/trade/search/{league}",
 )
 
-# PoE2: probe 2026-06-26 confirmed endpoint A (exchange/current/overview) works.
-# Response: {core, lines, items} — primaryValue = price in divine.
-# Unique/Rare/Gems not in poe.ninja API → use F5 browser trade instead.
+# PoE2: catalog confirmed 2026-06-27 from Network tab.
+# GENERAL  → exchange/current/overview  (primaryValue = divine, core.rates.exalted = ex/div)
+# EQUIPMENT → stash/current/item/overview (same JSON shape)
 POE2_PROFILE = GameProfile(
     game_version="poe2",
     display_name="Path of Exile 2",
     ninja_currency_url="https://poe.ninja/poe2/api/economy/exchange/current/overview",
     ninja_item_url="https://poe.ninja/poe2/api/economy/exchange/current/overview",
     categories=[
-        CategoryConfig("Currency",     "exchange_overview", "Currency"),
-        CategoryConfig("Fragment",     "exchange_overview", "Fragments"),
-        CategoryConfig("AbyssalBone",  "exchange_overview", "Abyss"),
-        CategoryConfig("UncutGem",     "exchange_overview", "UncutGems"),
-        CategoryConfig("Essence",      "exchange_overview", "Essences"),
-        CategoryConfig("SoulCore",     "exchange_overview", "SoulCores"),
-        CategoryConfig("Idol",         "exchange_overview", "Idols"),
-        CategoryConfig("Rune",         "exchange_overview", "Runes"),
-        CategoryConfig("Expedition",   "exchange_overview", "Expedition"),
-        CategoryConfig("Catalyst",     "exchange_overview", "Breach"),
-        CategoryConfig("Verisium",     "exchange_overview", "Verisium"),
+        # ── GENERAL (exchange_overview) ──
+        CategoryConfig("Currency",         "exchange_overview", "Currency"),
+        CategoryConfig("Fragment",         "exchange_overview", "Fragments"),
+        CategoryConfig("AbyssalBone",      "exchange_overview", "Abyss"),
+        CategoryConfig("UncutGem",         "exchange_overview", "UncutGems"),
+        CategoryConfig("LineageGem",       "exchange_overview", "LineageSupportGems"),
+        CategoryConfig("Essence",          "exchange_overview", "Essences"),
+        CategoryConfig("SoulCore",         "exchange_overview", "SoulCores"),
+        CategoryConfig("Idol",             "exchange_overview", "Idols"),
+        CategoryConfig("Rune",             "exchange_overview", "Runes"),
+        CategoryConfig("Omen",             "exchange_overview", "Ritual"),
+        CategoryConfig("Expedition",       "exchange_overview", "Expedition"),
+        CategoryConfig("Delirium",         "exchange_overview", "Delirium"),
+        CategoryConfig("Catalyst",         "exchange_overview", "Breach"),
+        CategoryConfig("Verisium",         "exchange_overview", "Verisium"),
+        # ── EQUIPMENT / ATLAS (stash_overview) ──
+        CategoryConfig("UniqueWeapon",     "stash_overview", "UniqueWeapons"),
+        CategoryConfig("UniqueArmour",     "stash_overview", "UniqueArmours"),
+        CategoryConfig("UniqueAccessory",  "stash_overview", "UniqueAccessories"),
+        CategoryConfig("UniqueFlask",      "stash_overview", "UniqueFlasks"),
+        CategoryConfig("UniqueCharm",      "stash_overview", "UniqueCharms"),
+        CategoryConfig("UniqueJewel",      "stash_overview", "UniqueJewels"),
+        CategoryConfig("UniqueRelic",      "stash_overview", "UniqueSanctumRelics"),
+        CategoryConfig("UniqueTablet",     "stash_overview", "UniqueTablets"),
+        CategoryConfig("PrecursorTablet",  "stash_overview", "PrecursorTablets"),
     ],
     trade_search_url="https://www.pathofexile.com/api/trade2/search/{league}",
     trade_fetch_url="https://www.pathofexile.com/api/trade2/fetch/{ids}",
@@ -110,6 +127,7 @@ POE2_PROFILE = GameProfile(
     leagues_realm="poe2",
     default_leagues=["Runes of Aldur", "HC Runes of Aldur", "Standard", "Hardcore"],
     trade_web_url="https://www.pathofexile.com/trade2/search/{league}",
+    ninja_stash_url="https://poe.ninja/poe2/api/economy/stash/current/item/overview",
 )
 
 PROFILES: dict[str, GameProfile] = {

@@ -61,6 +61,7 @@ class PriceSnapshot:
     fetched_at: datetime
     league: str
     game_version: str
+    category_counts: dict[str, int] = field(default_factory=dict)
 
     def is_stale(self, max_age_seconds: int = 1800) -> bool:
         age = (datetime.now() - self.fetched_at).total_seconds()

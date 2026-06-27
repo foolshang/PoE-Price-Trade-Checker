@@ -31,6 +31,7 @@ class PriceRepository:
         self._cache_dir = cache_dir
         self._divine_chaos_rate: float = 200.0
         self._loading = False
+        self._degraded: list[str] = []
 
     # ------------------------------------------------------------------
     # Public API
@@ -56,10 +57,18 @@ class PriceRepository:
             log.info("Fetching prices from poe.ninja — league=%s gv=%s", league, self._profile.game_version)
             snapshot = self._client.fetch_all(league)
 
+            # health-check: หมวดที่ได้ 0 รายการ (type อาจเปลี่ยนใน patch ใหม่)
+            zero = [n for n, c in snapshot.category_counts.items() if c == 0]
+            if zero:
+                log.warning("poe.ninja หมวดได้ 0: %s — type อาจเปลี่ยน", zero)
+                from . import debug as _dbg
+                _dbg.event(f"HEALTH zero-categories: {zero}")
+
             if self._profile.is_poe2():
                 snapshot = self._merge_poe2scout(snapshot, league)
 
             with self._lock:
+                self._degraded = zero
                 self._apply_snapshot(snapshot)
                 self._loading = False
             self._save_disk_cache(snapshot, league)
@@ -104,6 +113,11 @@ class PriceRepository:
         with self._lock:
             return self._snapshot
 
+    def degraded(self) -> list[str]:
+        """คืนรายชื่อหมวดที่ poe.ninja ส่งกลับ 0 รายการ (type อาจเปลี่ยน)."""
+        with self._lock:
+            return list(self._degraded)
+
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
@@ -136,16 +150,34 @@ class PriceRepository:
             total = len(merged) + len(new_from_scout)
             debug.event(f"poe2scout merged: ninja={len(snapshot.entries)} replaced={replaced} new={len(new_from_scout)} total={total}")
             log.info("poe2scout: replaced=%d new=%d total=%d", replaced, len(new_from_scout), total)
+
+            # เซนเซอร์: จับหมวดใหม่ใน scout ที่ยังไม่มีใน ninja catalog
+            try:
+                scout_cats = poe2scout_client.fetch_category_ids(league)
+                known = {self._norm_cat(c.name) for c in self._profile.categories}
+                new_cats = {c for c in scout_cats if self._norm_cat(c) not in known}
+                if new_cats:
+                    log.warning("scout มีหมวดที่ ninja ยังไม่มี: %s", new_cats)
+                    debug.event(f"SENSOR new-categories(scout): {new_cats}")
+            except Exception as se:
+                log.debug("catalog sensor skipped: %s", se)
+
             return PriceSnapshot(
                 entries=merged + new_from_scout,
                 fetched_at=snapshot.fetched_at,
                 league=snapshot.league,
                 game_version=snapshot.game_version,
+                category_counts=snapshot.category_counts,
             )
         except Exception as e:
             debug.event(f"poe2scout merge FAILED: {e}")
             log.warning("poe2scout merge failed, using poe.ninja only: %s", e)
             return snapshot
+
+    @staticmethod
+    def _norm_cat(name: str) -> str:
+        """lowercase + ตัด 'unique' ออก เพื่อเทียบหมวด scout vs ninja หยาบๆ."""
+        return name.lower().replace("unique", "").replace(" ", "").replace("_", "")
 
     def _apply_snapshot(self, snapshot: PriceSnapshot) -> None:
         self._snapshot = snapshot

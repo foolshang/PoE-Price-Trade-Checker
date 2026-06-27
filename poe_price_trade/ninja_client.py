@@ -102,52 +102,49 @@ def _parse_item_overview(data: dict, category: str, game_version: str) -> list[P
     return entries
 
 
-def _parse_exchange_overview(data: dict, category: str, game_version: str) -> list[PriceEntry]:
-    """PoE2 exchange/current/overview. primaryValue = ค่าไอเท็มเทียบ reference currency.
-    คิดเป็นอัตราส่วน: หารด้วย primaryValue ของ Divine/Exalted เพื่อได้หน่วยจริง (กันพลาดไม่ว่า reference จะเป็นอะไร)."""
+def _parse_overview(data: dict, category: str, game_version: str) -> list[PriceEntry]:
+    """PoE2 exchange + stash overview. primaryValue = ราคาใน divine, core.rates.exalted = ex ต่อ div.
+    ใช้ core.rates ก่อน ถ้าไม่มีค่อย fallback หา exalted line เอง (กันโครงสร้างเปลี่ยน)."""
+    core = data.get("core", {}) or {}
+    rates = core.get("rates", {}) or {}
+    ex_per_div = float(rates.get("exalted", 0) or 0)
+
     id_to_name: dict[str, str] = {}
     for it in data.get("items", []):
         if it.get("id"):
             id_to_name[it["id"]] = it.get("name") or it.get("text") or it["id"]
 
-    pv: dict[str, float] = {}
+    if ex_per_div <= 0:
+        for ln in data.get("lines", []):
+            nm = (ln.get("name") or id_to_name.get(ln.get("id", ""), "")).lower()
+            if nm in ("exalted orb", "exalted") and float(ln.get("primaryValue", 0) or 0) > 0:
+                ex_per_div = 1.0 / float(ln["primaryValue"])
+                break
+
+    entries: list[PriceEntry] = []
     for ln in data.get("lines", []):
-        if ln.get("id"):
-            pv[ln["id"]] = float(ln.get("primaryValue", 0) or 0)
-
-    def anchor(*keys: str) -> float:
-        for k in keys:
-            if pv.get(k, 0) > 0:
-                return pv[k]
-        for iid, nm in id_to_name.items():           # fallback หาโดยชื่อ
-            if nm.lower() in keys and pv.get(iid, 0) > 0:
-                return pv[iid]
-        return 0.0
-
-    pv_div   = anchor("divine", "divine orb")
-    pv_exalt = anchor("exalted", "exalt", "exalted orb")
-
-    entries = []
-    for ln in data.get("lines", []):
-        iid = ln.get("id", "")
-        v = float(ln.get("primaryValue", 0) or 0)
-        if not iid or v <= 0:
+        pv = float(ln.get("primaryValue", 0) or 0)
+        if pv <= 0:
             continue
-        name = id_to_name.get(iid) or iid.replace("-", " ").title()
+        name = (ln.get("name")
+                or id_to_name.get(ln.get("id", ""))
+                or str(ln.get("itemId") or ln.get("id") or ""))
+        if not name:
+            continue
         entries.append(PriceEntry(
             item_name=name,
             normalized_name=normalize(name),
             chaos_value=0.0,
-            divine_value=(v / pv_div) if pv_div > 0 else 0.0,
-            exalted_value=(v / pv_exalt) if pv_exalt > 0 else 0.0,
-            listing_count=int(ln.get("volumePrimaryValue", 0) or 0),
+            divine_value=pv,
+            exalted_value=(pv * ex_per_div) if ex_per_div > 0 else 0.0,
+            listing_count=int(ln.get("listingCount") or ln.get("volumePrimaryValue") or 0),
             game_version=game_version,
             category=category,
-            trade_id=iid,
+            trade_id=ln.get("detailsId") or ln.get("id"),
         ))
     from . import debug
-    debug.event(f"ninja parse {category}: entries={len(entries)} pv_div={pv_div} pv_exalt={pv_exalt} "
-                f"sample={[ (e.item_name, round(e.exalted_value,2)) for e in entries[:4] ]}")
+    debug.event(f"ninja parse {category}: entries={len(entries)} ex_per_div={round(ex_per_div,1)} "
+                f"sample={[(e.item_name, round(e.exalted_value, 1)) for e in entries[:3]]}")
     return entries
 
 
@@ -174,28 +171,40 @@ class NinjaClient:
             data = _get(url)
             return _parse_item_overview(data, cat.name, gv)
 
-        else:  # exchange_overview (PoE2)
+        elif cat.endpoint_type == "stash_overview":     # PoE2 equipment/atlas
+            url = (
+                f"{self._profile.ninja_stash_url}"
+                f"?league={urllib.parse.quote(league)}&type={cat.api_type}"
+            )
+            data = _get(url)
+            return _parse_overview(data, cat.name, gv)
+
+        else:  # exchange_overview (PoE2 GENERAL)
             url = (
                 f"{self._profile.ninja_currency_url}"
                 f"?league={urllib.parse.quote(league)}&type={cat.api_type}"
             )
             data = _get(url)
-            return _parse_exchange_overview(data, cat.name, gv)
+            return _parse_overview(data, cat.name, gv)
 
     def fetch_all(self, league: str) -> PriceSnapshot:
         entries: list[PriceEntry] = []
+        counts: dict[str, int] = {}
         for cat in self._profile.categories:
             try:
                 batch = self.fetch_category(league, cat)
+                counts[cat.name] = len(batch)
                 entries.extend(batch)
                 log.debug("Fetched %d entries for %s/%s", len(batch), cat.name, league)
             except Exception as e:
+                counts[cat.name] = 0
                 log.warning("Skip category %s: %s", cat.name, e)
         return PriceSnapshot(
             entries=entries,
             fetched_at=datetime.now(),
             league=league,
             game_version=self._profile.game_version,
+            category_counts=counts,
         )
 
     def fetch_leagues(self) -> list[str]:

@@ -424,6 +424,7 @@ class App:
 
         def _on_done(snapshot):
             count = len(snapshot.entries) if snapshot else 0
+            degraded = self._repo.degraded()
             def _update():
                 self._scanner = Scanner(self._repo)
                 debug.event(f"ninja loaded entries={count} league={league}")
@@ -431,6 +432,8 @@ class App:
                     self._log(f"⚠ 0 รายการ ({league}) — ลองเปลี่ยนเป็น Standard", "warn")
                 else:
                     self._log(f"✓ พร้อม — {count} รายการ ({league})", "ok")
+                if degraded:
+                    self._log(f"⚠ {len(degraded)} หมวดโหลด 0 — ดู log", "warn")
             self._root.after_idle(_update)
 
         def _on_error(exc):

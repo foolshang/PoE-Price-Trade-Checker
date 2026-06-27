@@ -159,3 +159,20 @@ def fetch_all(league: str) -> list[PriceEntry]:
     uniques    = _fetch_uniques(league, div_price)
     log.info("poe2scout: currencies=%d uniques=%d", len(currencies), len(uniques))
     return currencies + uniques
+
+
+def fetch_category_ids(league: str) -> set[str]:
+    """คืน set ของ CategoryApiId ที่มีอยู่ใน poe2scout (เซนเซอร์จับหมวดใหม่).
+    ดึงจาก /Items เพื่อเก็บ CategoryApiId ของ unique items."""
+    L = urllib.parse.quote(league, safe="")
+    cats: set[str] = set()
+    try:
+        items = _get(f"/Leagues/{L}/Items")
+        if isinstance(items, list):
+            for x in items:
+                c = x.get("CategoryApiId")
+                if c:
+                    cats.add(str(c).lower())
+    except Exception as e:
+        log.debug("poe2scout fetch_category_ids failed: %s", e)
+    return cats
