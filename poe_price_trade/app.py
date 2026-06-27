@@ -9,7 +9,7 @@ from tkinter import messagebox, ttk
 from typing import Optional
 
 from .capture import get_cursor_pos, get_screen_size, set_dpi_aware
-from .clipboard import read_text
+from .clipboard import read_text, write_text
 from .config import AppConfig
 from . import debug
 from .hotkeys import HotkeyManager
@@ -314,11 +314,18 @@ class App:
     def _on_f5_trade(self) -> None:
         def _run():
             try:
+                import time as _t
+                write_text("")                       # ① reset ต้น — กันอ่านค่าเก่า
                 self._simulate_ctrl_c()
-                time.sleep(0.22)
-                text = read_text() or ""
-                if "Rarity:" not in text and "Item Class:" not in text:
-                    self._root.after_idle(lambda: self._log("⚠ ชี้ที่ item แล้วกด F5", "warn"))
+                text = ""
+                for _ in range(24):                  # poll รอจนเกมเขียน item ใหม่ (~1.2s)
+                    _t.sleep(0.05)
+                    cur = read_text() or ""
+                    if "Item Class:" in cur or "Rarity:" in cur:
+                        text = cur
+                        break
+                if not text:
+                    self._root.after_idle(lambda: self._log("⚠ ชี้ที่ item แล้วกด F5 อีกครั้ง", "warn"))
                     return
                 item = parse_item(text, self._gv_var.get())
                 if not item:
@@ -326,8 +333,10 @@ class App:
                     return
                 self._mod_db.load()
                 url = open_trade(item, self._mod_db, self._league_var.get(), self._profile)
+                write_text("")                       # ② reset ท้าย — เก็บกวาดหลังเปิด browser
                 resolved = sum(1 for m in item.mods if self._mod_db.find_stat_id(m.text))
-                debug.event(f"F5 '{item.item_name}' mods={resolved}/{len(item.mods)} url={url[:80]}")
+                debug.event(f"F5 '{item.item_name}' rarity={item.rarity} id={item.identified} "
+                            f"base='{item.base_type}' mods={resolved}/{len(item.mods)} url={url[:80]}")
                 self._root.after_idle(
                     lambda n=item.item_name: self._log(f"🔎 เปิด trade: {n}", "ok"))
             except Exception as e:

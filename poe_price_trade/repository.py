@@ -154,7 +154,8 @@ class PriceRepository:
             # เซนเซอร์: จับหมวดใหม่ใน scout ที่ยังไม่มีใน ninja catalog
             try:
                 scout_cats = poe2scout_client.fetch_category_ids(league)
-                known = {self._norm_cat(c.name) for c in self._profile.categories}
+                known = ({self._norm_cat(c.name) for c in self._profile.categories}
+                         | {self._norm_cat(c.api_type) for c in self._profile.categories})
                 new_cats = {c for c in scout_cats if self._norm_cat(c) not in known}
                 if new_cats:
                     log.warning("scout มีหมวดที่ ninja ยังไม่มี: %s", new_cats)
@@ -176,8 +177,9 @@ class PriceRepository:
 
     @staticmethod
     def _norm_cat(name: str) -> str:
-        """lowercase + ตัด 'unique' ออก เพื่อเทียบหมวด scout vs ninja หยาบๆ."""
-        return name.lower().replace("unique", "").replace(" ", "").replace("_", "")
+        """lowercase + ตัด 'unique' + ตัด plural 's' ท้าย เพื่อเทียบหมวด scout vs ninja."""
+        n = name.lower().replace("unique", "").replace(" ", "").replace("_", "")
+        return n[:-1] if n.endswith("s") else n
 
     def _apply_snapshot(self, snapshot: PriceSnapshot) -> None:
         self._snapshot = snapshot
