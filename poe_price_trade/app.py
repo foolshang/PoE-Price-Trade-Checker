@@ -89,7 +89,7 @@ class App:
         )
         debug.event(f"start gv={gv} league={league} screen={sw}x{sh}")
         self._log(f"เริ่มต้น {gv} · league: {league} · จอ {sw}×{sh}", "dim")
-        self._log("F4 Scan+Hover  |  F5 Trade browser  |  Esc ล้าง  |  F8 Settings", "dim")
+        self._log("F4 Scan+Hover  |  F5 Trade browser  |  F8 Settings", "dim")
 
         if self._config.get("auto_league", True):
             self._fetch_leagues_for_current_gv(auto_pick=True)
@@ -158,7 +158,7 @@ class App:
         self._log_text.tag_config("dim",  foreground="#666666")
 
         # Legend
-        legend = "F4 Scan+Hover  |  F5 Trade browser  |  Esc ล้าง  |  F8 Settings  |  Ctrl+Alt+Q Quit"
+        legend = "F4 Scan+Hover  |  F5 Trade browser  |  F8 Settings  |  Ctrl+Alt+Q Quit"
         tk.Label(frame, text=legend, bg=BG, fg="#666", font=FONT_SMALL, justify=tk.LEFT).grid(
             row=4, column=0, columnspan=2, pady=(4, 0))
 
@@ -188,11 +188,6 @@ class App:
         hkm.add(self._config.get("hotkey_trade", "F5"),        self._on_f5_trade)
         hkm.add(self._config.get("hotkey_settings", "F8"),     self._open_settings)
         hkm.add(self._config.get("hotkey_quit", "Ctrl+Alt+Q"), self._quit)
-        clear_key = self._config.get("hotkey_clear", "Esc")
-        try:
-            hkm.add(clear_key, self._clear_all)
-        except Exception:
-            log.warning("Could not register clear hotkey: %s", clear_key)
         hkm.start()
         hkm.wait_ready()
         self._hotkeys = hkm

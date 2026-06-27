@@ -125,7 +125,6 @@ class SettingsWindow:
         specs = [
             ("hotkey_scan",     "Scan Prices (F4):"),
             ("hotkey_trade",    "Trade Browser (F5):"),
-            ("hotkey_clear",    "Clear Overlay (Esc):"),
             ("hotkey_settings", "Settings:"),
             ("hotkey_quit",     "Quit:"),
         ]
@@ -149,7 +148,7 @@ class SettingsWindow:
     # ------------------------------------------------------------------
 
     def _load_from_config(self) -> None:
-        str_keys = ("game_version", "hotkey_scan", "hotkey_trade", "hotkey_clear",
+        str_keys = ("game_version", "hotkey_scan", "hotkey_trade",
                     "hotkey_settings", "hotkey_quit", "log_level", "match_threshold",
                     "price_offset_px")
         for key in str_keys:
@@ -163,7 +162,7 @@ class SettingsWindow:
             self._vars["prefer_hardcore"].set(bool(self._config.get("prefer_hardcore", False)))
 
     def _apply(self) -> None:
-        for key in ("game_version", "hotkey_scan", "hotkey_trade", "hotkey_clear",
+        for key in ("game_version", "hotkey_scan", "hotkey_trade",
                     "hotkey_settings", "hotkey_quit", "log_level"):
             if key in self._vars:
                 self._config.set(key, self._vars[key].get())

@@ -25,7 +25,6 @@ _DEFAULTS: dict = {
     "price_offset_px": 2,
     "hotkey_scan": "F4",
     "hotkey_trade": "F5",
-    "hotkey_clear": "Esc",
     "hotkey_settings": "F8",
     "hotkey_quit": "Ctrl+Alt+Q",
     "match_threshold": 0.80,
