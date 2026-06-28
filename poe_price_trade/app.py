@@ -322,6 +322,7 @@ class App:
                 if not text:
                     self._root.after_idle(lambda: self._log("⚠ ชี้ที่ item แล้วกด F5 อีกครั้ง", "warn"))
                     return
+                debug.raw_item(text)
                 item = parse_item(text, self._gv_var.get())
                 if not item:
                     self._root.after_idle(lambda: self._log("⚠ อ่าน item ไม่ได้", "warn"))

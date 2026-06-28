@@ -11,6 +11,7 @@ log = logging.getLogger("poe.debug")
 _session: list[str] = []
 _session_ts: str = ""
 _MAX_SESSIONS = 10
+_debug_dir: "Path | None" = None
 
 
 def _git_hash() -> str:
@@ -24,8 +25,9 @@ def _git_hash() -> str:
 
 
 def setup(debug_dir: Path) -> None:
-    global _session_ts
+    global _session_ts, _debug_dir
     debug_dir.mkdir(parents=True, exist_ok=True)
+    _debug_dir = debug_dir
     _session_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     if DEBUG:
@@ -46,6 +48,16 @@ def event(msg: str) -> None:
     line = f"{datetime.now().strftime('%H:%M:%S')} {msg}"
     _session.append(line)
     log.info(msg)
+
+
+def raw_item(text: str) -> None:
+    """เขียน raw clipboard text ของ item ล่าสุดลง last_raw_item.txt (overwrite ทุกครั้ง)."""
+    if _debug_dir is None:
+        return
+    try:
+        (_debug_dir / "last_raw_item.txt").write_text(text, encoding="utf-8")
+    except Exception:
+        pass
 
 
 def write_summary(debug_dir: Path) -> None:
