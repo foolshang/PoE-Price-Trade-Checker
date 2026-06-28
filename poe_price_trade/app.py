@@ -11,7 +11,7 @@ from typing import Optional
 from .capture import get_cursor_pos, get_screen_size, set_dpi_aware
 from .clipboard import read_text, write_text
 from .config import AppConfig
-from . import debug
+from . import debug, __version__
 from .hotkeys import HotkeyManager
 from .item_parser import parse_item
 from .models import ScanResult
@@ -55,7 +55,7 @@ class App:
         debug.setup(self._config.app_dir() / "debug_logs")
 
         self._root = tk.Tk()
-        self._root.title("PoE Price & Trade Checker")
+        self._root.title(f"PoE Price & Trade Checker  v{__version__}")
         self._root.configure(bg="#1C1C1C")
         self._root.resizable(False, False)
         self._root.protocol("WM_DELETE_WINDOW", self._quit)
@@ -88,7 +88,7 @@ class App:
             self._profile.default_leagues[0] if self._profile.default_leagues else "Standard"
         )
         debug.event(f"start gv={gv} league={league} screen={sw}x{sh}")
-        self._log(f"เริ่มต้น {gv} · league: {league} · จอ {sw}×{sh}", "dim")
+        self._log(f"v{__version__} · {gv} · league: {league} · จอ {sw}×{sh}", "dim")
         self._log("F4 Scan+Hover  |  F5 Trade browser  |  F8 Settings", "dim")
 
         if self._config.get("auto_league", True):
