@@ -22,6 +22,9 @@ _STACK_SIZE = re.compile(r"^Stack Size:\s*[\d,]+/[\d,]+$", re.IGNORECASE)
 # Mod value extraction: matches "... +123 ..." or "... 45% ..."
 _VALUE_PATTERN = re.compile(r"[-+]?\d+(?:\.\d+)?")
 
+# Mod header ของ PoE2 clipboard: { Implicit Modifier }, { Prefix Modifier "..." }, { Desecrated ... }
+_MOD_HEADER = re.compile(r"^\{.*\bModifier\b.*\}$", re.IGNORECASE)
+
 
 def _extract_mod_value(text: str) -> Optional[float]:
     m = _VALUE_PATTERN.search(text)
@@ -79,33 +82,55 @@ def parse_item(text: str, game_version: str = GameVersion.POE2) -> Optional[Pars
     identified = True
     mods: list[ModValue] = []
 
+    # เก็บ mod จาก header { ... Modifier } เป็นหลัก (ตรงกับ in-game search ของเกม)
+    # mod = บรรทัดที่ตามหลัง header เท่านั้น → stat อาวุธ (Physical Damage ฯลฯ) ไม่ถูกเก็บ
+    # desecrated → ข้าม (เกมไม่เอามาค้น) | ถ้า clipboard ไม่มี header → fallback heuristic เดิม
+    has_mod_headers = any(_MOD_HEADER.match(ln) for s in sections[1:] for ln in s)
+    pending: str | None = None   # ประเภท mod จาก header ล่าสุด (None = ไม่ใช่ mod)
+
     for section in sections[1:]:
         for line in section:
             if not line:
                 continue
+            # ── metadata ──
             if _CORRUPTED.match(line):
-                corrupted = True
-            elif _UNIDENTIFIED.match(line):
-                identified = False
-            elif (m := _ITEM_LEVEL.match(line)):
-                item_level = int(m.group(1))
-            elif (m := _QUALITY.match(line)):
-                quality = int(m.group(1))
-            elif _NOTE.match(line) or _STACK_SIZE.match(line):
-                pass  # Skip
-            elif (
-                not line.startswith("Requirements:") and
-                not line.startswith("Sockets:") and
-                not line.startswith("Level:") and
-                not line.startswith("Str:") and
-                not line.startswith("Dex:") and
-                not line.startswith("Int:") and
+                corrupted = True; pending = None; continue
+            if _UNIDENTIFIED.match(line):
+                identified = False; pending = None; continue
+            if (m := _ITEM_LEVEL.match(line)):
+                item_level = int(m.group(1)); pending = None; continue
+            if (m := _QUALITY.match(line)):
+                quality = int(m.group(1)); pending = None; continue
+
+            # ── header { ... Modifier ... } → กำหนดประเภท mod บรรทัดถัดไป ──
+            if _MOD_HEADER.match(line):
+                pending = "desecrated" if "desecrated" in line.lower() else "keep"
+                continue
+
+            # ── บรรทัด mod ที่ตามหลัง header ──
+            if pending is not None:
+                if pending == "keep":
+                    mods.append(ModValue(
+                        stat_id="",  # Filled in later by ModDatabase.resolve()
+                        text=line.strip(),
+                        value=_extract_mod_value(line),
+                    ))
+                pending = None            # 1 header = 1 mod line → consume แล้ว reset
+                continue
+
+            # ── fallback: clipboard ไม่มี header { } (copy โหมดธรรมดา) → heuristic เดิม ──
+            if has_mod_headers:
+                continue   # item นี้ใช้ header-driven → ไม่ใช้ fallback
+            if _NOTE.match(line) or _STACK_SIZE.match(line):
+                continue
+            if (
+                not line.startswith(("Requirements:", "Requires:", "Sockets:", "Level:",
+                                     "Str:", "Dex:", "Int:")) and
                 not re.match(r"^(Armour|Evasion|Energy Shield|Ward|Block):", line) and
                 not re.match(r"^(Damage|APS|Critical|Attacks|Casts|DPS):", line, re.IGNORECASE) and
-                not re.match(r"^(Physical|Elemental|Chaos) Damage:", line, re.IGNORECASE) and
+                not re.match(r"^(Physical|Elemental|Chaos|Cold|Fire|Lightning) Damage:", line, re.IGNORECASE) and
                 _VALUE_PATTERN.search(line)
             ):
-                # Looks like a mod line
                 mods.append(ModValue(
                     stat_id="",  # Filled in later by ModDatabase.resolve()
                     text=line.strip(),
