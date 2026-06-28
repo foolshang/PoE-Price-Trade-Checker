@@ -46,7 +46,7 @@ def build_trade_url(item: ParsedItem, mod_db, league: str, profile, min_pct: flo
             filters["type_filters"] = {"filters": {"rarity": {"option": rarity_opt}}}
         stat_filters = []
         for mod in item.mods:
-            sid = mod_db.find_stat_id(mod.text)
+            sid = mod_db.find_stat_id(mod.text, getattr(mod, "mod_type", None))
             if not sid:
                 continue
             f = {"id": sid, "disabled": False}

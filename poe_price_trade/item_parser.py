@@ -102,19 +102,31 @@ def parse_item(text: str, game_version: str = GameVersion.POE2) -> Optional[Pars
             if (m := _QUALITY.match(line)):
                 quality = int(m.group(1)); pending = None; continue
 
-            # ── header { ... Modifier ... } → กำหนดประเภท mod บรรทัดถัดไป ──
+            # ── header { ... Modifier ... } → อ่าน type ของ mod บรรทัดถัดไป ──
             if _MOD_HEADER.match(line):
-                pending = "desecrated" if "desecrated" in line.lower() else "keep"
+                low = line.lower()
+                if "implicit" in low:
+                    pending = "implicit"
+                elif "desecrated" in low:
+                    pending = "desecrated"
+                elif "enchant" in low:
+                    pending = "enchant"
+                elif "fractured" in low:
+                    pending = "fractured"
+                elif "rune" in low:
+                    pending = "rune"
+                else:
+                    pending = "explicit"          # prefix / suffix
                 continue
 
-            # ── บรรทัด mod ที่ตามหลัง header ──
+            # ── บรรทัด mod ที่ตามหลัง header → เก็บทุก type (รวม desecrated) พร้อม type ──
             if pending is not None:
-                if pending == "keep":
-                    mods.append(ModValue(
-                        stat_id="",  # Filled in later by ModDatabase.resolve()
-                        text=line.strip(),
-                        value=_extract_mod_value(line),
-                    ))
+                mods.append(ModValue(
+                    stat_id="",  # Filled in later by ModDatabase
+                    text=line.strip(),
+                    value=_extract_mod_value(line),
+                    mod_type=pending,
+                ))
                 pending = None            # 1 header = 1 mod line → consume แล้ว reset
                 continue
 

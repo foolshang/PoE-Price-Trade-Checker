@@ -86,6 +86,7 @@ class ModValue:
     value: Optional[float] = None
     value_min: Optional[float] = None
     value_max: Optional[float] = None
+    mod_type: str = "explicit"   # explicit / implicit / desecrated / enchant / rune / fractured
 
 
 @dataclass

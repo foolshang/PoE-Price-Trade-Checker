@@ -36,6 +36,7 @@ class ModDatabase:
         self._cache_dir = cache_dir
         # {normalized_text: stat_id}
         self._index: dict[str, str] = {}
+        self._typed_index: dict[tuple[str, str], str] = {}  # (text, type) → id
         self._label_index: dict[str, str] = {}  # label → stat_id
         self._raw_stats: list[dict] = []
 
@@ -68,30 +69,56 @@ class ModDatabase:
                 })
         return flat
 
+    # ลำดับความสำคัญ — ใช้ตอน "ไม่รู้ type" (fallback flat index)
+    _TYPE_PRIORITY = {
+        "explicit": 0, "implicit": 1, "fractured": 2, "rune": 3,
+        "enchant": 4, "scourge": 5, "crafted": 6, "veiled": 7, "pseudo": 8,
+    }
+
     def _build_index(self, stats: list[dict]) -> None:
         self._raw_stats = stats
-        self._index = {}
+        self._index = {}            # flat (prioritized) — ใช้ตอนไม่รู้ type
+        self._typed_index = {}      # (normalized, type) → id — type-aware
+        chosen_pri: dict[str, int] = {}
         for stat in stats:
             sid = stat.get("id", "")
             text = stat.get("text", "")
-            if sid and text:
-                normalized = _normalize_mod(text)
+            typ = stat.get("type", "")
+            if not (sid and text):
+                continue
+            normalized = _normalize_mod(text)
+            self._typed_index[(normalized, typ)] = sid
+            pri = self._TYPE_PRIORITY.get(typ, 99)
+            if normalized not in self._index or pri < chosen_pri[normalized]:
                 self._index[normalized] = sid
-        log.debug("Built mod index with %d entries", len(self._index))
+                chosen_pri[normalized] = pri
+        log.debug("Built mod index: %d flat / %d typed",
+                  len(self._index), len(self._typed_index))
 
-    def find_stat_id(self, mod_text: str, threshold: float = 0.75) -> Optional[str]:
-        """Return the stat ID best matching mod_text, or None."""
+    def find_stat_id(self, mod_text: str, mod_type: Optional[str] = None,
+                     threshold: float = 0.75) -> Optional[str]:
+        """หา stat id ที่ตรงกับ mod_text — เทียบ type ให้ตรงก่อน (มี fallback)."""
         norm = _normalize_mod(mod_text)
 
-        # Exact match
+        # 1) exact ภายใน type เดียวกัน (explicit→explicit, desecrated→desecrated)
+        if mod_type and (norm, mod_type) in self._typed_index:
+            return self._typed_index[(norm, mod_type)]
+
+        # 2) exact แบบ prioritized (ไม่รู้ type หรือ type ไม่ตรง)
         if norm in self._index:
             return self._index[norm]
 
-        # Fuzzy match
-        keys = list(self._index.keys())
-        matches = difflib.get_close_matches(norm, keys, n=1, cutoff=threshold)
-        if matches:
-            return self._index[matches[0]]
+        # 3) fuzzy ภายใน type เดียวกัน
+        if mod_type:
+            type_keys = [k[0] for k in self._typed_index if k[1] == mod_type]
+            m = difflib.get_close_matches(norm, type_keys, n=1, cutoff=threshold)
+            if m:
+                return self._typed_index[(m[0], mod_type)]
+
+        # 4) fuzzy แบบ prioritized
+        m = difflib.get_close_matches(norm, list(self._index.keys()), n=1, cutoff=threshold)
+        if m:
+            return self._index[m[0]]
 
         return None
 
