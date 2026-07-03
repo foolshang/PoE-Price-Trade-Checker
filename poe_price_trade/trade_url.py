@@ -18,7 +18,8 @@ _RARITY_OPTION = {
 }
 
 
-def build_trade_url(item: ParsedItem, mod_db, league: str, profile, min_pct: float = 0.8) -> str:
+def build_trade_url(item: ParsedItem, mod_db, league: str, profile, min_pct: float = 0.8,
+                    custom_stats: list | None = None) -> str:
     query: dict = {"status": {"option": STATUS_OPTION}}
     filters: dict = {}
 
@@ -44,15 +45,19 @@ def build_trade_url(item: ParsedItem, mod_db, league: str, profile, min_pct: flo
         rarity_opt = _RARITY_OPTION.get(item.rarity)
         if rarity_opt:
             filters["type_filters"] = {"filters": {"rarity": {"option": rarity_opt}}}
-        stat_filters = []
-        for mod in item.mods:
-            sid = mod_db.find_stat_id(mod.text, getattr(mod, "mod_type", None))
-            if not sid:
-                continue
-            f = {"id": sid, "disabled": False}
-            if mod.value is not None:
-                f["value"] = {"min": round(mod.value * min_pct, 2)}
-            stat_filters.append(f)
+        if custom_stats is not None:
+            # popup (mod_picker) ส่ง filter ที่ผู้ใช้ติ๊กเลือกมาแล้ว — ใช้ตามนั้นเป๊ะ
+            stat_filters = [f for f in custom_stats if f.get("id")]
+        else:
+            stat_filters = []
+            for mod in item.mods:
+                sid = mod_db.find_stat_id(mod.text, getattr(mod, "mod_type", None))
+                if not sid:
+                    continue
+                f = {"id": sid, "disabled": False}
+                if mod.value is not None:
+                    f["value"] = {"min": round(mod.value * min_pct, 2)}
+                stat_filters.append(f)
         if stat_filters:
             query["stats"] = [{"type": "and", "filters": stat_filters}]
 
@@ -64,7 +69,7 @@ def build_trade_url(item: ParsedItem, mod_db, league: str, profile, min_pct: flo
     return f"{base}?q=" + urllib.parse.quote(json.dumps(payload, separators=(",", ":")))
 
 
-def open_trade(item, mod_db, league, profile) -> str:
-    url = build_trade_url(item, mod_db, league, profile)
+def open_trade(item, mod_db, league, profile, custom_stats=None) -> str:
+    url = build_trade_url(item, mod_db, league, profile, custom_stats=custom_stats)
     webbrowser.open(url)
     return url

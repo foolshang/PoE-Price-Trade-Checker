@@ -14,7 +14,7 @@ from .config import AppConfig
 from . import debug, __version__
 from .hotkeys import HotkeyManager
 from .item_parser import parse_item
-from .models import ScanResult
+from .models import Rarity, ScanResult
 from .overlay import PriceOverlay
 from .profiles import PROFILES
 from .repository import PriceRepository
@@ -328,6 +328,19 @@ class App:
                     self._root.after_idle(lambda: self._log("⚠ อ่าน item ไม่ได้", "warn"))
                     return
                 self._mod_db.load()
+                use_picker = (bool(self._config.get("f5_mod_picker", True))
+                              and item.identified
+                              and item.rarity in (Rarity.RARE, Rarity.MAGIC)
+                              and item.mods)
+                if use_picker:
+                    # resolve stat id ใน thread นี้ (fuzzy อาจช้า) แล้วเปิด popup บน main thread
+                    rows = [(m, self._mod_db.find_stat_id(m.text, getattr(m, "mod_type", None)))
+                            for m in item.mods]
+                    write_text("")                   # ② reset ท้าย
+                    debug.event(f"F5 picker '{item.item_name}' rarity={item.rarity} "
+                                f"mods={len(rows)} resolved={sum(1 for _, s in rows if s)}")
+                    self._root.after_idle(lambda it=item, r=rows: self._open_mod_picker(it, r))
+                    return
                 url = open_trade(item, self._mod_db, self._league_var.get(), self._profile)
                 write_text("")                       # ② reset ท้าย — เก็บกวาดหลังเปิด browser
                 resolved = sum(1 for m in item.mods if self._mod_db.find_stat_id(m.text))
@@ -340,6 +353,27 @@ class App:
                 self._root.after_idle(lambda err=e: self._log(f"✗ F5: {err}", "err"))
 
         threading.Thread(target=_run, daemon=True, name="F5").start()
+
+    def _open_mod_picker(self, item, rows) -> None:
+        """เปิด popup เลือก mod (ต้องเรียกบน main thread เท่านั้น)."""
+        from .mod_picker import ModPickerWindow
+
+        def _on_search(stat_filters: list) -> None:
+            def _go():
+                try:
+                    url = open_trade(item, self._mod_db, self._league_var.get(),
+                                     self._profile, custom_stats=stat_filters)
+                    debug.event(f"F5 picker search '{item.item_name}' "
+                                f"filters={len(stat_filters)} url={url[:80]}")
+                    self._root.after_idle(
+                        lambda n=item.item_name: self._log(f"🔎 เปิด trade: {n}", "ok"))
+                except Exception as e:
+                    log.exception("mod picker search error")
+                    self._root.after_idle(lambda err=e: self._log(f"✗ F5: {err}", "err"))
+            threading.Thread(target=_go, daemon=True, name="F5PickerSearch").start()
+
+        self._log(f"🧩 เลือก mod: {item.item_name}", "info")
+        ModPickerWindow(self._root, item, rows, on_search=_on_search)
 
     # ------------------------------------------------------------------
     # Settings & price loading
