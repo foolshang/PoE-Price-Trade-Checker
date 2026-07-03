@@ -4,6 +4,7 @@ Endpoints used (probe 2026-06-26):
   GET /poe2/Leagues                                   → DivinePrice per league
   GET /poe2/Leagues/{league}/Currencies/ByCategory    → currency / runes / essences / etc.
   GET /poe2/Leagues/{league}/Items                    → all unique items (1275+)
+  GET /poe2/Items/Categories                          → catalog หมวดจริง (auto-discover)
 
 Price unit: exalted (CurrentPrice). Convert: divine_value = CurrentPrice / DivinePrice.
 """
@@ -60,6 +61,51 @@ _UNIQUE_CATEGORY: dict[str, str] = {
     "sanctum":   "UniqueAccessory",
 }
 
+# CategoryApiId ใน /Items ที่ไม่ใช่ item จริง (ปนมาใน endpoint) → ข้าม
+_UNIQUE_SKIP: set[str] = {"currency"}
+
+
+def _friendly_cur_name(api_id: str) -> str:
+    """แปลง ApiId → ชื่อหมวดฝั่งเรา: ใช้ hardcode ถ้ารู้จัก ไม่รู้จักก็ derive เอา."""
+    return _CUR_CATEGORY.get(api_id) or api_id.replace("_", " ").title().replace(" ", "")
+
+
+def _friendly_unique_name(api_id: str) -> str:
+    return _UNIQUE_CATEGORY.get(api_id) or "Unique" + api_id.replace("_", " ").title().replace(" ", "")
+
+
+def _discover_currency_categories() -> list[str]:
+    """auto-discover หมวด currency จาก catalog ของ scout — ล้มเหลว → fallback hardcode.
+
+    โครง response ยังไม่ probe ยืนยัน (sandbox โดน block) → parse ยืดหยุ่น:
+    รับทั้ง dict {currencyCategories:[{apiId:..}]} และ list ตรงๆ"""
+    try:
+        data = _get("/Items/Categories")
+        pools: list = []
+        if isinstance(data, dict):
+            for k in ("currencyCategories", "CurrencyCategories", "currency_categories"):
+                if isinstance(data.get(k), list):
+                    pools.append(data[k])
+        elif isinstance(data, list):
+            pools.append(data)
+        found: list[str] = []
+        for pool in pools:
+            for x in pool:
+                api = (x.get("apiId") or x.get("ApiId") or x.get("id") or "") \
+                    if isinstance(x, dict) else str(x)
+                api = str(api).strip().lower()
+                if api and api not in found:
+                    found.append(api)
+        if found:
+            new = [c for c in found if c not in _CUR_CATEGORY]
+            log.info("poe2scout: catalog discover %d currency cats (%d ใหม่: %s)",
+                     len(found), len(new), new)
+            return found
+        log.warning("poe2scout: catalog discover ได้ 0 หมวด — ใช้ hardcode")
+    except Exception as e:
+        log.warning("poe2scout: catalog discover failed (%s) — ใช้ hardcode", e)
+    return list(_CUR_CATEGORY)
+
 
 def _get(path: str) -> object:
     req = urllib.request.Request(_BASE + path, headers=_HEADERS)
@@ -86,7 +132,8 @@ def _divine_price(league: str) -> float:
 def _fetch_currencies(league: str, div_price: float) -> list[PriceEntry]:
     L = urllib.parse.quote(league, safe="")
     entries: list[PriceEntry] = []
-    for cat_api, cat_name in _CUR_CATEGORY.items():
+    for cat_api in _discover_currency_categories():
+        cat_name = _friendly_cur_name(cat_api)
         try:
             page = 1
             while True:
@@ -130,10 +177,10 @@ def _fetch_uniques(league: str, div_price: float) -> list[PriceEntry]:
             name   = x.get("Name") or x.get("Text") or ""
             if not name or ex_val <= 0:
                 continue
-            cat_api  = x.get("CategoryApiId", "")
-            cat_name = _UNIQUE_CATEGORY.get(cat_api)
-            if cat_name is None:
-                continue  # skip currency/misc items ที่ปนมาใน /Items endpoint
+            cat_api  = str(x.get("CategoryApiId", "")).lower()
+            if not cat_api or cat_api in _UNIQUE_SKIP:
+                continue  # ไม่มีหมวด / currency ที่ปนมาใน /Items endpoint
+            cat_name = _friendly_unique_name(cat_api)
             entries.append(PriceEntry(
                 item_name=name,
                 normalized_name=normalize(name),
