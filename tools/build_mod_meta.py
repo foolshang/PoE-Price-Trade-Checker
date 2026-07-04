@@ -95,7 +95,8 @@ def main() -> None:
     bases_out: dict[str, dict] = {}
     for v in bases_raw.values():
         name = v.get("name") or ""
-        if not name or v.get("domain", "item") != "item":
+        if not name or v.get("domain", "item") not in ("item", "misc"):
+            # "misc" = jewel bases (Ruby/Emerald/Sapphire/...) — ยืนยันแล้วว่า misc มีแต่ jewel
             continue
         tt = tuple(v.get("tags", []))
         if tt not in tagset_id:
@@ -108,7 +109,7 @@ def main() -> None:
     # 2) กรอง mod ที่สนใจ: explicit prefix/suffix บน item ปกติ
     cand = [m for m in mods_raw.values()
             if m.get("generation_type") in ("prefix", "suffix")
-            and m.get("domain", "item") == "item"
+            and m.get("domain", "item") in ("item", "misc")   # misc = jewel affixes
             and m.get("stats")]
 
     # 3) ต่อ tag-set: จัด family (gen, stat ids, normalized text) → tier ladder

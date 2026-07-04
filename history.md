@@ -5,6 +5,48 @@
 
 ---
 
+## 2026-07-04 — Patch C.1+C.2: fix magic base resolution + jewel meta (session 11, v0.1.7)
+
+**Commit:** `89e3dc0` (C.1) + release tag `v0.1.7`; C.2 ยังไม่ commit (แก้เฉพาะ `tools/build_mod_meta.py`, ไม่ต้อง build exe ใหม่)
+
+**BUG 3 (C.1):** magic ที่ส่องแล้วชื่อบรรทัดเดียวรวม affix name เช่น "Legend's Fortress
+Sabatons of Grounding" (base จริง = "Fortress Sabatons") — parser ใช้ทั้งก้อนเป็น
+base_type → query type ไม่มีอยู่จริง → trade ขึ้น "Failed to load search state.
+The search is no longer valid." พลอยทำให้ tier/money annotation หา base ไม่เจอเงียบๆ ด้วย
+
+**ไฟล์ที่แก้ (C.1):**
+- **`poe_price_trade/meta_db.py`** — เพิ่ม `resolve_base(name)`: หา base ที่ยาวที่สุดที่ฝังอยู่ในชื่อ (word-boundary ด้วยการ pad ช่องว่าง) เทียบกับรายชื่อ base ใน `mod_meta.json`
+- **`poe_price_trade/app.py`** — fix `item.base_type` ทันทีหลัง parse สำหรับ magic ที่ identified แล้ว: resolve ได้ → แทนที่ด้วย base จริง, resolve ไม่ได้ → ตัด type ออกจาก query (ค้นด้วย rarity+stats ยัง valid ดีกว่า error ทั้งหน้า); เพิ่ม `_get_meta_db()` helper แบบ lazy ใช้ร่วมกันทั้ง F5 branch
+- **`tests/test_poe2_magic.py`** (NEW) — คลุม parse magic ชื่อรวม affix, resolve_base (เลือกตัวยาวสุด), resolve_base ไม่มี meta file
+
+**BUG (C.2):** jewel (Ruby/Emerald/Sapphire/Diamond/Timeless + Time-Lost 4 แบบ) หายจาก
+`mod_meta.json` ทั้งฝั่ง base และ mod เพราะใน RePoE ทั้งคู่อยู่ domain `"misc"` แต่ script
+filter เอาเฉพาะ domain `"item"` — F5 กับ jewel เลย resolve base ไม่ได้ (ค้นแบบไม่มี type)
+
+**ไฟล์ที่แก้ (C.2):**
+- **`tools/build_mod_meta.py`** — base filter + mod filter รับ domain `"item"` หรือ `"misc"` (ยืนยันแล้วว่า misc ฝั่ง base มีแต่ jewel ล้วน ไม่มีขยะติดมา)
+
+**ผลลัพธ์:**
+```
+tools/build_mod_meta.py → mod_meta.json: bases=1782, tagsets=78 (เดิม 1773/70 — เพิ่ม jewel 9 bases + tagsets)
+regenerate แล้ว tagset ของ gear เดิมไม่เปลี่ยนแม้แต่ byte เดียว (regression = ศูนย์)
+tests/: 42/42 passed (เพิ่ม test_poe2_magic.py 3 เคสใหม่)
+```
+
+**Build+Release (C.1):** ลบ build/dist/`__pycache__` เก่า → build จาก `.spec` เดิม →
+`dist/PoE-Price-Trade-Checker.exe` (13.8 MB) → tag `v0.1.7` → GitHub Release
+(https://github.com/foolshang/PoE-Price-Trade-Checker/releases/tag/v0.1.7) แนบ exe
+
+**C.2 ไม่ rebuild exe:** `mod_meta.json` เป็นไฟล์ภายนอก โหลดจาก
+`%LOCALAPPDATA%\PoePriceTrade\` ตรงๆ — regenerate แล้ว copy ทับไฟล์เดิม, exe v0.1.7
+เดิมใช้ได้เลยแค่ปิด-เปิดใหม่
+
+**ค้างอยู่:**
+- ยังไม่ได้ทดสอบ F5 บนเกมจริง: magic boots เดิม (type ต้องเป็น "Fortress Sabatons"),
+  Iconic Ruby (type ต้องเป็น "Ruby"), jewel rare (ถ้ามี), gear เดิม (regression check)
+
+---
+
 ## 2026-07-04 — Patch C: tier badge + money-mod highlighter + parser fixes (session 10, v0.1.6)
 
 **ปัญหา (พิสูจน์จาก clipboard จริง):**
