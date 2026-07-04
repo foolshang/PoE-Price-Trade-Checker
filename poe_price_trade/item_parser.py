@@ -24,11 +24,19 @@ _VALUE_PATTERN = re.compile(r"[-+]?\d+(?:\.\d+)?")
 
 # Mod header ของ PoE2 clipboard: { Implicit Modifier }, { Prefix Modifier "..." }, { Desecrated ... }
 _MOD_HEADER = re.compile(r"^\{.*\bModifier\b.*\}$", re.IGNORECASE)
+_HEADER_TIER = re.compile(r"\(Tier:\s*(\d+)\)", re.IGNORECASE)
+# ช่วง roll ที่เกมพิมพ์ต่อท้ายค่า เช่น 40(39-42)% หรือ +47(42-49) → ตัดทิ้งก่อนดึงตัวเลข
+_ROLL_RANGE = re.compile(r"\(\d+(?:\.\d+)?-\d+(?:\.\d+)?\)")
+_RUNE_LINE = re.compile(r"^(.*)\s\(rune\)$", re.IGNORECASE)
 
 
 def _extract_mod_value(text: str) -> Optional[float]:
-    m = _VALUE_PATTERN.search(text)
+    m = _VALUE_PATTERN.search(_ROLL_RANGE.sub("", text))
     return float(m.group()) if m else None
+
+
+def _extract_mod_values(text: str) -> tuple:
+    return tuple(float(x) for x in _VALUE_PATTERN.findall(_ROLL_RANGE.sub("", text)))
 
 
 def _is_section_header(line: str) -> bool:
@@ -87,10 +95,26 @@ def parse_item(text: str, game_version: str = GameVersion.POE2) -> Optional[Pars
     # desecrated → ข้าม (เกมไม่เอามาค้น) | ถ้า clipboard ไม่มี header → fallback heuristic เดิม
     has_mod_headers = any(_MOD_HEADER.match(ln) for s in sections[1:] for ln in s)
     pending: str | None = None   # ประเภท mod จาก header ล่าสุด (None = ไม่ใช่ mod)
+    pending_tier = 0             # Tier จาก header ล่าสุด (0 = ไม่มี)
+    group_no = -1                # หมายเลข header block (hybrid หลายบรรทัด = group เดียว)
+    prefix_count = 0
+    suffix_count = 0
 
     for section in sections[1:]:
+        pending = None               # header block ไม่ข้าม separator
         for line in section:
             if not line:
+                continue
+            # ── rune mod: อยู่ section แยกก่อน header block, ลงท้ายด้วย (rune) ──
+            if (rn := _RUNE_LINE.match(line)):
+                group_no += 1
+                mods.append(ModValue(
+                    stat_id="", text=rn.group(1).strip(),
+                    value=_extract_mod_value(line),
+                    values=_extract_mod_values(line),
+                    mod_type="rune", group=group_no,
+                ))
+                pending = None
                 continue
             # ── metadata ──
             if _CORRUPTED.match(line):
@@ -117,6 +141,13 @@ def parse_item(text: str, game_version: str = GameVersion.POE2) -> Optional[Pars
                     pending = "rune"
                 else:
                     pending = "explicit"          # prefix / suffix
+                if "prefix" in low:
+                    prefix_count += 1
+                elif "suffix" in low:
+                    suffix_count += 1
+                tm = _HEADER_TIER.search(line)
+                pending_tier = int(tm.group(1)) if tm else 0
+                group_no += 1
                 continue
 
             # ── บรรทัด mod ที่ตามหลัง header → เก็บทุก type (รวม desecrated) พร้อม type ──
@@ -125,9 +156,14 @@ def parse_item(text: str, game_version: str = GameVersion.POE2) -> Optional[Pars
                     stat_id="",  # Filled in later by ModDatabase
                     text=line.strip(),
                     value=_extract_mod_value(line),
+                    values=_extract_mod_values(line),
                     mod_type=pending,
+                    tier=pending_tier,
+                    group=group_no,
                 ))
-                pending = None            # 1 header = 1 mod line → consume แล้ว reset
+                # ไม่ reset pending — hybrid mod มีได้หลายบรรทัดใต้ header เดียว
+                # (พิสูจน์จาก clipboard จริง: Crocodile's = Armour% + Life สองบรรทัด)
+                # จบ block เมื่อเจอ header ใหม่ / separator / จบ section
                 continue
 
             # ── fallback: clipboard ไม่มี header { } (copy โหมดธรรมดา) → heuristic เดิม ──
@@ -152,13 +188,17 @@ def parse_item(text: str, game_version: str = GameVersion.POE2) -> Optional[Pars
     # Desecrated items may omit "Unidentified" text. Rare/unique with only
     # 1 name line (= no special rare name) AND no mods = truly unidentified.
     # Items with mods are identified even if they share name and base type.
-    if rarity in (Rarity.RARE, Rarity.UNIQUE) and len(name_lines) <= 1 and not mods:
+    real_mods = [m for m in mods if m.mod_type != "rune"]
+    if rarity in (Rarity.RARE, Rarity.UNIQUE) and len(name_lines) <= 1 and not real_mods:
         identified = False
 
-    # ไอเท็มที่มี quality เกมเติม prefix คุณภาพ (Superior/Anomalous/Divergent/...) ข้างหน้า base
-    # ตัดคำแรกออกเมื่อมี quality — ไม่ต้องเดาว่า prefix คือคำอะไร
-    if quality > 0 and " " in base_type:
-        base_type = base_type.split(" ", 1)[1].strip()
+    # ตัด quality prefix เฉพาะเมื่อขึ้นต้นด้วยคำ prefix จริงเท่านั้น — rare ที่มี quality
+    # เกมไม่เติม "Superior" ใน base line (พิสูจน์จาก clipboard จริง: "Knightly Mitts"
+    # + Quality 20% ไม่มีคำนำหน้า) → ตัดคำแรกแบบเดิมทำชื่อ base พัง ("Mitts")
+    for _qp in ("Superior ", "Anomalous ", "Divergent ", "Phantasmal "):
+        if base_type.startswith(_qp):
+            base_type = base_type[len(_qp):].strip()
+            break
 
     if not item_name:
         return None
@@ -177,4 +217,6 @@ def parse_item(text: str, game_version: str = GameVersion.POE2) -> Optional[Pars
         item_class=item_class,
         corrupted=corrupted,
         identified=identified,
+        prefix_count=prefix_count,
+        suffix_count=suffix_count,
     )

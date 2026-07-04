@@ -87,6 +87,9 @@ class ModValue:
     value_min: Optional[float] = None
     value_max: Optional[float] = None
     mod_type: str = "explicit"   # explicit / implicit / desecrated / enchant / rune / fractured
+    values: tuple = ()           # ตัวเลขทุกตัวในบรรทัด (ตัดช่วง roll (a-b) ทิ้งแล้ว)
+    tier: int = 0                # Tier จาก header { ... (Tier: N) } — 0 = ไม่รู้
+    group: int = -1              # header block เดียวกัน = group เดียวกัน (hybrid หลายบรรทัด)
 
 
 @dataclass
@@ -102,6 +105,8 @@ class ParsedItem:
     item_class: str = ""
     corrupted: bool = False
     identified: bool = True
+    prefix_count: int = 0        # จำนวน prefix header ที่เจอ (ใช้นับ affix ว่าง)
+    suffix_count: int = 0
 
 
 @dataclass

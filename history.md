@@ -5,6 +5,42 @@
 
 ---
 
+## 2026-07-04 — Patch C: tier badge + money-mod highlighter + parser fixes (session 10, v0.1.6)
+
+**ปัญหา (พิสูจน์จาก clipboard จริง):**
+- BUG 1: hybrid mod สองบรรทัดใต้ header เดียว (เช่น Armour% + Life ของ "Crocodile's") — บรรทัดที่สองถูกทิ้งเงียบๆ เพราะ parser reset `pending` หลัง mod แรก
+- BUG 2: rare ที่มี quality + base สองคำ ("Knightly Mitts") — กฎตัด quality prefix กินคำแรกของ base ("Knightly") ทิ้ง เหลือ "Mitts" → trade query พัง เพราะเกมไม่เติม "Superior" ใน base line ของ rare
+
+**ไฟล์ใหม่/แก้:**
+
+- **`poe_price_trade/models.py`** — `ModValue` เพิ่ม `values`/`tier`/`group`; `ParsedItem` เพิ่ม `prefix_count`/`suffix_count`
+- **`poe_price_trade/item_parser.py`**:
+  - แก้ BUG 1: header block ไม่ reset `pending` หลัง mod แรก → เก็บได้หลายบรรทัดต่อ header เดียว (group เดียวกัน)
+  - แก้ BUG 2: ตัด quality prefix เฉพาะขึ้นต้นด้วยคำ prefix จริง (Superior/Anomalous/Divergent/Phantasmal) แทนตัดคำแรกแบบเดา
+  - อ่าน Tier จาก header `(Tier: N)`, เก็บ rune mods (`+X to Y (rune)`) เป็น type แยก, นับ prefix/suffix ที่ใช้ไป, ตัดช่วง roll `(a-b)` ก่อนดึงค่าตัวเลข
+- **`poe_price_trade/meta_db.py`** (NEW) — โหลด `mod_meta.json` (offline, จาก `%LOCALAPPDATA%\PoePriceTrade\`) ให้ tier ladder (T_/total) + money-mod flag ตามกติกา `_DEFAULT_MONEY` (override ได้ด้วย `money_mods.json`); ไม่มีไฟล์ meta = feature จำกัดแบบเงียบๆ
+- **`poe_price_trade/mod_picker.py`** — badge `[T_/_]` + 💰 สีทองหน้าข้อความ mod เงิน + บรรทัดสรุปเขียวใต้หัว popup (เช่น "💰 mod เงิน ×2 · T1 ×1 · suffix ว่าง 1 · ilvl 78")
+- **`poe_price_trade/app.py`** — F5 picker branch เรียก `MetaDB.annotate()` แล้วส่ง annotation เข้า popup
+- **`tools/build_mod_meta.py`** (NEW) — precompute `mod_meta.json` จาก RePoE fork (`repoe-fork/poe2`) datamine: base → tag-set → mod family → tier ladder (level + value range ต่อ tier)
+- **`tests/sample_data/sample_poe2_rare.txt`** + **`tests/test_poe2_parser.py`** (NEW) — fixture clipboard PoE2 จริง (hybrid + Tier header + rune + quality) ครอบทั้ง 2 bug ข้างบน
+
+**ผลลัพธ์:**
+```
+tools/build_mod_meta.py → mod_meta.json: bases=1773, tagsets=70 (dedupe จาก 426), 0.58MB
+tests/test_poe2_parser.py: 7/7 passed
+tests/ (ไม่รวม test_ninja_client.py ที่พังอยู่ก่อนแล้ว, ไม่เกี่ยวกับ patch นี้): 39/39 passed
+```
+
+**Build:** ลบ `%LOCALAPPDATA%\PoePriceTrade\cache\` เก่า → build จาก `.spec` เดิม → `dist/PoE-Price-Trade-Checker.exe` (13.1 MB)
+
+**Fix ระหว่างทาง:** `build_mod_meta.py` เขียนไฟล์ถูกแล้วแต่ crash ตอน print ข้อความไทยบน console cp1252 (Windows) — เพิ่ม `sys.stdout/stderr.reconfigure(encoding="utf-8")` กันไว้
+
+**ค้างอยู่:**
+- ยังไม่ได้ทดสอบ F5 popup กับเกมจริง (checklist: tier badge ตรงเกม, 💰 สีทอง, hybrid 2 บรรทัดขึ้นครบ, บรรทัดสรุป, ลบ mod_meta.json ชั่วคราวแล้ว popup ยัง fallback ได้)
+- `tests/test_ninja_client.py` พังอยู่ก่อน patch นี้ (`_parse_exchange_overview` ไม่มีใน `ninja_client.py`) — ไม่เกี่ยวกับ patch นี้ แต่ควรแก้ในรอบถัดไป
+
+---
+
 ## 2026-06-26 — poe2scout integration: PoE2 uniques + 15 currency categories (session 9)
 
 **Commit:** `edd375f`

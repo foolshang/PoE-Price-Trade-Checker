@@ -1,0 +1,32 @@
+Item Class: Gloves
+Rarity: Rare
+Rapture Mitts
+Knightly Mitts
+--------
+Quality: +20% (augmented)
+Armour: 323 (augmented)
+--------
+Requires: Level 65, 80 Str
+--------
+Sockets: S S
+--------
+Item Level: 78
+--------
++12 to Strength (rune)
+8% increased Curse Magnitudes (rune)
+--------
+{ Prefix Modifier "Crocodile's" (Tier: 1) — Life, Armour }
+40(39-42)% increased Armour
++47(42-49) to maximum Life
+{ Prefix Modifier "Opalescent" (Tier: 3) — Mana }
++82(80-89) to maximum Mana
+{ Prefix Modifier "Studded" (Tier: 6) — Armour }
++30(28-56) to Armour
+{ Suffix Modifier "of Magma" (Tier: 2) — Elemental, Fire, Resistance }
++36(36-40)% to Fire Resistance
+{ Suffix Modifier "of the Ice" (Tier: 2) — Elemental, Cold, Resistance }
++38(36-40)% to Cold Resistance
+{ Suffix Modifier "of the Maelstrom" (Tier: 3) — Elemental, Lightning, Resistance }
++34(31-35)% to Lightning Resistance
+--------
+Corrupted

@@ -336,10 +336,22 @@ class App:
                     # resolve stat id ใน thread นี้ (fuzzy อาจช้า) แล้วเปิด popup บน main thread
                     rows = [(m, self._mod_db.find_stat_id(m.text, getattr(m, "mod_type", None)))
                             for m in item.mods]
+                    annos: dict = {}
+                    summary = ""
+                    try:
+                        from .meta_db import MetaDB
+                        if getattr(self, "_meta_db", None) is None:
+                            self._meta_db = MetaDB(self._config.app_dir())
+                        annos = self._meta_db.annotate(item)
+                        summary = MetaDB.summary(item, annos)
+                    except Exception:
+                        log.exception("meta annotate error")
                     write_text("")                   # ② reset ท้าย
                     debug.event(f"F5 picker '{item.item_name}' rarity={item.rarity} "
-                                f"mods={len(rows)} resolved={sum(1 for _, s in rows if s)}")
-                    self._root.after_idle(lambda it=item, r=rows: self._open_mod_picker(it, r))
+                                f"mods={len(rows)} resolved={sum(1 for _, s in rows if s)} "
+                                f"money={sum(1 for a in annos.values() if a.get('money'))}")
+                    self._root.after_idle(lambda it=item, r=rows, a=annos, s=summary:
+                                          self._open_mod_picker(it, r, a, s))
                     return
                 url = open_trade(item, self._mod_db, self._league_var.get(), self._profile)
                 write_text("")                       # ② reset ท้าย — เก็บกวาดหลังเปิด browser
@@ -354,7 +366,7 @@ class App:
 
         threading.Thread(target=_run, daemon=True, name="F5").start()
 
-    def _open_mod_picker(self, item, rows) -> None:
+    def _open_mod_picker(self, item, rows, annos=None, summary="") -> None:
         """เปิด popup เลือก mod (ต้องเรียกบน main thread เท่านั้น)."""
         from .mod_picker import ModPickerWindow
 
@@ -373,7 +385,8 @@ class App:
             threading.Thread(target=_go, daemon=True, name="F5PickerSearch").start()
 
         self._log(f"🧩 เลือก mod: {item.item_name}", "info")
-        ModPickerWindow(self._root, item, rows, on_search=_on_search)
+        ModPickerWindow(self._root, item, rows, on_search=_on_search,
+                        annos=annos, summary=summary)
 
     # ------------------------------------------------------------------
     # Settings & price loading

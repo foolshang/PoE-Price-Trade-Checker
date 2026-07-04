@@ -36,9 +36,11 @@ class ModPickerWindow:
 
     def __init__(self, parent: tk.Misc, item: ParsedItem,
                  rows: list[tuple[ModValue, Optional[str]]],
-                 on_search: Callable[[list[dict]], None]):
+                 on_search: Callable[[list[dict]], None],
+                 annos: Optional[dict] = None, summary: str = ""):
         self._on_search = on_search
         self._rows: list[dict] = []
+        self._annos = annos or {}
 
         win = tk.Toplevel(parent)
         self._win = win
@@ -54,7 +56,10 @@ class ModPickerWindow:
         sub = item.rarity + (f"  ·  {item.base_type}"
                              if item.base_type and item.base_type != head else "")
         tk.Label(win, text=sub, bg=_BG, fg=_DIM, font=_FONT_SMALL).pack(
-            anchor="w", padx=12, pady=(0, 6))
+            anchor="w", padx=12, pady=(0, 2))
+        if summary:
+            tk.Label(win, text=summary, bg=_BG, fg="#7FBF7F", font=_FONT_SMALL).pack(
+                anchor="w", padx=12, pady=(0, 6))
 
         body = tk.Frame(win, bg=_BG)
         body.pack(fill=tk.BOTH, expand=True, padx=10)
@@ -96,7 +101,13 @@ class ModPickerWindow:
     def _add_row(self, parent: tk.Frame, mod: ModValue, sid: Optional[str]) -> None:
         mtype = getattr(mod, "mod_type", "explicit") or "explicit"
         tag = _TYPE_TAG.get(mtype, "")
-        text = tag + mod.text
+        anno = self._annos.get(getattr(mod, "group", -1)) or {}
+        badge = ""
+        if anno.get("tier"):
+            tot = anno.get("total", 0)
+            badge = f"[T{anno['tier']}/{tot}] " if tot else f"[T{anno['tier']}] "
+        money = "💰 " if anno.get("money") else ""
+        text = money + badge + tag + mod.text
         if len(text) > _MAX_TEXT:
             text = text[:_MAX_TEXT - 1] + "…"
 
@@ -105,7 +116,7 @@ class ModPickerWindow:
 
         var = tk.BooleanVar(value=bool(sid) and mtype in _DEFAULT_CHECKED)
         state = tk.NORMAL if sid else tk.DISABLED
-        fg = _FG if sid else _DIM
+        fg = (_ACC if anno.get("money") else _FG) if sid else _DIM
         cb = tk.Checkbutton(row, text=text if sid else text + "  (ไม่พบ id)",
                             variable=var, state=state,
                             bg=_BG, fg=fg, selectcolor="#2A2020",
