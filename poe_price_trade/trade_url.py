@@ -7,8 +7,9 @@ import webbrowser
 from .models import ParsedItem, Rarity
 
 # dropdown ตัวที่ 3 ของหน้า trade. "online" = In Person (Online).
-# พอได้ค่าจริงของ "Instant Buyout and In Person" จาก URL แล้ว มาแก้ตรงนี้/หรือ _apply_status()
-STATUS_OPTION = "online"
+# ค่าจาก payload จริง (Network tab): "available" = Instant Buyout and In Person,
+# "online" = In Person เท่านั้น — อยากกลับไปแบบเดิมแก้บรรทัดนี้บรรทัดเดียว
+STATUS_OPTION = "available"
 
 _RARITY_OPTION = {
     Rarity.NORMAL: "normal",
