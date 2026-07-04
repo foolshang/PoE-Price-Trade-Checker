@@ -86,6 +86,22 @@ class MetaDB:
     def available(self) -> bool:
         return self._meta is not None
 
+    def resolve_base(self, name: str) -> Optional[str]:
+        """หา base จริงที่ฝังอยู่ในชื่อ magic item — เทียบกับรายชื่อ base ใน meta
+        เลือกตัวที่ยาวที่สุด (word boundary ด้วยการ pad ช่องว่าง)
+
+        เช่น "Legend's Fortress Sabatons of Grounding" → "Fortress Sabatons"
+        ไม่เจอ/ไม่มี meta → None (ผู้เรียกควรตัด type ออกจาก query)"""
+        self.load()
+        if not self._meta or not name:
+            return None
+        padded = f" {name} "
+        best = ""
+        for base in self._meta.get("bases", {}):
+            if len(base) > len(best) and f" {base} " in padded:
+                best = base
+        return best or None
+
     def _families(self, base_type: str) -> Optional[list]:
         if not self._meta:
             return None

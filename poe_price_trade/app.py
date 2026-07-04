@@ -327,6 +327,17 @@ class App:
                 if not item:
                     self._root.after_idle(lambda: self._log("⚠ อ่าน item ไม่ได้", "warn"))
                     return
+                # magic ส่องแล้ว: ชื่อบรรทัดเดียวรวม affix name (Legend's ... of Grounding)
+                # → หา base จริงจาก meta | ไม่เจอ → ตัด type ทิ้ง (กัน "search invalid")
+                if item.rarity == Rarity.MAGIC and item.identified:
+                    fixed = self._get_meta_db().resolve_base(item.base_type)
+                    if fixed:
+                        if fixed != item.base_type:
+                            debug.event(f"F5 magic base: '{item.base_type}' → '{fixed}'")
+                        item.base_type = fixed
+                    else:
+                        debug.event(f"F5 magic base unresolved: '{item.base_type}' → ไม่ใส่ type")
+                        item.base_type = ""
                 self._mod_db.load()
                 use_picker = (bool(self._config.get("f5_mod_picker", True))
                               and item.identified
@@ -340,9 +351,7 @@ class App:
                     summary = ""
                     try:
                         from .meta_db import MetaDB
-                        if getattr(self, "_meta_db", None) is None:
-                            self._meta_db = MetaDB(self._config.app_dir())
-                        annos = self._meta_db.annotate(item)
+                        annos = self._get_meta_db().annotate(item)
                         summary = MetaDB.summary(item, annos)
                     except Exception:
                         log.exception("meta annotate error")
@@ -365,6 +374,13 @@ class App:
                 self._root.after_idle(lambda err=e: self._log(f"✗ F5: {err}", "err"))
 
         threading.Thread(target=_run, daemon=True, name="F5").start()
+
+    def _get_meta_db(self):
+        """MetaDB แบบ lazy — สร้างครั้งเดียว ใช้ร่วมกันทุก F5."""
+        from .meta_db import MetaDB
+        if getattr(self, "_meta_db", None) is None:
+            self._meta_db = MetaDB(self._config.app_dir())
+        return self._meta_db
 
     def _open_mod_picker(self, item, rows, annos=None, summary="") -> None:
         """เปิด popup เลือก mod (ต้องเรียกบน main thread เท่านั้น)."""
