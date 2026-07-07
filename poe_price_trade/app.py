@@ -220,22 +220,26 @@ class App:
 
     def _on_scan_done(self, results: list[ScanResult], ms: int) -> None:
         self._scan_results = results
-        self._scan_active = bool(results)
+        self._scan_active = True          # เปิด hover mode เสมอ (แม้ static เจอ 0)
         count = len(results)
         names = [r.item_name for r in results]
         debug.event(f"F4 scan: matched={count} took={ms}ms items={names}")
+        self._start_safety_timer()
+        self._start_motion_watch()
         if count:
-            self._log(f"✓ scan {count} รายการ ({ms}ms) — hover เพื่อดูราคา", "ok")
-            self._start_safety_timer()
-            self._start_motion_watch()
+            self._log(f"✓ scan {count} รายการ ({ms}ms) — hover ดูราคา (ชี้ทีละชิ้นก็ได้)", "ok")
         else:
-            self._log("ไม่พบ item — เปิด tooltip ก่อนกด F4", "warn")
+            self._log("hover mode: ชี้ item ให้ tooltip เด้ง แล้วดูราคา", "ok")
 
     def _start_hover_loop(self) -> None:
         threading.Thread(target=self._hover_loop, daemon=True, name="HoverLoop").start()
 
     def _hover_loop(self) -> None:
-        """ตรวจตำแหน่ง cursor ทุก 80ms — ถ้าอยู่ใน bbox ของ item ไหน โชว์ราคา (ไม่ OCR ซ้ำ)."""
+        """hover: static bbox ก่อน (ของตกพื้น/label) → ถ้าไม่โดน OCR รอบ cursor (tooltip)."""
+        last_pos = (-999, -999)
+        settle_pos = None
+        settle_since = 0.0
+        ocr_done_pos = None          # ตำแหน่งที่ OCR ไปแล้ว (กัน OCR ซ้ำที่เดิม)
         while True:
             time.sleep(0.08)
             if not self._scan_active:
@@ -244,20 +248,46 @@ class App:
                 cx, cy = get_cursor_pos()
             except Exception:
                 continue
+
+            # ── 1) static bbox จาก full-screen scan (ของตกพื้น / label) ──
             hit = None
             for r in self._scan_results:
                 if (r.bbox_x <= cx <= r.bbox_x + max(r.bbox_w, 40) and
                         r.bbox_y - 6 <= cy <= r.bbox_y + r.bbox_h + 6):
                     hit = r
                     break
-            key = hit.item_name if hit else ""
-            if key != self._hover_shown_key:
-                self._hover_shown_key = key
-                if hit:
+            if hit:
+                if hit.item_name != self._hover_shown_key:
+                    self._hover_shown_key = hit.item_name
                     debug.event(f"hover '{hit.item_name}' @({cx},{cy})")
                     self._root.after_idle(lambda h=hit: self._overlay.show_prices([h]))
-                else:
+                continue
+
+            # ── 2) hover-OCR (inventory / stash — tooltip เด้งตอน hover) ──
+            moved = abs(cx - last_pos[0]) > 8 or abs(cy - last_pos[1]) > 8
+            last_pos = (cx, cy)
+            if moved:
+                # cursor ขยับ → รีเซ็ต + ซ่อนราคาที่โชว์อยู่
+                settle_pos = (cx, cy)
+                settle_since = time.time()
+                if self._hover_shown_key:
+                    self._hover_shown_key = ""
                     self._root.after_idle(self._overlay.hide)
+                continue
+
+            # cursor นิ่ง — นิ่งครบ 0.22s และยังไม่ OCR จุดนี้ → OCR รอบ cursor
+            if settle_pos and ocr_done_pos != settle_pos and (time.time() - settle_since) > 0.22:
+                ocr_done_pos = settle_pos
+                try:
+                    res = self._scanner.scan_region(
+                        cx, cy, float(self._config.get("match_threshold", 0.8)))
+                except Exception:
+                    res = []
+                if res:
+                    r = res[0]
+                    self._hover_shown_key = "~ocr:" + r.item_name
+                    debug.event(f"hover-ocr '{r.item_name}' @({cx},{cy})")
+                    self._root.after_idle(lambda rr=r: self._overlay.show_prices([rr]))
 
     def _clear_all(self) -> None:
         self._scan_active = False
