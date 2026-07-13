@@ -55,6 +55,7 @@ class App:
         debug.setup(self._config.app_dir() / "debug_logs")
 
         self._root = tk.Tk()
+        self._root.report_callback_exception = self._on_tk_callback_exception
         self._root.title(f"PoE Price & Trade Checker  v{__version__}")
         self._root.configure(bg="#1C1C1C")
         self._root.resizable(False, False)
@@ -258,7 +259,7 @@ class App:
                 if hit.item_name != self._hover_shown_key:
                     self._hover_shown_key = hit.item_name
                     debug.event(f"hover '{hit.item_name}' @({cx},{cy})")
-                    self._root.after_idle(lambda h=hit: self._overlay.show_prices([h]))
+                    self._root.after_idle(lambda h=hit: self._show_hover_result(h))
                 continue
 
             # ── 2) hover-OCR (inventory / stash — tooltip เด้งตอน hover) ──
@@ -276,16 +277,50 @@ class App:
             # cursor นิ่ง — นิ่งครบ 0.22s และยังไม่ OCR จุดนี้ → OCR รอบ cursor
             if settle_pos and ocr_done_pos != settle_pos and (time.time() - settle_since) > 0.22:
                 ocr_done_pos = settle_pos
+
+                if not self._repo.is_ready() or self._repo.entry_count() == 0:
+                    # กันอาการ "พังเงียบ": ราคายังไม่พร้อม/league ว่าง → บอกตรงๆ
+                    # แทนที่จะปล่อยให้ tooltip ไม่ขึ้นโดยไม่มีเหตุผลให้เห็น
+                    if self._hover_shown_key != "~notready":
+                        self._hover_shown_key = "~notready"
+                        debug.event(f"hover-ocr skipped: repo not ready "
+                                    f"(is_ready={self._repo.is_ready()} "
+                                    f"entries={self._repo.entry_count()}) @({cx},{cy})")
+                        self._root.after_idle(lambda cx=cx, cy=cy: self._overlay.show_message(
+                            "⚠ ราคายังไม่พร้อม", cx, cy))
+                    continue
+
                 try:
                     res = self._scanner.scan_region(
                         cx, cy, float(self._config.get("match_threshold", 0.8)))
                 except Exception:
+                    log.exception("hover-ocr scan_region error")
                     res = []
                 if res:
                     r = res[0]
                     self._hover_shown_key = "~ocr:" + r.item_name
-                    debug.event(f"hover-ocr '{r.item_name}' @({cx},{cy})")
-                    self._root.after_idle(lambda rr=r: self._overlay.show_prices([rr]))
+                    debug.event(f"hover-ocr '{r.item_name}' @({cx},{cy}) "
+                                f"price={r.price_entry.format_price() if r.price_entry else None}")
+                    self._root.after_idle(lambda rr=r: self._show_hover_result(rr))
+
+    def _on_tk_callback_exception(self, exc, val, tb) -> None:
+        """Default Tk behavior prints to stderr — a windowed (console=False) build has
+        no stderr for the user to see, so any exception raised inside an after_idle/
+        hotkey callback would otherwise vanish with zero trace. Route it into the same
+        log/debug files everything else uses instead."""
+        log.error("Unhandled Tk callback exception", exc_info=(exc, val, tb))
+        debug.event(f"TK CALLBACK EXCEPTION: {exc.__name__}: {val}")
+
+    def _show_hover_result(self, r: ScanResult) -> None:
+        """Wrap overlay.show_prices with a try/except: this runs via after_idle on the
+        Tk mainloop, and a windowed (console=False) build has nowhere for an unhandled
+        exception there to go — it would otherwise vanish silently instead of just the
+        tooltip failing to appear."""
+        try:
+            self._overlay.show_prices([r])
+        except Exception:
+            log.exception("show_prices failed")
+            debug.event(f"show_prices FAILED for '{r.item_name}'")
 
     def _clear_all(self) -> None:
         self._scan_active = False

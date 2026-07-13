@@ -166,6 +166,15 @@ class PriceOverlay:
         else:
             self.hide()
 
+    def show_message(self, text: str, x: int, y: int, color: str = "#DD6666") -> None:
+        """One-off status label (e.g. 'prices not ready yet') near the cursor — used
+        instead of silently showing nothing when there's a reason a price can't be
+        looked up yet, so it doesn't look identical to 'no item under cursor'."""
+        self._clear_labels()
+        label = PriceLabel(self._canvas, x, y, text, self._offset_px, color=color)
+        self._labels.append(label)
+        self._show()
+
     def toggle(self, results: list[ScanResult]) -> None:
         if self._visible:
             self.hide()
