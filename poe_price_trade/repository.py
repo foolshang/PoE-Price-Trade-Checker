@@ -1,30 +1,29 @@
-"""Price cache: loads from poe.ninja (+ poe2scout for PoE2), auto-refreshes every 30 min."""
+"""Price cache: loads from poe-data-hub (Firebase-published JSON), auto-refreshes
+every 5 minutes. Desktop app runs in short bursts, not as a service — see
+_load()'s "apply stale disk cache first, refresh in background" flow below."""
 from __future__ import annotations
 import json
 import logging
-import os
 import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from . import debug, hub_client
 from .matcher import ItemMatcher
 from .models import PriceEntry, PriceSnapshot
-from .ninja_client import NinjaClient
 from .normalizer import normalize
 from .profiles import GameProfile
-from . import poe2scout_client
 
 log = logging.getLogger(__name__)
 
-_CACHE_TTL = 1800  # 30 minutes
+_CACHE_TTL = 300  # 5 minutes — matches the hub's Cache-Control: max-age=300
 
 
 
 class PriceRepository:
     def __init__(self, profile: GameProfile, cache_dir: Optional[Path] = None):
         self._profile = profile
-        self._client = NinjaClient(profile)
         self._snapshot: Optional[PriceSnapshot] = None
         self._matcher: Optional[ItemMatcher] = None
         self._lock = threading.Lock()
@@ -37,53 +36,66 @@ class PriceRepository:
     # Public API
     # ------------------------------------------------------------------
 
-    def load(self, league: str, force: bool = False) -> None:
-        """Fetch all categories from poe.ninja and build matcher. Blocks until done."""
+    def load(self, league: str, path: str, force: bool = False) -> None:
+        """Fetch a hub prices file (by its exact hub-relative path) and build the
+        matcher. Blocks until done.
+
+        Two-phase: apply whatever disk cache exists for this league immediately
+        (even if stale) so the app has *something* to match against right away,
+        then attempt a hub refresh. If the refresh fails and we already applied a
+        disk cache, keep serving it instead of raising — a desktop app that only
+        runs in short bursts shouldn't go blank just because the hub had a blip.
+        """
         with self._lock:
-            if not force and self._snapshot and not self._snapshot.is_stale(_CACHE_TTL):
+            if (not force and self._snapshot and self._snapshot.league == league
+                    and not self._snapshot.is_stale(_CACHE_TTL)):
                 return
             self._loading = True
 
+        cached = self._load_disk_cache(league)
+        if cached:
+            with self._lock:
+                self._apply_snapshot(cached)
+
+        if not force and cached and not cached.is_stale(_CACHE_TTL):
+            with self._lock:
+                self._loading = False
+            return
+
         try:
-            # Try disk cache first
-            if not force:
-                cached = self._load_disk_cache(league)
-                if cached and not cached.is_stale(_CACHE_TTL):
-                    with self._lock:
-                        self._apply_snapshot(cached)
-                        self._loading = False
-                    return
-
-            log.info("Fetching prices from poe.ninja — league=%s gv=%s", league, self._profile.game_version)
-            snapshot = self._client.fetch_all(league)
-
-            # health-check: หมวดที่ได้ 0 รายการ (type อาจเปลี่ยนใน patch ใหม่)
-            zero = [n for n, c in snapshot.category_counts.items() if c == 0]
-            if zero:
-                log.warning("poe.ninja หมวดได้ 0: %s — type อาจเปลี่ยน", zero)
-                from . import debug as _dbg
-                _dbg.event(f"HEALTH zero-categories: {zero}")
-
-            if self._profile.is_poe2():
-                snapshot = self._merge_poe2scout(snapshot, league)
+            log.info("Fetching prices from hub — league=%s gv=%s path=%s",
+                     league, self._profile.game_version, path)
+            data = hub_client.get_prices(path)
+            entries = self._entries_from_hub_payload(data)
+            snapshot = PriceSnapshot(
+                entries=entries,
+                fetched_at=datetime.now(),
+                league=league,
+                game_version=self._profile.game_version,
+            )
+            degraded = self._compute_degraded(data)
 
             with self._lock:
-                self._degraded = zero
+                self._degraded = degraded
                 self._apply_snapshot(snapshot)
                 self._loading = False
             self._save_disk_cache(snapshot, league)
-            log.info("Loaded %d price entries total", len(snapshot.entries))
+            log.info("Loaded %d price entries total (hub)", len(snapshot.entries))
         except Exception as e:
             with self._lock:
                 self._loading = False
-            log.error("Failed to load prices: %s", e)
-            raise
+            if cached:
+                log.warning("hub refresh failed, keeping disk cache (%s): %s", league, e)
+                debug.event(f"hub refresh FAILED league={league}: {e} — serving stale disk cache")
+            else:
+                log.error("Failed to load prices from hub: %s", e)
+                raise
 
-    def load_async(self, league: str, on_done=None, on_error=None) -> None:
+    def load_async(self, league: str, path: str, on_done=None, on_error=None) -> None:
         """Non-blocking load in background thread."""
         def _run():
             try:
-                self.load(league)
+                self.load(league, path)
                 if on_done:
                     on_done(self._snapshot)
             except Exception as exc:
@@ -114,7 +126,8 @@ class PriceRepository:
             return self._snapshot
 
     def degraded(self) -> list[str]:
-        """คืนรายชื่อหมวดที่ poe.ninja ส่งกลับ 0 รายการ (type อาจเปลี่ยน)."""
+        """คืนรายชื่อ 'source:category' ที่ hub รายงาน sample.per_category ok=false
+        รอบล่าสุด (fetch/validate ล้มรอบนี้ — entries เก่ายังถูก merge ไว้ให้แล้วฝั่ง hub)."""
         with self._lock:
             return list(self._degraded)
 
@@ -122,64 +135,54 @@ class PriceRepository:
     # Internal
     # ------------------------------------------------------------------
 
-    def _merge_poe2scout(self, snapshot: PriceSnapshot, league: str) -> PriceSnapshot:
-        """Merge poe2scout into poe.ninja snapshot.
+    def _entries_from_hub_payload(self, data: dict) -> list[PriceEntry]:
+        """Merge hub's currency[] + items[] into one PriceEntry list.
 
-        Strategy:
-        - poe.ninja entry has valid price (div>0 or ex>0) → keep poe.ninja
-        - poe.ninja entry has zero price (anchor missing) → replace with poe2scout
-        - item only in poe2scout (e.g. uniques) → add as new
+        `value`/`value_currency` is always chaos for poe1, exalted for poe2
+        (hub SPEC 8.1) — chaos_value/exalted_value are additive fields the hub
+        includes when available; fall back to `value` itself when the matching
+        additive field is absent but value_currency already tells us the unit.
         """
-        from . import debug
-        try:
-            scout_entries = poe2scout_client.fetch_all(league)
-            scout_by_name: dict[str, PriceEntry] = {e.normalized_name: e for e in scout_entries}
+        gv = self._profile.game_version
+        entries: list[PriceEntry] = []
+        for section in ("currency", "items"):
+            for it in data.get(section, []):
+                name = (it.get("name") or "").strip()
+                if not name:
+                    continue
+                value = float(it.get("value") or 0)
+                vc = it.get("value_currency", "")
 
-            merged: list[PriceEntry] = []
-            replaced = 0
-            for e in snapshot.entries:
-                has_price = e.divine_value > 0 or e.exalted_value > 0
-                scout = scout_by_name.pop(e.normalized_name, None)
-                if not has_price and scout:
-                    merged.append(scout)   # แทนที่ด้วย poe2scout ที่มีราคาจริง
-                    replaced += 1
-                else:
-                    merged.append(e)       # poe.ninja มีราคา หรือ poe2scout ไม่มีข้อมูล
+                chaos = it.get("chaos_value")
+                chaos_value = float(chaos) if chaos is not None else (value if vc == "chaos" else 0.0)
 
-            new_from_scout = list(scout_by_name.values())  # items ที่ poe.ninja ไม่มีเลย (uniques ฯลฯ)
-            total = len(merged) + len(new_from_scout)
-            debug.event(f"poe2scout merged: ninja={len(snapshot.entries)} replaced={replaced} new={len(new_from_scout)} total={total}")
-            log.info("poe2scout: replaced=%d new=%d total=%d", replaced, len(new_from_scout), total)
+                exalted = it.get("exalted_value")
+                exalted_value = float(exalted) if exalted is not None else (value if vc == "exalted" else 0.0)
 
-            # เซนเซอร์: จับหมวดใหม่ใน scout ที่ยังไม่มีใน ninja catalog
-            try:
-                scout_cats = poe2scout_client.fetch_category_ids(league)
-                known = ({self._norm_cat(c.name) for c in self._profile.categories}
-                         | {self._norm_cat(c.api_type) for c in self._profile.categories})
-                new_cats = {c for c in scout_cats if self._norm_cat(c) not in known}
-                if new_cats:
-                    log.warning("scout มีหมวดที่ ninja ยังไม่มี: %s", new_cats)
-                    debug.event(f"SENSOR new-categories(scout): {new_cats}")
-            except Exception as se:
-                log.debug("catalog sensor skipped: %s", se)
-
-            return PriceSnapshot(
-                entries=merged + new_from_scout,
-                fetched_at=snapshot.fetched_at,
-                league=snapshot.league,
-                game_version=snapshot.game_version,
-                category_counts=snapshot.category_counts,
-            )
-        except Exception as e:
-            debug.event(f"poe2scout merge FAILED: {e}")
-            log.warning("poe2scout merge failed, using poe.ninja only: %s", e)
-            return snapshot
+                entries.append(PriceEntry(
+                    item_name=name,
+                    normalized_name=normalize(name),
+                    chaos_value=chaos_value,
+                    divine_value=float(it.get("divine_value") or 0),
+                    listing_count=int(it.get("listing_count") or 0),
+                    game_version=gv,
+                    category=it.get("category", ""),
+                    trade_id=it.get("trade_id"),
+                    icon_url=it.get("icon_url"),
+                    exalted_value=exalted_value,
+                    stale=bool(it.get("stale", False)),
+                ))
+        return entries
 
     @staticmethod
-    def _norm_cat(name: str) -> str:
-        """lowercase + ตัด 'unique' + ตัด plural 's' ท้าย เพื่อเทียบหมวด scout vs ninja."""
-        n = name.lower().replace("unique", "").replace(" ", "").replace("_", "")
-        return n[:-1] if n.endswith("s") else n
+    def _compute_degraded(data: dict) -> list[str]:
+        out: list[str] = []
+        per_cat = (data.get("sample") or {}).get("per_category") or {}
+        for source, cats in per_cat.items():
+            for cat, info in cats.items():
+                if not info.get("ok", True):
+                    out.append(f"{source}:{cat}")
+        return out
 
     def _apply_snapshot(self, snapshot: PriceSnapshot) -> None:
         self._snapshot = snapshot
@@ -192,7 +195,7 @@ class PriceRepository:
     def _cache_path(self, league: str) -> Optional[Path]:
         if self._cache_dir is None:
             return None
-        name = f"ninja_{self._profile.game_version}_{league.replace(' ', '_')}.json"
+        name = f"hub_{self._profile.game_version}_{league.replace(' ', '_')}.json"
         return self._cache_dir / name
 
     def _save_disk_cache(self, snapshot: PriceSnapshot, league: str) -> None:
@@ -216,6 +219,7 @@ class PriceRepository:
                         "category": e.category,
                         "trade_id": e.trade_id,
                         "icon_url": e.icon_url,
+                        "stale": e.stale,
                     }
                     for e in snapshot.entries
                 ],
@@ -244,6 +248,7 @@ class PriceRepository:
                     category=e["category"],
                     trade_id=e.get("trade_id"),
                     icon_url=e.get("icon_url"),
+                    stale=e.get("stale", False),
                 )
                 for e in data["entries"]
             ]

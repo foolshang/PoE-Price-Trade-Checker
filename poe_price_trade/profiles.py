@@ -1,33 +1,23 @@
-"""GameProfile: abstracts all per-game-version differences."""
+"""GameProfile: abstracts all per-game-version differences.
+
+Prices no longer come from poe.ninja/poe2scout directly (see hub_client.py) —
+this profile now only carries what's still needed: the GGG trade stats
+endpoint (mod_db.py, F5 stat-id lookup), the web trade URL (F5 browser open),
+and a last-resort offline fallback league name."""
 from __future__ import annotations
-from dataclasses import dataclass, field
-from typing import Optional
-
-
-@dataclass
-class CategoryConfig:
-    name: str
-    endpoint_type: str   # "currencyoverview" | "itemoverview" | "exchange_overview" | "stash_overview"
-    api_type: str        # value passed as ?type= to poe.ninja
+from dataclasses import dataclass
 
 
 @dataclass
 class GameProfile:
     game_version: str
 
-    # poe.ninja endpoints
-    ninja_currency_url: str
-    ninja_item_url: str
-    categories: list[CategoryConfig]
+    # PoE official trade endpoints
+    trade_search_url: str   # ไม่ใช้แล้วหลัง STEP 6 (F5 เปิด browser แทนยิง API)
+    trade_fetch_url: str    # ไม่ใช้แล้วหลัง STEP 6
+    trade_stats_url: str    # ใช้จริง — mod_db.py ดึง stat id
 
-    # PoE official trade endpoints (API — ไม่ใช้แล้วหลัง STEP 6)
-    trade_search_url: str
-    trade_fetch_url: str
-    trade_stats_url: str
-
-    # GGG trade API for league list (probe confirmed: poe.ninja leagues 404)
-    ninja_leagues_url: str
-    leagues_realm: str       # filter field ใน result[].realm
+    # ค่าตั้งต้นก่อนติดต่อ hub ได้ (cold start / hub ล่มรอบแรกไม่มี disk cache เลย)
     default_leagues: list[str]
 
     # Web trade URL สำหรับเปิด browser (F5) — ไม่ใช่ /api
@@ -35,99 +25,25 @@ class GameProfile:
 
     display_name: str = ""
 
-    # PoE2 equipment/unique endpoint (stash/current/item/overview)
-    ninja_stash_url: str = ""
-
-    def get_category(self, name: str) -> Optional[CategoryConfig]:
-        return next((c for c in self.categories if c.name == name), None)
-
-    def is_poe2(self) -> bool:
-        return self.game_version == "poe2"
-
 
 POE1_PROFILE = GameProfile(
     game_version="poe1",
     display_name="Path of Exile 1",
-    ninja_currency_url="https://poe.ninja/api/data/currencyoverview",
-    ninja_item_url="https://poe.ninja/api/data/itemoverview",
-    categories=[
-        CategoryConfig("Currency",        "currencyoverview", "Currency"),
-        CategoryConfig("Fragment",        "currencyoverview", "Fragment"),
-        CategoryConfig("Oil",             "currencyoverview", "Oil"),
-        CategoryConfig("Incubator",       "currencyoverview", "Incubator"),
-        CategoryConfig("Scarab",          "currencyoverview", "Scarab"),
-        CategoryConfig("Fossil",          "currencyoverview", "Fossil"),
-        CategoryConfig("Resonator",       "currencyoverview", "Resonator"),
-        CategoryConfig("Essence",         "currencyoverview", "Essence"),
-        CategoryConfig("DivinationCard",  "currencyoverview", "DivinationCard"),
-        CategoryConfig("DeliriumOrb",     "currencyoverview", "DeliriumOrb"),
-        CategoryConfig("Artifact",        "currencyoverview", "Artifact"),
-        CategoryConfig("Beast",           "currencyoverview", "Beast"),
-        CategoryConfig("UniqueWeapon",    "itemoverview",     "UniqueWeapon"),
-        CategoryConfig("UniqueArmour",    "itemoverview",     "UniqueArmour"),
-        CategoryConfig("UniqueAccessory", "itemoverview",     "UniqueAccessory"),
-        CategoryConfig("UniqueFlask",     "itemoverview",     "UniqueFlask"),
-        CategoryConfig("UniqueJewel",     "itemoverview",     "UniqueJewel"),
-        CategoryConfig("SkillGem",        "itemoverview",     "SkillGem"),
-        CategoryConfig("ClusterJewel",    "itemoverview",     "ClusterJewel"),
-        CategoryConfig("Map",             "itemoverview",     "Map"),
-        CategoryConfig("UniqueMap",       "itemoverview",     "UniqueMap"),
-        CategoryConfig("BaseType",        "itemoverview",     "BaseType"),
-    ],
     trade_search_url="https://www.pathofexile.com/api/trade/search/{league}",
     trade_fetch_url="https://www.pathofexile.com/api/trade/fetch/{ids}",
     trade_stats_url="https://www.pathofexile.com/api/trade/data/stats",
-    # probe confirmed: GGG trade API works (poe.ninja leagues → 404)
-    ninja_leagues_url="https://www.pathofexile.com/api/trade/data/leagues",
-    leagues_realm="pc",
-    default_leagues=["Mirage", "Hardcore Mirage", "Standard", "Hardcore"],
+    default_leagues=["Mirage", "Hardcore Mirage"],
     trade_web_url="https://www.pathofexile.com/trade/search/{league}",
 )
 
-# PoE2: catalog confirmed 2026-06-27 from Network tab.
-# GENERAL  → exchange/current/overview  (primaryValue = divine, core.rates.exalted = ex/div)
-# EQUIPMENT → stash/current/item/overview (same JSON shape)
 POE2_PROFILE = GameProfile(
     game_version="poe2",
     display_name="Path of Exile 2",
-    ninja_currency_url="https://poe.ninja/poe2/api/economy/exchange/current/overview",
-    ninja_item_url="https://poe.ninja/poe2/api/economy/exchange/current/overview",
-    categories=[
-        # ── GENERAL (exchange_overview) ──
-        CategoryConfig("Currency",         "exchange_overview", "Currency"),
-        CategoryConfig("Fragment",         "exchange_overview", "Fragments"),
-        CategoryConfig("AbyssalBone",      "exchange_overview", "Abyss"),
-        CategoryConfig("UncutGem",         "exchange_overview", "UncutGems"),
-        CategoryConfig("LineageGem",       "exchange_overview", "LineageSupportGems"),
-        CategoryConfig("Essence",          "exchange_overview", "Essences"),
-        CategoryConfig("SoulCore",         "exchange_overview", "SoulCores"),
-        CategoryConfig("Idol",             "exchange_overview", "Idols"),
-        CategoryConfig("Rune",             "exchange_overview", "Runes"),
-        CategoryConfig("Omen",             "exchange_overview", "Ritual"),
-        CategoryConfig("Expedition",       "exchange_overview", "Expedition"),
-        CategoryConfig("Delirium",         "exchange_overview", "Delirium"),
-        CategoryConfig("Catalyst",         "exchange_overview", "Breach"),
-        CategoryConfig("Verisium",         "exchange_overview", "Verisium"),
-        # ── EQUIPMENT / ATLAS (stash_overview) ──
-        CategoryConfig("UniqueWeapon",     "stash_overview", "UniqueWeapons"),
-        CategoryConfig("UniqueArmour",     "stash_overview", "UniqueArmours"),
-        CategoryConfig("UniqueAccessory",  "stash_overview", "UniqueAccessories"),
-        CategoryConfig("UniqueFlask",      "stash_overview", "UniqueFlasks"),
-        CategoryConfig("UniqueCharm",      "stash_overview", "UniqueCharms"),
-        CategoryConfig("UniqueJewel",      "stash_overview", "UniqueJewels"),
-        CategoryConfig("UniqueRelic",      "stash_overview", "UniqueSanctumRelics"),
-        CategoryConfig("UniqueTablet",     "stash_overview", "UniqueTablets"),
-        CategoryConfig("PrecursorTablet",  "stash_overview", "PrecursorTablets"),
-    ],
     trade_search_url="https://www.pathofexile.com/api/trade2/search/{league}",
     trade_fetch_url="https://www.pathofexile.com/api/trade2/fetch/{ids}",
     trade_stats_url="https://www.pathofexile.com/api/trade2/data/stats",
-    # probe confirmed: GGG trade2 API works (poe.ninja leagues → 404)
-    ninja_leagues_url="https://www.pathofexile.com/api/trade2/data/leagues",
-    leagues_realm="poe2",
-    default_leagues=["Runes of Aldur", "HC Runes of Aldur", "Standard", "Hardcore"],
+    default_leagues=["Runes of Aldur", "HC Runes of Aldur"],
     trade_web_url="https://www.pathofexile.com/trade2/search/{league}",
-    ninja_stash_url="https://poe.ninja/poe2/api/economy/stash/current/item/overview",
 )
 
 PROFILES: dict[str, GameProfile] = {

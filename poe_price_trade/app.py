@@ -11,7 +11,7 @@ from typing import Optional
 from .capture import get_cursor_pos, get_screen_size, set_dpi_aware
 from .clipboard import read_text, write_text
 from .config import AppConfig
-from . import debug, __version__
+from . import debug, hub_client, __version__
 from .hotkeys import HotkeyManager
 from .item_parser import parse_item
 from .models import Rarity, ScanResult
@@ -65,6 +65,7 @@ class App:
 
         self._profile = PROFILES.get(self._config.get("game_version", "poe2"), PROFILES["poe2"])
         self._repo = PriceRepository(self._profile, cache_dir=self._config.app_dir() / "cache")
+        self._league_paths: dict[str, str] = {}   # league name -> hub file path
         self._scanner: Optional[Scanner] = None
         self._mod_db = ModDatabase(self._profile, cache_dir=self._config.app_dir() / "cache")
 
@@ -91,10 +92,7 @@ class App:
         self._log(f"v{__version__} · {gv} · league: {league} · จอ {sw}×{sh}", "dim")
         self._log("F4 Scan+Hover  |  F5 Trade browser  |  F8 Settings", "dim")
 
-        if self._config.get("auto_league", True):
-            self._fetch_leagues_for_current_gv(auto_pick=True)
-        else:
-            self._load_prices_async()
+        self._fetch_leagues_for_current_gv(auto_pick=self._config.get("auto_league", True))
 
     # ------------------------------------------------------------------
     # Build UI
@@ -460,63 +458,79 @@ class App:
         self._profile = PROFILES.get(gv, PROFILES["poe2"])
         self._repo = PriceRepository(self._profile, cache_dir=self._config.app_dir() / "cache")
         self._mod_db = ModDatabase(self._profile, cache_dir=self._config.app_dir() / "cache")
+        self._league_paths = {}
         self._scanner = None
         self._league_cb.configure(values=self._profile.default_leagues)
         self._clear_all()
-        if self._config.get("auto_league", True):
-            self._fetch_leagues_for_current_gv(auto_pick=True)
-        elif self._profile.default_leagues:
-            self._league_var.set(self._profile.default_leagues[0])
-        else:
-            self._load_prices_async()
+        self._fetch_leagues_for_current_gv(auto_pick=self._config.get("auto_league", True))
 
-    def _fetch_leagues_for_gv(self, game_version: str) -> list[str]:
-        from .ninja_client import NinjaClient
-        profile = PROFILES.get(game_version, PROFILES["poe2"])
-        client = NinjaClient(profile)
-        return client.fetch_leagues()
+    def _fetch_leagues_for_gv(self, game_version: str) -> dict:
+        """{"main": {league, path}, "hardcore": {league, path}|None, "events": [...]}
+        — routing table read from the hub's index.json (hub_client.get_league_files)."""
+        return hub_client.get_league_files(game_version)
 
     def _fetch_leagues_for_current_gv(self, auto_pick: bool = False) -> None:
-        self._log("⟳ ดึงรายชื่อ league…", "info")
+        self._log("⟳ ดึงรายชื่อ league จาก hub…", "info")
         gv = self._gv_var.get()
 
         def _run():
             try:
-                leagues = self._fetch_leagues_for_gv(gv)
+                league_files = self._fetch_leagues_for_gv(gv)
                 self._root.after_idle(
-                    lambda: self._update_league_menu(leagues, auto_pick=auto_pick))
+                    lambda: self._update_league_menu(league_files, auto_pick=auto_pick))
             except Exception as e:
                 self._root.after_idle(
                     lambda err=e: self._log(f"✗ ดึง league ไม่ได้: {err}", "err"))
+                # hub ล่ม/ต่อไม่ได้ — ยังลองโหลดจาก disk cache เดิม (ถ้ามี) แทนที่จะค้างว่างเปล่า
+                self._root.after_idle(self._load_prices_async)
 
         threading.Thread(target=_run, daemon=True).start()
 
-    def _update_league_menu(self, leagues: list[str], auto_pick: bool = False) -> None:
-        if not leagues:
+    def _update_league_menu(self, league_files: dict, auto_pick: bool = False) -> None:
+        main = league_files.get("main") or {}
+        hardcore = league_files.get("hardcore")
+        events = league_files.get("events") or []
+
+        if not main.get("league"):
+            self._log("✗ hub ไม่มีข้อมูลลีกสำหรับเกมนี้ — ลองโหลดจาก disk cache เดิม", "err")
+            self._load_prices_async()
             return
+
+        self._league_paths = {main["league"]: main["path"]}
+        if hardcore:
+            self._league_paths[hardcore["league"]] = hardcore["path"]
+        for e in events:
+            self._league_paths[e["league"]] = e["path"]
+
+        leagues = list(self._league_paths.keys())
         self._league_cb.configure(values=leagues)
+
         if auto_pick:
-            self._auto_pick_league(leagues)
+            picked = self._pick_league(main, hardcore)
         else:
             current = self._league_var.get()
-            if current not in leagues:
-                self._league_var.set(leagues[0])
+            picked = current if current in leagues else main["league"]
+
+        self._league_var.set(picked)   # เปลี่ยนหรือไม่เปลี่ยนก็ fire trace → _load_prices_async เสมอ
         self._log(f"✓ พบ {len(leagues)} leagues", "ok")
 
-    def _auto_pick_league(self, leagues: list[str]) -> None:
+    def _pick_league(self, main: dict, hardcore: Optional[dict]) -> str:
         pref_hc = self._config.get("prefer_hardcore", False)
-        challenge = [l for l in leagues if l not in ("Standard", "Hardcore")]
-        def is_hc(name): return "Hardcore" in name or name.upper().startswith("HC")
-        pool = [l for l in challenge if is_hc(l) == pref_hc] or challenge or leagues
-        picked = pool[0] if pool else (leagues[0] if leagues else "")
-        if picked:
-            self._league_var.set(picked)
-        debug.event(f"auto-league pref_hc={pref_hc} picked={picked}")
+        if pref_hc:
+            if hardcore:
+                debug.event(f"auto-league pref_hc=True picked={hardcore['league']}")
+                return hardcore["league"]
+            self._log("⚠ ไม่มี Hardcore league ให้ใช้ตอนนี้ — ใช้ main league แทน", "warn")
+        debug.event(f"auto-league pref_hc={pref_hc} picked={main['league']}")
+        return main["league"]
 
     def _load_prices_async(self) -> None:
         league = self._league_var.get() or (
-            self._profile.default_leagues[0] if self._profile.default_leagues else "Standard"
+            self._profile.default_leagues[0] if self._profile.default_leagues else ""
         )
+        if not league:
+            return
+        path = self._league_paths.get(league) or f"{self._profile.game_version}/prices/latest.json"
         self._config.set("league", league)
         self._log(f"⟳ กำลังโหลดราคา ({league})…", "info")
 
@@ -525,9 +539,9 @@ class App:
             degraded = self._repo.degraded()
             def _update():
                 self._scanner = Scanner(self._repo)
-                debug.event(f"ninja loaded entries={count} league={league}")
+                debug.event(f"hub loaded entries={count} league={league}")
                 if count == 0:
-                    self._log(f"⚠ 0 รายการ ({league}) — ลองเปลี่ยนเป็น Standard", "warn")
+                    self._log(f"⚠ 0 รายการ ({league}) — ลอง Refresh Prices", "warn")
                 else:
                     self._log(f"✓ พร้อม — {count} รายการ ({league})", "ok")
                 if degraded:
@@ -537,7 +551,7 @@ class App:
         def _on_error(exc):
             self._root.after_idle(lambda: self._log(f"✗ โหลดราคาไม่สำเร็จ: {exc}", "err"))
 
-        self._repo.load_async(league, on_done=_on_done, on_error=_on_error)
+        self._repo.load_async(league, path, on_done=_on_done, on_error=_on_error)
 
     # ------------------------------------------------------------------
 

@@ -5,6 +5,69 @@
 
 ---
 
+## 2026-07-14 — ย้ายแหล่งราคาจาก poe.ninja/poe2scout → poe-data-hub (v0.2.0)
+
+**เหตุผล:** poe-data-hub (sibling project, `D:\Projects\Poe_Hub`) เป็นตัวเดียวที่ยิง
+poe.ninja/poe2scout.com แล้ว — Discord bot ย้ายไปใช้ hub เสร็จแล้ว, Checker คือ
+consumer ตัวที่ 2 ก่อนย้ายทำ survey เต็ม (แยก field/หมวด/ลีก 3 กลุ่ม: hub มีครบ /
+ต้อง reshape / hub ยังไม่มี) พบว่า hub ยังขาด PoE1 16/22 หมวด กับ Standard/Hardcore/
+HC-variant league ทั้งหมด → hub ทำ phase 9 เติมให้ครบก่อน Checker ย้ายจริง (ดู
+`D:\Projects\Poe_Hub\SPEC.md` phase 9)
+
+**ไฟล์ใหม่:**
+- `poe_price_trade/hub_client.py` — stdlib fetch `{game}/prices/index.json` +
+  `get_league_files()` reshape เป็น main/hardcore/events routing table (port
+  จาก `Bot-Poe-Discord/poe-discord-bot/hub_client.py` ปรับให้ไม่ใช้ `requests`
+  เพื่อคง stdlib-only ตามธรรมเนียมเดิมของโปรเจกต์)
+
+**ไฟล์ที่แก้:**
+- **`poe_price_trade/repository.py`** — `PriceRepository.load(league, path, force)`
+  รับ hub path ตรงๆ (ไม่ประกอบ URL เอง), รวม `currency[]+items[]` เป็น entries
+  เดียว, `chaos_value`/`exalted_value` ใช้ additive field จาก hub ถ้ามี ไม่งั้น
+  derive จาก `value`+`value_currency`, `listing_count` หาย → 0, ลบ
+  `_merge_poe2scout()`/`_norm_cat()` (hub merge ninja+scout ให้แล้ว), TTL
+  1800→300s + cache key รวม league เข้าไปด้วย (เดิมเช็คแค่ TTL ไม่เช็คว่า
+  snapshot เป็นของลีกไหน), `load()` เป็น 2 phase: apply disk cache (แม้ stale)
+  ก่อนเสมอ → ค่อย refresh จาก hub เบื้องหลัง — hub ล่มชั่วคราวไม่ทำให้แอพว่างเปล่า
+- **`poe_price_trade/app.py`** — league selection ย้ายจาก GGG trade API มาเป็น
+  `hub_client.get_league_files()`, `prefer_hardcore` อ่าน key `hardcore` จาก
+  index ตรงๆ (`null` → fallback ไป main + log warning ใน UI แทน substring-match
+  แบบเดิม), เก็บ `_league_paths` (league name → hub path) ให้ `_load_prices_async`
+  ใช้ต่อ
+- **`poe_price_trade/models.py`** — เพิ่ม `PriceEntry.stale: bool` (ของใหม่จาก
+  hub, entry เป็นของรอบ fetch ก่อนหน้าเพราะ source ล่มรอบนี้), ลบ
+  `PriceSnapshot.category_counts` (ไม่มีใครสร้าง/ใช้แล้วหลังลบ ninja_client)
+- **`poe_price_trade/overlay.py`** — prefix `~` หน้าราคาเมื่อ `price_entry.stale`
+- **`poe_price_trade/profiles.py`** — ลบ `CategoryConfig`/`categories`/
+  `ninja_*_url`/`leagues_realm`/`get_category()`/`is_poe2()` (ตายหมดหลังลบ
+  ninja_client) เหลือแค่ trade endpoints (F5/mod_db ยังใช้) + `default_leagues`
+  (fallback ตอน cold-start ไม่มี network/cache เลย)
+
+**ไฟล์ที่ลบ:** `poe_price_trade/ninja_client.py`, `poe_price_trade/poe2scout_client.py`,
+`tests/test_ninja_client.py`, `tests/sample_data/ninja_poe{1,2}_currency.json`
+
+**ห้ามแตะ (ยืนยันจาก survey ว่าไม่เกี่ยว):** `trade_url.py`/F5 pipeline ทั้งเส้น
+(ไม่เคยอ่าน `PriceEntry.trade_id` เลย สร้าง query จาก mod/name/base ผ่าน
+`mod_db.py` คนละชุดข้อมูล), OCR, `overlay.py` format logic, `mod_db.py`
+
+**ผลกระทบ user-visible:** Standard/Hardcore (permanent league) หายจาก league
+dropdown ทั้งสองเกม — hub ตั้งใจไม่ดึงราคาลีกพวกนี้ (ไม่มีผู้ใช้จริง, hub binding
+condition 5) เหลือแค่ main challenge + HC variant ของ main (ถ้ามี) + event league
+ที่เปิดอยู่ (ถ้ามี)
+
+**Tests:** 56/56 passed (เพิ่ม `tests/test_hub_client.py` ใหม่ + เขียน
+`tests/test_repository.py` ใหม่บางส่วนให้ mock `hub_client` แทน `NinjaClient`,
+คลุมเคส hardcore null, listing_count หาย, ชื่อซ้ำ dedupe, stale flag, degraded
+จาก `sample.per_category`)
+
+**Smoke test กับ hub จริง (2026-07-14):** poe1 Mirage 3462 entries / Hardcore
+Mirage 1052 entries, poe2 Runes of Aldur 1099 entries / HC Runes of Aldur 1083
+entries — `degraded()` ว่างทั้งคู่ (ไม่มีหมวดไหน `ok:false`) lookup ตรวจแล้ว:
+Divine Orb, Chaos Orb, Mageblood (poe1 unique), Runeseeker's Call (poe2 unique)
+ราคาสมเหตุสมผล ยังไม่ได้ทดสอบ F4 hover กับไอเทมจริงในเกม (ต้องรอ user เปิดเกม)
+
+---
+
 ## 2026-07-04 — Patch C.1+C.2: fix magic base resolution + jewel meta (session 11, v0.1.7)
 
 **Commit:** `89e3dc0` (C.1) + release tag `v0.1.7`; C.2 ยังไม่ commit (แก้เฉพาะ `tools/build_mod_meta.py`, ไม่ต้อง build exe ใหม่)

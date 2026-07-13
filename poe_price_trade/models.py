@@ -1,6 +1,6 @@
 """Data models shared across the application."""
 from __future__ import annotations
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
@@ -32,6 +32,7 @@ class PriceEntry:
     trade_id: Optional[str] = None
     icon_url: Optional[str] = None
     exalted_value: float = 0.0   # PoE2 ฐานเป็น exalted
+    stale: bool = False          # hub source ล่มรอบนี้ — ราคาเป็นของรอบก่อนหน้า
 
     def format_price(self) -> str:
         d = self.divine_value
@@ -61,7 +62,6 @@ class PriceSnapshot:
     fetched_at: datetime
     league: str
     game_version: str
-    category_counts: dict[str, int] = field(default_factory=dict)
 
     def is_stale(self, max_age_seconds: int = 1800) -> bool:
         age = (datetime.now() - self.fetched_at).total_seconds()

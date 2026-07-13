@@ -152,6 +152,8 @@ class PriceOverlay:
             if r.price_entry is None:
                 continue
             price_text = r.price_entry.format_price()
+            if r.price_entry.stale:
+                price_text = "~" + price_text
             color = _CATEGORY_COLORS.get(r.price_entry.category, _DEFAULT_COLOR)
             label = PriceLabel(
                 self._canvas, r.bbox_x + r.bbox_w, r.bbox_y,
