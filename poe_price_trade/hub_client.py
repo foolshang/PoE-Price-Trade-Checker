@@ -53,6 +53,17 @@ def get_prices(path: str) -> dict:
     return _get(path)
 
 
+def get_meta(game: str) -> Optional[dict]:
+    """{game}/meta/latest.json — mod-popularity data (build frequency per slot/
+    archetype/stat_id). PoE2-only on the hub as of this writing; poe1 simply 404s.
+    Returns None on any failure so callers can degrade silently (SPEC 8.2)."""
+    try:
+        return _get(f"{game}/meta/latest.json")
+    except Exception as e:
+        log.warning("hub meta fetch failed (%s): %s", game, e)
+        return None
+
+
 def get_league_files(game: str) -> dict:
     """Reshape index.json into the league->file routing table a consumer needs:
 

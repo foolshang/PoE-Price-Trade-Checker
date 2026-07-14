@@ -37,10 +37,14 @@ class ModPickerWindow:
     def __init__(self, parent: tk.Misc, item: ParsedItem,
                  rows: list[tuple[ModValue, Optional[str]]],
                  on_search: Callable[[list[dict]], None],
-                 annos: Optional[dict] = None, summary: str = ""):
+                 annos: Optional[dict] = None, summary: str = "",
+                 badge_colors: Optional[list[Optional[str]]] = None,
+                 badge_style: str = "dot"):
         self._on_search = on_search
         self._rows: list[dict] = []
         self._annos = annos or {}
+        self._badge_colors = badge_colors or [None] * len(rows)
+        self._badge_style = badge_style if badge_style in ("dot", "text", "frame") else "dot"
 
         win = tk.Toplevel(parent)
         self._win = win
@@ -64,8 +68,9 @@ class ModPickerWindow:
         body = tk.Frame(win, bg=_BG)
         body.pack(fill=tk.BOTH, expand=True, padx=10)
 
-        for mod, sid in rows:
-            self._add_row(body, mod, sid)
+        for i, (mod, sid) in enumerate(rows):
+            badge = self._badge_colors[i] if i < len(self._badge_colors) else None
+            self._add_row(body, mod, sid, badge)
 
         # ปุ่มเลือกทั้งหมด / ไม่เลือกเลย
         sel = tk.Frame(win, bg=_BG)
@@ -98,25 +103,39 @@ class ModPickerWindow:
 
     # ------------------------------------------------------------------
 
-    def _add_row(self, parent: tk.Frame, mod: ModValue, sid: Optional[str]) -> None:
+    def _add_row(self, parent: tk.Frame, mod: ModValue, sid: Optional[str],
+                 pop_color: Optional[str] = None) -> None:
+        """pop_color = mod-badge color (red/gold/None) from ModBadgeDB, rendered per
+        self._badge_style: "dot" prepends a colored ● (rest of the line unchanged),
+        "text" tints the whole line's fg, "frame" outlines the row."""
         mtype = getattr(mod, "mod_type", "explicit") or "explicit"
         tag = _TYPE_TAG.get(mtype, "")
         anno = self._annos.get(getattr(mod, "group", -1)) or {}
-        badge = ""
+        tier_badge = ""
         if anno.get("tier"):
             tot = anno.get("total", 0)
-            badge = f"[T{anno['tier']}/{tot}] " if tot else f"[T{anno['tier']}] "
+            tier_badge = f"[T{anno['tier']}/{tot}] " if tot else f"[T{anno['tier']}] "
         money = "💰 " if anno.get("money") else ""
-        text = money + badge + tag + mod.text
+        text = money + tier_badge + tag + mod.text
         if len(text) > _MAX_TEXT:
             text = text[:_MAX_TEXT - 1] + "…"
 
         row = tk.Frame(parent, bg=_BG)
+        if pop_color and self._badge_style == "frame":
+            row.configure(highlightthickness=1, highlightbackground=pop_color,
+                          highlightcolor=pop_color)
         row.pack(fill=tk.X, pady=1)
+
+        if self._badge_style == "dot":
+            tk.Label(row, text="●", bg=_BG, fg=(pop_color or _BG),
+                     font=_FONT, width=2).pack(side=tk.LEFT)
 
         var = tk.BooleanVar(value=bool(sid) and mtype in _DEFAULT_CHECKED)
         state = tk.NORMAL if sid else tk.DISABLED
-        fg = (_ACC if anno.get("money") else _FG) if sid else _DIM
+        if pop_color and self._badge_style == "text":
+            fg = pop_color
+        else:
+            fg = (_ACC if anno.get("money") else _FG) if sid else _DIM
         cb = tk.Checkbutton(row, text=text if sid else text + "  (ไม่พบ id)",
                             variable=var, state=state,
                             bg=_BG, fg=fg, selectcolor="#2A2020",

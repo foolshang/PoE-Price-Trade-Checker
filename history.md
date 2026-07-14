@@ -5,6 +5,67 @@
 
 ---
 
+## 2026-07-14 — Mod Badge เฟส 1: สีบอกความนิยม mod ใน F5 popup (PoE2, v0.3.0)
+
+**เหตุผล:** hub มี `poe2/meta/latest.json` (mod frequency จาก build จริงบน
+poe.ninja) — ต่อยอดจาก tier/money badge เดิมใน F5 popup ให้เห็นด้วยว่า mod
+ไหน "คนนิยมใส่จริง" (แดง = ยอดฮิตมาก, ทอง = พอมีคนใส่, ขาว = ไม่ค่อยมี/match
+stat_id ไม่ได้) แยกจาก tier ladder (ที่บอกแค่ค่า roll สูง/ต่ำ ไม่ใช่ความนิยม)
+
+**ตัดสินใจสำคัญระหว่างคุย survey กับ user:**
+1. **โชว์ที่ F5 popup ไม่ใช่ F4 overlay** — F4 hover-OCR อ่านแค่ชื่อ item เพื่อ
+   ราคา ไม่เคย parse mod เลย ส่วน F5 (Ctrl+C) ได้ mod text ที่แม่นยำ 100% จาก
+   clipboard อยู่แล้ว ต่อยอดจาก `mod_picker.py` ที่มี tier/money badge อยู่แล้ว
+   ง่ายกว่าและแม่นกว่า — F4 hover-OCR mod parsing เก็บไว้เป็น backlog เฟสถัดไป
+2. **reuse `mod_db.py` แทนเขียน stat_dictionary matcher ใหม่** — verified live
+   ว่า `mod_db.find_stat_id()` (จาก GGG `trade2/data/stats`, ใช้กับ F5 อยู่แล้ว)
+   คืน stat_id namespace เดียวกับ hub เป๊ะ (`explicit.stat_3299347043` = "#
+   to maximum Life" ตรงกันทั้งสองฝั่ง) — hub's `stat_dictionary` เหลือแค่เป็น
+   fallback เมื่อ mod_db resolve ไม่ได้ ไม่ใช่ตัวหลัก
+
+**ไฟล์ใหม่:**
+- `poe_price_trade/mod_badge.py` — `ModBadgeDB` (disk cache TTL 8h อิง
+  `generated_at` ของ payload เอง ไม่ใช่ wall-clock ตอน load — เจอบั๊ก
+  self-defeating cache ระหว่างเขียน ที่ mark stale cache ว่า fresh ทันทีที่
+  index() ก่อน fix), `slot_for_item()` (item_class/base_type → hub slot key
+  รวม jewel color slug ที่ port มาจาก hub's `_slugify_jewel_base` ตรงๆ),
+  `resolve_stat_id()` (mod_db ก่อน → stat_dictionary fallback แบบ
+  exact-then-fuzzy เหมือน mod_db เอง เพราะ `_normalize_mod` ไม่ตัด "+" หน้า
+  mod text จริงในเกม)
+
+**ไฟล์ที่แก้:**
+- `poe_price_trade/hub_client.py` — เพิ่ม `get_meta(game)`
+- `poe_price_trade/meta_db.py` — เปลี่ยน `_WEAPON_CLASSES` → `WEAPON_CLASSES`
+  (public) ให้ `mod_badge.py` reuse ได้ (เป็น PoE2 weapon class set ที่ validate
+  แล้วจาก money-mod feature v0.1.6)
+- `poe_price_trade/mod_picker.py` — `ModPickerWindow`/`_add_row` รับ
+  `badge_colors`/`badge_style` เพิ่ม, 3 style: dot (● แยก widget ซ้ายมือ ไม่ทับ
+  สีบรรทัด), text (ย้อม fg ทั้งบรรทัด), frame (`highlightthickness` border)
+- `poe_price_trade/app.py` — `ModBadgeDB` instance เดียว ไม่ recreate ตอนสลับ
+  game version (PoE2-only อยู่แล้ว ไม่ผูกกับ profile), `_compute_mod_badges()`
+  คำนวณแยกจาก `rows`'s stat_id เดิมโดยสิ้นเชิง (**ไม่แตะ F5 trade query
+  pipeline** — badge resolution เป็น pipeline คู่ขนาน ไม่ overwrite `sid` เดิม)
+- `poe_price_trade/config.py`/`settings.py` — `mod_badge_style`,
+  `mod_badge_archetype` (dropdown ใหม่ในแท็บ Game)
+
+**ขอบเขต:** เฉพาะ rare (unique/magic ไม่มีความหมายเรื่องความนิยม), PoE1 ไม่มี
+`poe1/meta/latest.json` บน hub เลย → `available()` False เสมอ → ไม่ติด badge
+เงียบๆ ไม่ error, threshold ปรับได้ผ่าน `mod_badge_rules.json` (override pattern
+เดียวกับ `money_mods.json` เดิม)
+
+**Tests:** 78/78 passed (`tests/test_mod_badge.py` ใหม่ 22 เคส — slot mapping
+รวม jewel, duplicate stat_id ใน stat_dictionary แบบ list-valued ทั้งสองทิศทาง,
+archetype fallback ไป "all", disk cache staleness ผูกกับ `generated_at`,
+graceful degrade ไม่มี network/cache)
+
+**Smoke test กับ hub+mod_db จริง (2026-07-14):** parse `sample_poe2_rare.txt`
+จริง (Knightly Mitts, 7 explicit mods) → slot resolve เป็น "gloves" ถูกต้อง →
+stat_id resolve ครบทุก mod (รวมที่มี roll range แบบ "40(39-42)%") → badge สม
+เหตุสมผลตามความรู้ meta จริง: Life/Mana = แดง (ยอดฮิต), Resistance = ทอง,
+flat Armour/Armour% = ขาว ยังไม่ได้ทดสอบ F5 popup จริงในเกม (ต้องรอ user)
+
+---
+
 ## 2026-07-14 — ย้ายแหล่งราคาจาก poe.ninja/poe2scout → poe-data-hub (v0.2.0)
 
 **เหตุผล:** poe-data-hub (sibling project, `D:\Projects\Poe_Hub`) เป็นตัวเดียวที่ยิง

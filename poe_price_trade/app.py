@@ -22,6 +22,8 @@ from .scan import Scanner
 from .settings import SettingsWindow
 from .trade_url import open_trade
 from .mod_db import ModDatabase
+from . import mod_badge
+from .mod_badge import ModBadgeDB
 
 log = logging.getLogger(__name__)
 
@@ -69,6 +71,10 @@ class App:
         self._league_paths: dict[str, str] = {}   # league name -> hub file path
         self._scanner: Optional[Scanner] = None
         self._mod_db = ModDatabase(self._profile, cache_dir=self._config.app_dir() / "cache")
+        # PoE2-only, doesn't depend on game_version -> created once, never recreated
+        # on game-version switch (unlike _repo/_mod_db which are per-profile).
+        self._mod_badge = ModBadgeDB(cache_dir=self._config.app_dir() / "cache",
+                                     config_dir=self._config.app_dir())
 
         self._overlay: Optional[PriceOverlay] = None
         self._hotkeys: Optional[HotkeyManager] = None
@@ -402,6 +408,8 @@ class App:
                         debug.event(f"F5 magic base unresolved: '{item.base_type}' → ไม่ใส่ type")
                         item.base_type = ""
                 self._mod_db.load()
+                if self._profile.game_version == "poe2":
+                    self._mod_badge.load()
                 use_picker = (bool(self._config.get("f5_mod_picker", True))
                               and item.identified
                               and item.rarity in (Rarity.RARE, Rarity.MAGIC)
@@ -418,12 +426,16 @@ class App:
                         summary = MetaDB.summary(item, annos)
                     except Exception:
                         log.exception("meta annotate error")
+
+                    badge_colors = self._compute_mod_badges(item, rows)
+
                     write_text("")                   # ② reset ท้าย
                     debug.event(f"F5 picker '{item.item_name}' rarity={item.rarity} "
                                 f"mods={len(rows)} resolved={sum(1 for _, s in rows if s)} "
-                                f"money={sum(1 for a in annos.values() if a.get('money'))}")
-                    self._root.after_idle(lambda it=item, r=rows, a=annos, s=summary:
-                                          self._open_mod_picker(it, r, a, s))
+                                f"money={sum(1 for a in annos.values() if a.get('money'))} "
+                                f"badges={sum(1 for c in badge_colors if c)}")
+                    self._root.after_idle(lambda it=item, r=rows, a=annos, s=summary, bc=badge_colors:
+                                          self._open_mod_picker(it, r, a, s, bc))
                     return
                 url = open_trade(item, self._mod_db, self._league_var.get(), self._profile)
                 write_text("")                       # ② reset ท้าย — เก็บกวาดหลังเปิด browser
@@ -445,7 +457,25 @@ class App:
             self._meta_db = MetaDB(self._config.app_dir())
         return self._meta_db
 
-    def _open_mod_picker(self, item, rows, annos=None, summary="") -> None:
+    def _compute_mod_badges(self, item, rows) -> list:
+        """Popularity badge color per row (index-aligned with `rows`), or all-None
+        if out of scope. Independent of the trade-query stat_id in `rows` itself —
+        never touches it, so F5's trade-search behavior is unaffected either way."""
+        badge_colors: list = [None] * len(rows)
+        if (self._profile.game_version != "poe2" or item.rarity != Rarity.RARE
+                or not self._mod_badge.available()):
+            return badge_colors
+        slot = mod_badge.slot_for_item(item.item_class, item.base_type)
+        if not slot:
+            return badge_colors
+        archetype = self._config.get("mod_badge_archetype", "all")
+        for i, (m, _sid) in enumerate(rows):
+            bsid = self._mod_badge.resolve_stat_id(m.text, getattr(m, "mod_type", None), self._mod_db)
+            if bsid:
+                badge_colors[i] = self._mod_badge.badge_color(bsid, slot, archetype)
+        return badge_colors
+
+    def _open_mod_picker(self, item, rows, annos=None, summary="", badge_colors=None) -> None:
         """เปิด popup เลือก mod (ต้องเรียกบน main thread เท่านั้น)."""
         from .mod_picker import ModPickerWindow
 
@@ -465,7 +495,8 @@ class App:
 
         self._log(f"🧩 เลือก mod: {item.item_name}", "info")
         ModPickerWindow(self._root, item, rows, on_search=_on_search,
-                        annos=annos, summary=summary)
+                        annos=annos, summary=summary, badge_colors=badge_colors,
+                        badge_style=self._config.get("mod_badge_style", "dot"))
 
     # ------------------------------------------------------------------
     # Settings & price loading

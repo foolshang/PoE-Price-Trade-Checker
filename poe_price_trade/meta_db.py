@@ -28,7 +28,7 @@ def _norm(t: str) -> str:
     return " ".join(_NUMISH.sub("#", _ROLL_RANGE.sub("", t)).lower().split())
 
 
-_WEAPON_CLASSES = {
+WEAPON_CLASSES = {
     "Bows", "Crossbows", "Wands", "Staves", "Quarterstaves", "Spears",
     "One Hand Maces", "Two Hand Maces", "Sceptres", "Flails",
     "One Hand Swords", "Two Hand Swords", "One Hand Axes", "Two Hand Axes",
@@ -153,7 +153,7 @@ class MetaDB:
         for rule in self._money:
             c = rule.get("classes")
             if c == "WEAPON":
-                if item_class not in _WEAPON_CLASSES:
+                if item_class not in WEAPON_CLASSES:
                     continue
             elif c and item_class not in c:
                 continue

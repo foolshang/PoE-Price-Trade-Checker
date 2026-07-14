@@ -28,8 +28,22 @@ event league ที่กำลังเปิดอยู่ (ถ้ามี) 
 
 F5 (trade browser) ไม่ใช้ข้อมูลราคาเลย — `trade_url.py` สร้าง query จาก
 `ParsedItem` (ชื่อ/base/mods) ผ่าน `mod_db.py` (stat id จาก GGG trade API
-`trade(2)/data/stats` โดยตรง คนละ pipeline กับ hub) mod badge/tier annotation
-(F5 popup) ใช้ `meta_db.py` ← `mod_meta.json` (ไฟล์ local, build จาก RePoE
-datamine ด้วย `tools/build_mod_meta.py` — **ไม่เกี่ยวกับ hub เลย**) hub มี
-`poe2/meta/latest.json` ของตัวเองด้วยเช่นกัน (mod frequency จาก build จริง)
-แต่เป็นคนละงาน คนละไฟล์กับ `mod_meta.json` นี้ — ยังไม่ได้พิจารณาย้ายมาใช้ตัวนั้น
+`trade(2)/data/stats` โดยตรง คนละ pipeline กับ hub) tier/money badge (F5 popup)
+ใช้ `meta_db.py` ← `mod_meta.json` (ไฟล์ local, build จาก RePoE datamine ด้วย
+`tools/build_mod_meta.py` — **ไม่เกี่ยวกับ hub เลย**)
+
+## Mod Badge (F5 popup, PoE2 only, v0.3.0+)
+
+สี badge บอกความนิยมของ mod (แดง/ทอง/ขาว) มาจาก `poe2/meta/latest.json` ของ hub
+(`poe_price_trade/mod_badge.py`, `ModBadgeDB`) — คนละไฟล์คนละ concept กับ
+tier/money badge ข้างบน (คนละสี คนละเกณฑ์ คนละแหล่งข้อมูล แสดงในแถวเดียวกันของ
+popup ได้พร้อมกัน) schema อ้างอิง SPEC.md section 8.2 ของ hub repo
+
+- stat_id resolution ใช้ `mod_db.py`'s `find_stat_id()` เป็นหลัก (namespace
+  เดียวกับ hub, verified live) — `stat_dictionary` ของ hub เป็นแค่ fallback
+  เมื่อ mod_db resolve ไม่ได้ ไม่ใช่ตัวหลัก
+- เกณฑ์สี/threshold ปรับได้ผ่าน `mod_badge_rules.json` ใน app dir (override
+  pattern เดียวกับ `money_mods.json` ของ meta_db.py) badge_style/archetype
+  เป็น setting ปกติใน config.json (`mod_badge_style`, `mod_badge_archetype`)
+- PoE1: hub ไม่มี `poe1/meta/latest.json` เลย → `ModBadgeDB.available()` เป็น
+  False เสมอ → badge ไม่ขึ้นแบบเงียบๆ ไม่ error — by design ไม่ใช่บั๊ก
