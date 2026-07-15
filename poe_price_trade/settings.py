@@ -124,15 +124,12 @@ class SettingsWindow:
         tk.Label(f, text="Mod Badge (F5 popup, PoE2 only):", bg=_BG, fg=_FG,
                  font=_PANEL_FONT).grid(row=6, column=0, columnspan=2, sticky="w", padx=6, pady=(10, 2))
 
-        self._lbl(f, "Badge style:", 7, 0)
-        self._combo(f, "mod_badge_style", ["dot", "text", "frame"], 7, 1, width=10)
-
-        self._lbl(f, "Archetype:", 8, 0)
+        self._lbl(f, "Archetype:", 7, 0)
         self._combo(f, "mod_badge_archetype", [
             "all", "attack-melee", "attack-bow", "attack-crossbow",
             "spell-fire", "spell-cold", "spell-lightning", "spell-chaos",
             "spell-physical", "minion", "totem-trap-mine",
-        ], 8, 1, width=16)
+        ], 7, 1, width=16)
 
     def _build_hotkeys_tab(self, f: tk.Frame) -> None:
         specs = [
@@ -163,7 +160,7 @@ class SettingsWindow:
     def _load_from_config(self) -> None:
         str_keys = ("game_version", "hotkey_scan", "hotkey_trade",
                     "hotkey_settings", "hotkey_quit", "log_level", "match_threshold",
-                    "price_offset_px", "mod_badge_style", "mod_badge_archetype")
+                    "price_offset_px", "mod_badge_archetype")
         for key in str_keys:
             if key in self._vars:
                 self._vars[key].set(self._config.get(key, ""))
@@ -177,7 +174,7 @@ class SettingsWindow:
     def _apply(self) -> None:
         for key in ("game_version", "hotkey_scan", "hotkey_trade",
                     "hotkey_settings", "hotkey_quit", "log_level",
-                    "mod_badge_style", "mod_badge_archetype"):
+                    "mod_badge_archetype"):
             if key in self._vars:
                 self._config.set(key, self._vars[key].get())
 

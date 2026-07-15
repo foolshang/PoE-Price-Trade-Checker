@@ -20,7 +20,9 @@
     "gen": "prefix"|"suffix",
     "text": "#% increased physical damage",       # normalized (ตัวเลข→#, ตัด markup)
     "stats": ["local_physical_damage_+%"],
-    "tiers": [ {"lvl": 82, "rng": [[170,179]]}, ... ]   # เรียง tier สูง→ต่ำ (index 0 = T1)
+    "tiers": [ {"lvl": 82, "rng": [[170,179]]}, ... ],  # เรียง tier สูง→ต่ำ (index 0 = T1)
+    "tags": ["physical", "physical_damage", "damage"]   # RePoE implicit_tags — สำหรับ metacraft
+                                                          # green badge (จับคู่ mod หมวดเดียวกัน)
   }
 }
 
@@ -119,6 +121,7 @@ def main() -> None:
     for tt, tid in tagset_id.items():
         ts = set(tt)
         fams: dict[tuple, list] = defaultdict(list)
+        fam_tags: dict[tuple, list] = {}
         for m in cand:
             if not can_spawn(m, ts):
                 continue
@@ -128,11 +131,15 @@ def main() -> None:
                    norm_text(m.get("text", "")))
             fams[key].append((m.get("required_level", 0),
                               [[s.get("min", 0), s.get("max", 0)] for s in stats]))
+            # tags เหมือนกันทุก tier ของ family เดียวกัน (mod line เดียวกันแค่ค่าต่าง) —
+            # เก็บจาก entry แรกที่เจอพอ
+            fam_tags.setdefault(key, sorted(m.get("implicit_tags") or []))
         fam_list = []
         for (gen, sids, text), tiers in fams.items():
             tiers.sort(key=lambda t: -t[0])
             fam_list.append({"gen": gen, "text": text, "stats": list(sids),
-                             "tiers": [{"lvl": lv, "rng": rng} for lv, rng in tiers]})
+                             "tiers": [{"lvl": lv, "rng": rng} for lv, rng in tiers],
+                             "tags": fam_tags[(gen, sids, text)]})
         fam_list.sort(key=lambda f: (f["gen"], f["text"]))
         blob = json.dumps(fam_list, sort_keys=True)
         if blob in seen_content:

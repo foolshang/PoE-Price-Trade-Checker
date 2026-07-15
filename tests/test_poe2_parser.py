@@ -52,6 +52,25 @@ def test_affix_counts():
     assert it.suffix_count == 3
 
 
+def test_per_mod_affix_field():
+    it = _item()
+    ex = [m for m in it.mods if m.mod_type == "explicit"]
+    # header order: Crocodile's(prefix,hybrid 2 lines), Opalescent(prefix),
+    # Studded(prefix), of Magma(suffix), of the Ice(suffix), of the Maelstrom(suffix)
+    assert [m.affix for m in ex] == [
+        "prefix", "prefix", "prefix", "prefix",
+        "suffix", "suffix", "suffix",
+    ]
+    assert sum(1 for m in ex if m.affix == "prefix") == 4   # 3 headers, hybrid = 2 mods
+    assert sum(1 for m in ex if m.affix == "suffix") == 3
+
+
+def test_rune_mods_have_no_affix():
+    it = _item()
+    runes = [m for m in it.mods if m.mod_type == "rune"]
+    assert all(m.affix == "" for m in runes)
+
+
 def test_identified_and_corrupted():
     it = _item()
     assert it.identified is True

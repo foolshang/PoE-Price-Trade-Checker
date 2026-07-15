@@ -3,7 +3,10 @@ Fixture field names match a real poe2/meta/latest.json pull (2026-07-14)."""
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
-from poe_price_trade.mod_badge import ModBadgeDB, slot_for_item, _build_template_index
+from poe_price_trade.mod_badge import (
+    ModBadgeDB, slot_for_item, _build_template_index,
+    affix_cap, tier_roll_arrow,
+)
 
 
 def _now_iso() -> str:
@@ -238,3 +241,150 @@ def test_config_dir_rules_override_loaded(tmp_path):
     db._index(_meta_payload(mods=_SAMPLE_MODS))
     assert db.badge_color("s.red_rank", "helmet", "all") == "#ABCDEF"
     assert db.badge_color("s.gold_rank", "helmet", "all") is None   # tightened rule excludes it
+
+
+# ------------------------------------------------------------------
+# affix_cap
+# ------------------------------------------------------------------
+
+def test_affix_cap_regular_gear_is_3():
+    assert affix_cap("Gloves") == 3
+    assert affix_cap("Amulets") == 3
+
+
+def test_affix_cap_jewel_is_1():
+    assert affix_cap("Jewel") == 1
+    assert affix_cap("Jewels") == 1
+
+
+# ------------------------------------------------------------------
+# tier_roll_arrow (RePoE-tier-based)
+# ------------------------------------------------------------------
+
+def test_tier_roll_arrow_top_of_range_is_up():
+    # 39/(40-10)=~97th percentile of [10,40]
+    assert tier_roll_arrow((39.0,), [[10.0, 40.0]]) == "▲"
+
+
+def test_tier_roll_arrow_bottom_of_range_is_down():
+    assert tier_roll_arrow((11.0,), [[10.0, 40.0]]) == "▼"
+
+
+def test_tier_roll_arrow_middle_of_range_is_none():
+    assert tier_roll_arrow((25.0,), [[10.0, 40.0]]) is None
+
+
+def test_tier_roll_arrow_hybrid_averages_positions():
+    # value 1 near top of its range, value 2 near bottom -- average lands middle
+    assert tier_roll_arrow((39.0, 11.0), [[10.0, 40.0], [10.0, 40.0]]) is None
+
+
+def test_tier_roll_arrow_no_range_returns_none():
+    assert tier_roll_arrow((25.0,), None) is None
+    assert tier_roll_arrow((), [[10.0, 40.0]]) is None
+
+
+def test_tier_roll_arrow_custom_threshold():
+    # (30.4-10)/(40-10) = 68th percentile -- below the top-25% cutoff (>=75th)
+    # but above the top-40% cutoff (>=60th)
+    assert tier_roll_arrow((30.4,), [[10.0, 40.0]], top_bottom_pct=0.25) is None
+    assert tier_roll_arrow((30.4,), [[10.0, 40.0]], top_bottom_pct=0.40) == "▲"
+
+
+# ------------------------------------------------------------------
+# roll_indicator_fallback (hub value_min/value_max based)
+# ------------------------------------------------------------------
+
+def test_roll_indicator_fallback_uses_hub_value_range():
+    db = ModBadgeDB()
+    db._index(_meta_payload(mods=[
+        {"slot": "helmet", "archetype": "all", "stat_id": "s.x",
+         "rank_in_slot": 50, "usage_pct": 1.0, "value_min": 10.0, "value_max": 40.0},
+    ]))
+    assert db.roll_indicator_fallback("s.x", "helmet", "all", (39.0,)) == "▲"
+    assert db.roll_indicator_fallback("s.x", "helmet", "all", (11.0,)) == "▼"
+    assert db.roll_indicator_fallback("s.x", "helmet", "all", (25.0,)) is None
+
+
+def test_roll_indicator_fallback_unmatched_stat_returns_none():
+    db = ModBadgeDB()
+    db._index(_meta_payload(mods=_SAMPLE_MODS))
+    assert db.roll_indicator_fallback("s.does_not_exist", "helmet", "all", (25.0,)) is None
+
+
+def test_roll_indicator_fallback_no_values_returns_none():
+    db = ModBadgeDB()
+    db._index(_meta_payload(mods=_SAMPLE_MODS))
+    assert db.roll_indicator_fallback("s.red_rank", "helmet", "all", ()) is None
+
+
+# ------------------------------------------------------------------
+# tag_color (green — metacraft material)
+# ------------------------------------------------------------------
+
+class _FakeMetaDB:
+    """Stub matching MetaDB's tags_for_template() surface, decoupled from a
+    real mod_meta.json fixture."""
+    def __init__(self, tag_map: dict):
+        self._tag_map = tag_map
+
+    def tags_for_template(self, template: str) -> set:
+        return self._tag_map.get(template, set())
+
+
+def test_tag_color_green_when_sharing_tag_with_red_mod():
+    db = ModBadgeDB()
+    db._index(_meta_payload(
+        mods=[
+            {"slot": "helmet", "archetype": "all", "stat_id": "s.red_life",
+             "rank_in_slot": 1, "usage_pct": 60.0},          # red
+            {"slot": "helmet", "archetype": "all", "stat_id": "s.white_mana",
+             "rank_in_slot": 50, "usage_pct": 1.0},           # white on its own
+        ],
+        stat_dictionary=[
+            {"stat_id": "s.red_life", "template": "# to maximum life", "mod_kind": "explicit"},
+            {"stat_id": "s.white_mana", "template": "# to maximum mana", "mod_kind": "explicit"},
+        ],
+    ))
+    meta = _FakeMetaDB({
+        "# to maximum life": {"life", "resource"},
+        "# to maximum mana": {"mana", "resource"},   # shares "resource" with the red mod
+    })
+    assert db.tag_color("s.white_mana", "helmet", "all", meta) == "#4CAF50"
+
+
+def test_tag_color_stays_none_without_shared_tag():
+    db = ModBadgeDB()
+    db._index(_meta_payload(
+        mods=[
+            {"slot": "helmet", "archetype": "all", "stat_id": "s.red_life",
+             "rank_in_slot": 1, "usage_pct": 60.0},
+            {"slot": "helmet", "archetype": "all", "stat_id": "s.white_evasion",
+             "rank_in_slot": 50, "usage_pct": 1.0},
+        ],
+        stat_dictionary=[
+            {"stat_id": "s.red_life", "template": "# to maximum life", "mod_kind": "explicit"},
+            {"stat_id": "s.white_evasion", "template": "# to evasion rating", "mod_kind": "explicit"},
+        ],
+    ))
+    meta = _FakeMetaDB({
+        "# to maximum life": {"life", "resource"},
+        "# to evasion rating": {"evasion", "defences"},   # no overlap
+    })
+    assert db.tag_color("s.white_evasion", "helmet", "all", meta) is None
+
+
+def test_tag_color_red_mod_stays_red_not_downgraded_to_green():
+    db = ModBadgeDB()
+    db._index(_meta_payload(mods=_SAMPLE_MODS))
+    meta = _FakeMetaDB({})
+    assert db.tag_color("s.red_rank", "helmet", "all", meta) == "#FF4444"
+
+
+def test_tag_color_no_tag_data_at_all_returns_none():
+    db = ModBadgeDB()
+    db._index(_meta_payload(mods=_SAMPLE_MODS, stat_dictionary=[
+        {"stat_id": "s.white", "template": "# to something", "mod_kind": "explicit"},
+    ]))
+    meta = _FakeMetaDB({})   # no tags known for anything
+    assert db.tag_color("s.white", "helmet", "all", meta) is None

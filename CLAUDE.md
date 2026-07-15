@@ -32,18 +32,36 @@ F5 (trade browser) ไม่ใช้ข้อมูลราคาเลย —
 ใช้ `meta_db.py` ← `mod_meta.json` (ไฟล์ local, build จาก RePoE datamine ด้วย
 `tools/build_mod_meta.py` — **ไม่เกี่ยวกับ hub เลย**)
 
-## Mod Badge (F5 popup, PoE2 only, v0.3.0+)
+## Mod Badge (F5 popup, PoE2 only, v0.3.0+, phase 2 = v0.4.0)
 
-สี badge บอกความนิยมของ mod (แดง/ทอง/ขาว) มาจาก `poe2/meta/latest.json` ของ hub
-(`poe_price_trade/mod_badge.py`, `ModBadgeDB`) — คนละไฟล์คนละ concept กับ
-tier/money badge ข้างบน (คนละสี คนละเกณฑ์ คนละแหล่งข้อมูล แสดงในแถวเดียวกันของ
-popup ได้พร้อมกัน) schema อ้างอิง SPEC.md section 8.2 ของ hub repo
+จุดสี (● แดง/ทอง/เขียว/ไม่มีจุด=ขาว) หน้าแต่ละบรรทัด mod บอกความนิยม+ประโยชน์
+ของ mod นั้น มาจาก `poe2/meta/latest.json` ของ hub (`poe_price_trade/mod_badge.py`,
+`ModBadgeDB`) — คนละไฟล์คนละ concept กับ tier/money badge เดิม (`meta_db.py`,
+local RePoE data) ทั้งสองแสดงในแถวเดียวกันของ popup ได้พร้อมกัน schema อ้างอิง
+SPEC.md section 8.2 ของ hub repo — **มี style เดียว (dot) เท่านั้น** (ตัด
+text/frame ออกแล้วหลัง user ทดสอบจริงแล้วเลือก dot v0.4.0)
 
+- **สี**: แดง > ทอง > เขียว > ขาว (ให้สีสูงสุดที่เข้าเกณฑ์) แดง/ทอง = popularity
+  จาก hub โดยตรง (rank/usage_pct) เขียว = "metacraft material" — mod ที่ตัวเอง
+  ไม่ติดแดง/ทอง แต่แชร์ RePoE `implicit_tags` กับ mod แดง/ทองของ slot+archetype
+  เดียวกัน (`ModBadgeDB.tag_color()`) — ข้อมูล tags ต้อง capture เพิ่มเองใน
+  `tools/build_mod_meta.py` (RePoE ของเดิมไม่เก็บ tags ไว้ ต้อง regenerate
+  `mod_meta.json` ใหม่ — เป็น local tooling gap ไม่ใช่ hub gap)
+- **▲/▼ roll indicator**: T1 (roll สูงสุดแล้ว) ไม่ติดลูกศรเลย tier ต่ำกว่า T1
+  เทียบ roll กับช่วง RePoE ของ tier นั้น (`MetaDB.tier_range()`) ถ้าไม่รู้ tier
+  fallback ไปเทียบกับ `value_min`/`value_max` ที่ hub สังเกตจาก build จริงแทน
+  (`ModBadgeDB.roll_indicator_fallback()`) เกณฑ์ top/bottom % ปรับได้ (`roll_pct`,
+  default 0.25)
+- **P/S marker**: ต้องมี `ModValue.affix` (prefix/suffix) ที่ populate จาก
+  header `{ Prefix/Suffix Modifier ... }` ใน `item_parser.py` — เพิ่งเพิ่มใน
+  v0.4.0 (ก่อนหน้านี้มีแค่ `ParsedItem.prefix_count`/`suffix_count` รวม ไม่มี
+  per-mod flag) บรรทัดสรุปท้าย popup ใช้ format "Prefix x/max · Suffix y/max"
+  เพดานจาก `mod_badge.affix_cap(item_class)` (3/3 ปกติ, 1/1 สำหรับ jewel PoE2)
 - stat_id resolution ใช้ `mod_db.py`'s `find_stat_id()` เป็นหลัก (namespace
   เดียวกับ hub, verified live) — `stat_dictionary` ของ hub เป็นแค่ fallback
   เมื่อ mod_db resolve ไม่ได้ ไม่ใช่ตัวหลัก
-- เกณฑ์สี/threshold ปรับได้ผ่าน `mod_badge_rules.json` ใน app dir (override
-  pattern เดียวกับ `money_mods.json` ของ meta_db.py) badge_style/archetype
-  เป็น setting ปกติใน config.json (`mod_badge_style`, `mod_badge_archetype`)
+- เกณฑ์สี/threshold/roll_pct ปรับได้ผ่าน `mod_badge_rules.json` ใน app dir
+  (override pattern เดียวกับ `money_mods.json` ของ meta_db.py) archetype เป็น
+  setting ปกติใน config.json (`mod_badge_archetype`)
 - PoE1: hub ไม่มี `poe1/meta/latest.json` เลย → `ModBadgeDB.available()` เป็น
   False เสมอ → badge ไม่ขึ้นแบบเงียบๆ ไม่ error — by design ไม่ใช่บั๊ก

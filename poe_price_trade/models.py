@@ -90,6 +90,7 @@ class ModValue:
     values: tuple = ()           # ตัวเลขทุกตัวในบรรทัด (ตัดช่วง roll (a-b) ทิ้งแล้ว)
     tier: int = 0                # Tier จาก header { ... (Tier: N) } — 0 = ไม่รู้
     group: int = -1              # header block เดียวกัน = group เดียวกัน (hybrid หลายบรรทัด)
+    affix: str = ""              # "prefix" / "suffix" / "" (implicit ฯลฯ ไม่มี prefix/suffix)
 
 
 @dataclass

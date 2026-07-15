@@ -423,19 +423,23 @@ class App:
                     try:
                         from .meta_db import MetaDB
                         annos = self._get_meta_db().annotate(item)
-                        summary = MetaDB.summary(item, annos)
+                        cap = mod_badge.affix_cap(item.item_class)
+                        summary = MetaDB.summary(item, annos, prefix_cap=cap, suffix_cap=cap)
                     except Exception:
                         log.exception("meta annotate error")
 
-                    badge_colors = self._compute_mod_badges(item, rows)
+                    badge_colors, roll_arrows = self._compute_mod_extras(item, rows, annos)
+                    affixes = [m.affix for m, _ in rows]
 
                     write_text("")                   # ② reset ท้าย
                     debug.event(f"F5 picker '{item.item_name}' rarity={item.rarity} "
                                 f"mods={len(rows)} resolved={sum(1 for _, s in rows if s)} "
                                 f"money={sum(1 for a in annos.values() if a.get('money'))} "
-                                f"badges={sum(1 for c in badge_colors if c)}")
-                    self._root.after_idle(lambda it=item, r=rows, a=annos, s=summary, bc=badge_colors:
-                                          self._open_mod_picker(it, r, a, s, bc))
+                                f"badges={sum(1 for c in badge_colors if c)} "
+                                f"arrows={sum(1 for a in roll_arrows if a)}")
+                    self._root.after_idle(lambda it=item, r=rows, a=annos, s=summary, bc=badge_colors,
+                                                  ra=roll_arrows, af=affixes:
+                                          self._open_mod_picker(it, r, a, s, bc, ra, af))
                     return
                 url = open_trade(item, self._mod_db, self._league_var.get(), self._profile)
                 write_text("")                       # ② reset ท้าย — เก็บกวาดหลังเปิด browser
@@ -457,25 +461,47 @@ class App:
             self._meta_db = MetaDB(self._config.app_dir())
         return self._meta_db
 
-    def _compute_mod_badges(self, item, rows) -> list:
-        """Popularity badge color per row (index-aligned with `rows`), or all-None
+    def _compute_mod_extras(self, item, rows, annos) -> tuple:
+        """(badge_colors, roll_arrows) — both index-aligned with `rows`, all-None
         if out of scope. Independent of the trade-query stat_id in `rows` itself —
-        never touches it, so F5's trade-search behavior is unaffected either way."""
-        badge_colors: list = [None] * len(rows)
-        if (self._profile.game_version != "poe2" or item.rarity != Rarity.RARE
-                or not self._mod_badge.available()):
-            return badge_colors
-        slot = mod_badge.slot_for_item(item.item_class, item.base_type)
-        if not slot:
-            return badge_colors
-        archetype = self._config.get("mod_badge_archetype", "all")
-        for i, (m, _sid) in enumerate(rows):
-            bsid = self._mod_badge.resolve_stat_id(m.text, getattr(m, "mod_type", None), self._mod_db)
-            if bsid:
-                badge_colors[i] = self._mod_badge.badge_color(bsid, slot, archetype)
-        return badge_colors
+        never touches it, so F5's trade-search behavior is unaffected either way.
 
-    def _open_mod_picker(self, item, rows, annos=None, summary="", badge_colors=None) -> None:
+        badge_colors: red > gold > green > None (see ModBadgeDB.tag_color).
+        roll_arrows: "▲"/"▼"/None — T1 (maxed) never gets one; below T1 compares
+        the roll against the RePoE tier range when tier is known, or the hub
+        meta's observed value_min/value_max when it isn't."""
+        n = len(rows)
+        badge_colors: list = [None] * n
+        roll_arrows: list = [None] * n
+        if self._profile.game_version != "poe2" or item.rarity != Rarity.RARE:
+            return badge_colors, roll_arrows
+
+        meta_db = self._get_meta_db()
+        slot = mod_badge.slot_for_item(item.item_class, item.base_type)
+        archetype = self._config.get("mod_badge_archetype", "all")
+        badge_ready = bool(slot) and self._mod_badge.available()
+
+        for i, (m, _sid) in enumerate(rows):
+            values = getattr(m, "values", ()) or ((m.value,) if m.value is not None else ())
+            bsid = (self._mod_badge.resolve_stat_id(m.text, getattr(m, "mod_type", None), self._mod_db)
+                    if badge_ready else None)
+            if bsid:
+                badge_colors[i] = self._mod_badge.tag_color(bsid, slot, archetype, meta_db)
+
+            anno = annos.get(getattr(m, "group", -1)) or {}
+            tier = anno.get("tier", 0)
+            if tier == 1 or not values:
+                continue   # maxed already (nothing more to add), or no roll number to compare
+            if tier:
+                rng = meta_db.tier_range(item.base_type, m.text, tier)
+                roll_arrows[i] = mod_badge.tier_roll_arrow(values, rng, self._mod_badge.rule("roll_pct", 0.25))
+            elif bsid:
+                roll_arrows[i] = self._mod_badge.roll_indicator_fallback(bsid, slot, archetype, values)
+
+        return badge_colors, roll_arrows
+
+    def _open_mod_picker(self, item, rows, annos=None, summary="", badge_colors=None,
+                         roll_arrows=None, affixes=None) -> None:
         """เปิด popup เลือก mod (ต้องเรียกบน main thread เท่านั้น)."""
         from .mod_picker import ModPickerWindow
 
@@ -496,7 +522,7 @@ class App:
         self._log(f"🧩 เลือก mod: {item.item_name}", "info")
         ModPickerWindow(self._root, item, rows, on_search=_on_search,
                         annos=annos, summary=summary, badge_colors=badge_colors,
-                        badge_style=self._config.get("mod_badge_style", "dot"))
+                        roll_arrows=roll_arrows, affixes=affixes)
 
     # ------------------------------------------------------------------
     # Settings & price loading

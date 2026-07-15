@@ -29,7 +29,6 @@ _DEFAULTS: dict = {
     "hotkey_quit": "Ctrl+Alt+Q",
     "match_threshold": 0.80,
     "log_level": "INFO",
-    "mod_badge_style": "dot",        # dot | text | frame
     "mod_badge_archetype": "all",
 }
 

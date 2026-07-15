@@ -59,7 +59,8 @@ _JEWEL_SLUG = re.compile(r"[^a-z0-9]+")
 _DEFAULT_RULES: dict = {
     "red":  {"max_rank": 5,  "min_usage_pct": 50.0},
     "gold": {"max_rank": 15, "min_usage_pct": 15.0},
-    "colors": {"red": "#FF4444", "gold": "#FFB800"},
+    "colors": {"red": "#FF4444", "gold": "#FFB800", "green": "#4CAF50"},
+    "roll_pct": 0.25,   # top/bottom X% of a mod's roll range -> ▲/▼
 }
 
 
@@ -75,6 +76,40 @@ def slot_for_item(item_class: str, base_type: str) -> Optional[str]:
     if item_class in WEAPON_CLASSES:
         return "weapon"
     return _SLOT_MAP.get(item_class)
+
+
+def affix_cap(item_class: str) -> int:
+    """Max prefix (== max suffix) slots for this item class. PoE2 jewels are
+    capped at 1/1, unlike regular gear's 3/3."""
+    return 1 if item_class in _JEWEL_CLASSES else 3
+
+
+def _pct_position(value: float, lo: float, hi: float) -> Optional[float]:
+    if hi <= lo:
+        return None
+    return (value - lo) / (hi - lo)
+
+
+def _arrow(pct: float, top_bottom_pct: float) -> Optional[str]:
+    if pct >= 1 - top_bottom_pct:
+        return "▲"
+    if pct <= top_bottom_pct:
+        return "▼"
+    return None
+
+
+def tier_roll_arrow(values: tuple, rng: Optional[list], top_bottom_pct: float = 0.25) -> Optional[str]:
+    """RePoE-tier-based roll indicator: `values`/`rng` are paired index-by-index
+    (hybrid mods have more than one of each) — averages the percentile position
+    across all of them. None if nothing to compare (e.g. tier 1 — caller should
+    skip calling this at all for tier 1, "already maxed" needs no arrow)."""
+    if not values or not rng:
+        return None
+    pcts = [p for v, pair in zip(values, rng)
+            if (p := _pct_position(v, pair[0], pair[1])) is not None]
+    if not pcts:
+        return None
+    return _arrow(sum(pcts) / len(pcts), top_bottom_pct)
 
 
 def _build_template_index(stat_dictionary: list[dict]) -> dict[str, list[str]]:
@@ -102,6 +137,8 @@ class ModBadgeDB:
         self._lock = threading.Lock()
         self._by_key: dict[tuple[str, str, str], dict] = {}   # (slot, archetype, stat_id) -> mod row
         self._template_index: dict[str, list[str]] = {}
+        self._stat_to_templates: dict[str, list[str]] = {}    # stat_id -> [normalized template, ...]
+        self._hot_tags_cache: dict[tuple[str, str], set] = {}  # (slot, archetype) -> red/gold tags
         self._rules = _DEFAULT_RULES
         self._load_rules()
 
@@ -122,6 +159,9 @@ class ModBadgeDB:
     def available(self) -> bool:
         with self._lock:
             return bool(self._by_key)
+
+    def rule(self, key: str, default):
+        return self._rules.get(key, default)
 
     def load(self, force: bool = False) -> None:
         """Fetch poe2/meta/latest.json (disk-cached, staleness judged by the
@@ -164,9 +204,15 @@ class ModBadgeDB:
             key = (m.get("slot", ""), m.get("archetype", ""), m.get("stat_id", ""))
             by_key[key] = m
         template_index = _build_template_index(data.get("stat_dictionary", []))
+        stat_to_templates: dict[str, list[str]] = {}
+        for tmpl, ids in template_index.items():
+            for sid in ids:
+                stat_to_templates.setdefault(sid, []).append(tmpl)
         with self._lock:
             self._by_key = by_key
             self._template_index = template_index
+            self._stat_to_templates = stat_to_templates
+            self._hot_tags_cache = {}   # stale after any re-index
         log.info("mod badge meta loaded: %d rows, %d templates", len(by_key), len(template_index))
 
     # ------------------------------------------------------------------
@@ -221,6 +267,66 @@ class ModBadgeDB:
             if row is None and archetype != "all":
                 row = self._by_key.get((slot, "all", stat_id))
             return row
+
+    def roll_indicator_fallback(self, stat_id: str, slot: str, archetype: str,
+                                values: tuple, top_bottom_pct: Optional[float] = None) -> Optional[str]:
+        """Roll quality arrow when RePoE tier is unknown — uses the hub meta
+        row's own value_min/value_max (the range of values actually seen across
+        sampled builds) as a proxy range instead. Averages `values` to a single
+        number since the hub range isn't per-value like the RePoE tier ladder."""
+        if not values:
+            return None
+        row = self._row(stat_id, slot, archetype)
+        if row is None:
+            return None
+        lo, hi = row.get("value_min"), row.get("value_max")
+        if lo is None or hi is None:
+            return None
+        pct = _pct_position(sum(values) / len(values), lo, hi)
+        if pct is None:
+            return None
+        return _arrow(pct, top_bottom_pct if top_bottom_pct is not None else self.rule("roll_pct", 0.25))
+
+    def tag_color(self, stat_id: str, slot: str, archetype: str, meta_db) -> Optional[str]:
+        """Full badge decision: red > gold > green > None (white).
+
+        green = this mod isn't itself red/gold, but shares a RePoE implicit_tag
+        with some mod that *is* red/gold for (slot, archetype) — i.e. "not the
+        popular roll itself, but the right family to lock and reroll around."
+        `meta_db` is a MetaDB instance (dependency-injected rather than owned
+        here — this module stays hub-only, meta_db.py stays RePoE-only)."""
+        base = self.badge_color(stat_id, slot, archetype)
+        if base:
+            return base
+        my_tags = self._tags_for_stat(stat_id, meta_db)
+        if not my_tags:
+            return None
+        hot = self._hot_tags(slot, archetype, meta_db)
+        if my_tags & hot:
+            return self._rules.get("colors", {}).get("green", "#4CAF50")
+        return None
+
+    def _tags_for_stat(self, stat_id: str, meta_db) -> set:
+        tags: set = set()
+        for tmpl in self._stat_to_templates.get(stat_id, []):
+            tags |= meta_db.tags_for_template(tmpl)
+        return tags
+
+    def _hot_tags(self, slot: str, archetype: str, meta_db) -> set:
+        key = (slot, archetype)
+        with self._lock:
+            cached = self._hot_tags_cache.get(key)
+        if cached is not None:
+            return cached
+        with self._lock:
+            stat_ids = {sid for (s, a, sid) in self._by_key if s == slot and a in (archetype, "all")}
+        tags: set = set()
+        for sid in stat_ids:
+            if self.badge_color(sid, slot, archetype):   # red or gold only
+                tags |= self._tags_for_stat(sid, meta_db)
+        with self._lock:
+            self._hot_tags_cache[key] = tags
+        return tags
 
     # ------------------------------------------------------------------
     # Disk cache (raw hub payload — same convention as PriceRepository)

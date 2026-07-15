@@ -62,6 +62,7 @@ class MetaDB:
         self._meta: Optional[dict] = None
         self._money = _DEFAULT_MONEY
         self._loaded = False
+        self._global_tags_cache: Optional[dict] = None
 
     def load(self) -> None:
         if self._loaded:
@@ -109,6 +110,49 @@ class MetaDB:
         if not b:
             return None
         return self._meta.get("tagsets", {}).get(str(b.get("ts")))
+
+    def tier_range(self, base_type: str, mod_text: str, tier: int) -> Optional[list]:
+        """RePoE roll range [[min,max],...] (one pair per value on the line, for
+        hybrid mods) for `mod_text`'s family at `tier` (1-indexed, matches the
+        game's own header "(Tier: N)" numbering). None if base/family/tier can't
+        be resolved — caller should treat that as "roll quality unknown"."""
+        self.load()
+        if not tier:
+            return None
+        fams = self._families(base_type)
+        if not fams:
+            return None
+        n = _norm(mod_text)
+        for f in fams:
+            if f["text"] == n:
+                tiers = f["tiers"]
+                return tiers[tier - 1]["rng"] if 0 < tier <= len(tiers) else None
+        return None
+
+    def _global_tags(self) -> dict:
+        """normalized family text -> set(RePoE implicit_tags), across every
+        tagset (not base_type-specific — the same mod line carries the same
+        tags regardless of which base it can roll on). Built once, cached."""
+        self.load()
+        if self._global_tags_cache is not None:
+            return self._global_tags_cache
+        idx: dict[str, set] = {}
+        if self._meta:
+            for fams in self._meta.get("tagsets", {}).values():
+                for f in fams:
+                    tags = f.get("tags")
+                    if tags:
+                        idx.setdefault(f["text"], set()).update(tags)
+        self._global_tags_cache = idx
+        return idx
+
+    def tags_for_template(self, normalized_template: str) -> set:
+        """RePoE implicit_tags for a mod line already in normalized ("#" for
+        numbers, lowercase) form — e.g. a hub stat_dictionary template. Empty
+        set if unknown (mainly hybrid multi-stat mods — mod_meta.json's family
+        text concatenates their stat lines, which won't text-match a single-stat
+        template; ~18% of families, measured 2026-07-16)."""
+        return self._global_tags().get(normalized_template, set())
 
     def annotate(self, item) -> dict:
         """คืน {group_no: {"tier","total","cap","money"}} — group = header block เดียวกัน"""
@@ -166,7 +210,10 @@ class MetaDB:
         return False
 
     @staticmethod
-    def summary(item, ann: dict) -> str:
+    def summary(item, ann: dict, prefix_cap: int = 3, suffix_cap: int = 3) -> str:
+        """prefix_cap/suffix_cap: max affix slots for this item's class — 3/3 for
+        regular gear, 1/1 for PoE2 jewels (caller resolves via mod_badge.affix_cap,
+        kept out of this hub-independent module on purpose)."""
         money = sum(1 for i in ann.values() if i.get("money"))
         t1 = sum(1 for i in ann.values() if i.get("tier") == 1)
         parts: list[str] = []
@@ -175,14 +222,8 @@ class MetaDB:
         if t1:
             parts.append(f"T1 ×{t1}")
         if item.rarity == "Rare":
-            open_p = max(0, 3 - getattr(item, "prefix_count", 0))
-            open_s = max(0, 3 - getattr(item, "suffix_count", 0))
-            slot = []
-            if open_p:
-                slot.append(f"prefix ว่าง {open_p}")
-            if open_s:
-                slot.append(f"suffix ว่าง {open_s}")
-            if slot:
-                parts.append(" · ".join(slot))
+            p = getattr(item, "prefix_count", 0)
+            s = getattr(item, "suffix_count", 0)
+            parts.append(f"Prefix {p}/{prefix_cap} · Suffix {s}/{suffix_cap}")
         parts.append(f"ilvl {item.item_level}")
         return "  ·  ".join(parts)

@@ -96,12 +96,14 @@ def parse_item(text: str, game_version: str = GameVersion.POE2) -> Optional[Pars
     has_mod_headers = any(_MOD_HEADER.match(ln) for s in sections[1:] for ln in s)
     pending: str | None = None   # ประเภท mod จาก header ล่าสุด (None = ไม่ใช่ mod)
     pending_tier = 0             # Tier จาก header ล่าสุด (0 = ไม่มี)
+    pending_affix = ""           # "prefix"/"suffix"/"" จาก header ล่าสุด
     group_no = -1                # หมายเลข header block (hybrid หลายบรรทัด = group เดียว)
     prefix_count = 0
     suffix_count = 0
 
     for section in sections[1:]:
         pending = None               # header block ไม่ข้าม separator
+        pending_affix = ""
         for line in section:
             if not line:
                 continue
@@ -143,8 +145,12 @@ def parse_item(text: str, game_version: str = GameVersion.POE2) -> Optional[Pars
                     pending = "explicit"          # prefix / suffix
                 if "prefix" in low:
                     prefix_count += 1
+                    pending_affix = "prefix"
                 elif "suffix" in low:
                     suffix_count += 1
+                    pending_affix = "suffix"
+                else:
+                    pending_affix = ""
                 tm = _HEADER_TIER.search(line)
                 pending_tier = int(tm.group(1)) if tm else 0
                 group_no += 1
@@ -160,6 +166,7 @@ def parse_item(text: str, game_version: str = GameVersion.POE2) -> Optional[Pars
                     mod_type=pending,
                     tier=pending_tier,
                     group=group_no,
+                    affix=pending_affix,
                 ))
                 # ไม่ reset pending — hybrid mod มีได้หลายบรรทัดใต้ header เดียว
                 # (พิสูจน์จาก clipboard จริง: Crocodile's = Armour% + Life สองบรรทัด)

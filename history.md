@@ -5,6 +5,72 @@
 
 ---
 
+## 2026-07-16 — Mod Badge เฟส 2: roll indicator + metacraft สีเขียว + P/S (v0.4.0)
+
+**เหตุผล:** ปรับจากการใช้จริงหลังเฟส 1 (user ทดสอบแล้วเลือก "dot" ตัด
+text/frame ทิ้ง) + เพิ่ม 3 ความสามารถใหม่ที่คุยไว้ตอนวางแผน archetype
+infrastructure: roll quality indicator, metacraft สีเขียว, prefix/suffix marker
+
+**1. Badge style เหลือ dot อย่างเดียว** — ลบ `mod_badge_style` ออกทั้ง
+`config.py`/`settings.py`/`mod_picker.py` (`ModPickerWindow`/`_add_row` ไม่รับ
+`badge_style` แล้ว, dot (`●`) เดียว, สีเพิ่ม "เขียว" #4CAF50 เป็นตัวที่ 3
+
+**2. Roll indicator (▲/▼)** — `MetaDB.tier_range()` ใหม่ (ดึงช่วง roll ของ
+family+tier จาก RePoE), `mod_badge.tier_roll_arrow()` (คำนวณ percentile จาก
+ช่วงนั้น), `ModBadgeDB.roll_indicator_fallback()` (fallback ไป hub's
+value_min/value_max เมื่อไม่รู้ tier) T1 ไม่ติดลูกศรเลยตามที่ user ระบุ
+(สุดแล้ว ไม่มีอะไรต้องบอกเพิ่ม) เกณฑ์ `roll_pct` (default 0.25) อยู่ใน
+`mod_badge_rules.json`
+
+**3. Metacraft สีเขียว** — เช็คข้อมูลก่อนตามที่สั่ง: พบว่า RePoE raw
+`mods.json` (`repoe-fork/poe2`) มี `implicit_tags` จริง (89 ค่า distinct
+รวม life/attack/caster/resistance ฯลฯ) แต่ `tools/build_mod_meta.py` เดิม
+**ไม่เก็บ** field นี้ไว้ใน `mod_meta.json` เลย — เป็น local tooling gap
+ไม่ใช่ hub gap แก้ได้เองไม่ต้องเปิดงานฝั่ง hub: แก้ `build_mod_meta.py` ให้
+capture `tags` ต่อ family, regenerate `mod_meta.json` ใหม่ (bases/tagsets
+count ไม่เปลี่ยน, tier/roll data เดิม 100% ไม่มี regression, 1952/2239
+families ได้ tags) แล้ว deploy ทับไฟล์เดิมใน
+`%LOCALAPPDATA%\PoePriceTrade\mod_meta.json`
+
+ตรวจ text-normalization compatibility ระหว่าง `build_mod_meta.py`'s
+`norm_text()` กับ hub's stat_dictionary/GGG stat text ก่อนเชื่อถือ cross-
+reference ได้ — overlap 82.3% (256/311 family text ตรงกันเป๊ะ ที่พลาดส่วนใหญ่
+เป็น hybrid multi-stat mod ที่ meta_db.py รวมหลายบรรทัดเป็น text เดียว)
+ยอมรับได้เพราะ design เป็น graceful-miss (ไม่ match = ไม่ติดเขียว ไม่ error)
+
+Implementation: `ModBadgeDB._stat_to_templates` (reverse ของ
+`_template_index`), `MetaDB.tags_for_template()`/`_global_tags()` (global
+text→tags index ข้าม tagset เพราะ tags เป็นคุณสมบัติของ mod line ไม่ใช่ของ
+base type), `ModBadgeDB.tag_color()` (แดง>ทอง>เขียว>ขาว, เขียว = white mod
+ที่แชร์ tag กับ mod แดง/ทองของ slot+archetype เดียวกัน ผ่าน `_hot_tags()`
+cache ต่อ (slot,archetype))
+
+**4. Prefix/Suffix** — เพิ่ม `ModValue.affix` field ใหม่ (`models.py`) +
+populate จาก header ใน `item_parser.py` (เดิมมีแค่ `ParsedItem.prefix_count`/
+`suffix_count` รวม ไม่มี per-mod flag) ตัวอักษร P/S เล็กๆ คู่กับลูกศรใน
+`mod_picker.py` `MetaDB.summary()` เปลี่ยน format เป็น "Prefix x/max · Suffix
+y/max" รับ `prefix_cap`/`suffix_cap` param ใหม่ (แทน hardcode 3) —
+`mod_badge.affix_cap(item_class)` คืน 1 สำหรับ jewel, 3 สำหรับที่เหลือ (คง
+meta_db.py เป็น hub-independent ไว้ตามเดิม ไม่ import mod_badge.py)
+
+**ไฟล์ที่แก้:** `models.py`, `item_parser.py`, `meta_db.py`, `mod_badge.py`,
+`mod_picker.py`, `app.py` (`_compute_mod_extras` แทนที่ `_compute_mod_badges`
+เดิม คำนวณทั้ง badge_colors+roll_arrows พร้อมกันในรอบเดียว), `config.py`,
+`settings.py`, `tools/build_mod_meta.py`
+
+**Tests:** 105/105 passed (`test_meta_db.py` ใหม่ 10 เคส, `test_mod_badge.py`
+เพิ่ม 15 เคส, `test_poe2_parser.py` เพิ่ม 2 เคสสำหรับ `affix` field)
+
+**Smoke test กับข้อมูลจริงครบทุกชั้น (2026-07-16):** parse
+`sample_poe2_rare.txt` จริง → P/S ครบ 4 prefix/3 suffix ถูกต้อง → T1 (Armour%,
+Life) ไม่มีลูกศรถูกต้อง → tier อื่นมีลูกศรตามช่วง roll จริง → สีสมเหตุสมผล
+(Life=แดง, Armour%/flat Armour=เขียวเพราะแชร์ tag กับ Life, Fire
+Resist=แดง) ทดสอบ jewel synthetic ด้วย (Item Class: Jewels, base "Emerald")
+→ slot resolve เป็น "jewel:emerald" ถูกต้อง, affix_cap=1 ถูกต้อง ยังไม่ได้
+ทดสอบ popup จริงในเกม (รอ user)
+
+---
+
 ## 2026-07-14 — Mod Badge เฟส 1: สีบอกความนิยม mod ใน F5 popup (PoE2, v0.3.0)
 
 **เหตุผล:** hub มี `poe2/meta/latest.json` (mod frequency จาก build จริงบน
