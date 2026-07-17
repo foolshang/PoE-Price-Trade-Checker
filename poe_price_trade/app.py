@@ -71,8 +71,9 @@ class App:
         self._league_paths: dict[str, str] = {}   # league name -> hub file path
         self._scanner: Optional[Scanner] = None
         self._mod_db = ModDatabase(self._profile, cache_dir=self._config.app_dir() / "cache")
-        # PoE2-only, doesn't depend on game_version -> created once, never recreated
-        # on game-version switch (unlike _repo/_mod_db which are per-profile).
+        # Shared across both games (unlike _repo/_mod_db which are per-profile) --
+        # load(game) re-indexes in place, so switching game_version doesn't need
+        # a new instance, just passing the current game to load() each time.
         self._mod_badge = ModBadgeDB(cache_dir=self._config.app_dir() / "cache",
                                      config_dir=self._config.app_dir())
 
@@ -407,9 +408,14 @@ class App:
                     else:
                         debug.event(f"F5 magic base unresolved: '{item.base_type}' → ไม่ใส่ type")
                         item.base_type = ""
+                if not item.mods_have_headers:
+                    # clipboard ไม่มี { ... Modifier } header เลย (เช่น client PoE1 บางตัว) —
+                    # prefix_count/suffix_count/affix จาก parser เป็นค่าว่างหมด ต้องเติมจาก
+                    # RePoE family data แทน (ดู MetaDB.infer_affixes docstring)
+                    self._get_meta_db().infer_affixes(item)
+                    debug.event(f"F5 no mod headers — inferred P={item.prefix_count} S={item.suffix_count}")
                 self._mod_db.load()
-                if self._profile.game_version == "poe2":
-                    self._mod_badge.load()
+                self._mod_badge.load(self._profile.game_version)
                 use_picker = (bool(self._config.get("f5_mod_picker", True))
                               and item.identified
                               and item.rarity in (Rarity.RARE, Rarity.MAGIC)
@@ -423,7 +429,7 @@ class App:
                     try:
                         from .meta_db import MetaDB
                         annos = self._get_meta_db().annotate(item)
-                        cap = mod_badge.affix_cap(item.item_class)
+                        cap = mod_badge.affix_cap(item.item_class, self._profile.game_version)
                         summary = MetaDB.summary(item, annos, prefix_cap=cap, suffix_cap=cap)
                     except Exception:
                         log.exception("meta annotate error")
@@ -455,10 +461,13 @@ class App:
         threading.Thread(target=_run, daemon=True, name="F5").start()
 
     def _get_meta_db(self):
-        """MetaDB แบบ lazy — สร้างครั้งเดียว ใช้ร่วมกันทุก F5."""
+        """MetaDB แบบ lazy — สร้างใหม่เฉพาะตอนสลับเกม (mod_meta_{game}.json
+        คนละไฟล์ ผูกกับ game_version) ไม่งั้นใช้ตัวเดิมซ้ำทุก F5."""
         from .meta_db import MetaDB
-        if getattr(self, "_meta_db", None) is None:
-            self._meta_db = MetaDB(self._config.app_dir())
+        gv = self._profile.game_version
+        if getattr(self, "_meta_db", None) is None or getattr(self, "_meta_db_gv", None) != gv:
+            self._meta_db = MetaDB(self._config.app_dir(), gv)
+            self._meta_db_gv = gv
         return self._meta_db
 
     def _compute_mod_extras(self, item, rows, annos) -> tuple:
@@ -473,7 +482,7 @@ class App:
         n = len(rows)
         badge_colors: list = [None] * n
         roll_arrows: list = [None] * n
-        if self._profile.game_version != "poe2" or item.rarity != Rarity.RARE:
+        if item.rarity != Rarity.RARE:
             return badge_colors, roll_arrows
 
         meta_db = self._get_meta_db()

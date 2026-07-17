@@ -28,6 +28,10 @@ _HEADER_TIER = re.compile(r"\(Tier:\s*(\d+)\)", re.IGNORECASE)
 # ช่วง roll ที่เกมพิมพ์ต่อท้ายค่า เช่น 40(39-42)% หรือ +47(42-49) → ตัดทิ้งก่อนดึงตัวเลข
 _ROLL_RANGE = re.compile(r"\(\d+(?:\.\d+)?-\d+(?:\.\d+)?\)")
 _RUNE_LINE = re.compile(r"^(.*)\s\(rune\)$", re.IGNORECASE)
+# clipboard ที่ไม่มี { ... Modifier } header เลย (ยืนยันจริงกับ PoE1 2026-07-17 —
+# ไม่มี "Advanced Mod Description" ให้เปิดด้วยซ้ำ ไม่ใช่แค่ setting ปิดอยู่) ยังคง
+# ต่อท้าย implicit ด้วย "(implicit)" เฉยๆ เหมือน (rune) ข้างบน
+_IMPLICIT_LINE = re.compile(r"^(.*)\s\(implicit\)$", re.IGNORECASE)
 
 
 def _extract_mod_value(text: str) -> Optional[float]:
@@ -178,6 +182,18 @@ def parse_item(text: str, game_version: str = GameVersion.POE2) -> Optional[Pars
                 continue   # item นี้ใช้ header-driven → ไม่ใช้ fallback
             if _NOTE.match(line) or _STACK_SIZE.match(line):
                 continue
+            # implicit ยังต่อท้ายด้วย "(implicit)" แม้ไม่มี header — แยกออกก่อน ไม่งั้น
+            # โดนนับเป็น explicit (ผิด mod_type) และ text ติด "(implicit)" ไปด้วย (แมตช์
+            # กับ RePoE family ไม่ได้เลย)
+            if (im := _IMPLICIT_LINE.match(line)):
+                group_no += 1
+                mods.append(ModValue(
+                    stat_id="", text=im.group(1).strip(),
+                    value=_extract_mod_value(line),
+                    values=_extract_mod_values(line),
+                    mod_type="implicit", group=group_no,
+                ))
+                continue
             if (
                 not line.startswith(("Requirements:", "Requires:", "Sockets:", "Level:",
                                      "Str:", "Dex:", "Int:")) and
@@ -186,10 +202,17 @@ def parse_item(text: str, game_version: str = GameVersion.POE2) -> Optional[Pars
                 not re.match(r"^(Physical|Elemental|Chaos|Cold|Fire|Lightning) Damage:", line, re.IGNORECASE) and
                 _VALUE_PATTERN.search(line)
             ):
+                # ไม่มี header บอก group ให้เอง — สมมติหนึ่งบรรทัดต่อหนึ่ง mod (ถูกส่วนใหญ่
+                # ยกเว้น hybrid มอดสองบรรทัดจริง ๆ ซึ่งไม่มีทางแยกได้แน่นอนถ้าไม่มี header
+                # ยอมรับพลาดจุดนี้แบบเงียบ ๆ ดีกว่าเดามั่ว — MetaDB.infer_affixes() ที่ match
+                # ไม่เจอ family (เพราะ text เป็นครึ่งเดียวของ hybrid) แค่ไม่ติด affix ไม่ error)
+                group_no += 1
                 mods.append(ModValue(
                     stat_id="",  # Filled in later by ModDatabase.resolve()
                     text=line.strip(),
                     value=_extract_mod_value(line),
+                    values=_extract_mod_values(line),
+                    group=group_no,
                 ))
 
     # Desecrated items may omit "Unidentified" text. Rare/unique with only
@@ -226,4 +249,5 @@ def parse_item(text: str, game_version: str = GameVersion.POE2) -> Optional[Pars
         identified=identified,
         prefix_count=prefix_count,
         suffix_count=suffix_count,
+        mods_have_headers=has_mod_headers,
     )

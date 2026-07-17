@@ -108,6 +108,10 @@ class ParsedItem:
     identified: bool = True
     prefix_count: int = 0        # จำนวน prefix header ที่เจอ (ใช้นับ affix ว่าง)
     suffix_count: int = 0
+    mods_have_headers: bool = True  # False = clipboard ไม่มี { ... Modifier } header เลย
+                                     # (บาง client ไม่ส่งมา — ยืนยันจริงกับ PoE1 2026-07-17)
+                                     # → prefix_count/suffix_count/affix/tier ข้างบนไม่รู้ค่า
+                                     # ต้องให้ MetaDB.infer_affixes() เติมทีหลังจาก RePoE data
 
 
 @dataclass

@@ -6,6 +6,7 @@ import json
 import pytest
 
 from poe_price_trade.meta_db import MetaDB
+from poe_price_trade.models import ModValue, ParsedItem
 
 _FIXTURE = {
     "generated": "2026-07-16T00:00:00+00:00",
@@ -50,8 +51,8 @@ _FIXTURE = {
 
 @pytest.fixture
 def db(tmp_path):
-    (tmp_path / "mod_meta.json").write_text(json.dumps(_FIXTURE), encoding="utf-8")
-    return MetaDB(tmp_path)
+    (tmp_path / "mod_meta_poe2.json").write_text(json.dumps(_FIXTURE), encoding="utf-8")
+    return MetaDB(tmp_path, "poe2")
 
 
 def test_tier_range_known_tier(db):
@@ -111,3 +112,90 @@ def test_summary_jewel_cap_1_1():
     s = MetaDB.summary(FakeItem(), {}, prefix_cap=1, suffix_cap=1)
     assert "Prefix 1/1" in s
     assert "Suffix 0/1" in s
+
+
+def test_meta_db_uses_separate_file_per_game(tmp_path):
+    # poe1 and poe2 base_type names can collide (e.g. both games have a
+    # "Leather Belt") -- each game must read its own mod_meta_{game}.json,
+    # never bleed into the other.
+    (tmp_path / "mod_meta_poe1.json").write_text(json.dumps({
+        "bases": {"Cobalt Jewel": {"class": "Jewel", "drop_level": 20, "ts": 0}},
+        "tagsets": {"0": [{"gen": "prefix", "text": "# to maximum life",
+                            "stats": ["base_maximum_life"],
+                            "tiers": [{"lvl": 1, "rng": [[3, 9]]}], "tags": ["life"]}]},
+    }), encoding="utf-8")
+    poe1_db = MetaDB(tmp_path, "poe1")
+    poe2_db = MetaDB(tmp_path, "poe2")   # no mod_meta_poe2.json in this dir at all
+    assert poe1_db.tier_range("Cobalt Jewel", "+9 to maximum Life", tier=1) == [[3, 9]]
+    assert poe2_db.available() is False
+    assert poe2_db.tier_range("Cobalt Jewel", "+9 to maximum Life", tier=1) is None
+
+
+# ------------------------------------------------------------------
+# infer_affixes -- header-less clipboard fallback (confirmed live 2026-07-17
+# against a real PoE1 client with no "Advanced Mod Description" option at all)
+# ------------------------------------------------------------------
+
+def _item(mods, base_type="Knightly Mitts"):
+    return ParsedItem(
+        item_name="Test Item", base_type=base_type, rarity="Rare", item_level=80,
+        quality=0, mods=mods, game_version="poe1", raw_text="",
+        mods_have_headers=False,
+    )
+
+
+def test_infer_affixes_classifies_from_repoe_gen(db):
+    item = _item([
+        ModValue(stat_id="", text="+130 to maximum Life", value=130.0, values=(130.0,),
+                  mod_type="explicit"),
+        ModValue(stat_id="", text="+38% to Fire Resistance", value=38.0, values=(38.0,),
+                  mod_type="explicit"),
+    ])
+    db.infer_affixes(item)
+    assert item.mods[0].affix == "prefix"
+    assert item.mods[1].affix == "suffix"
+    assert item.prefix_count == 1
+    assert item.suffix_count == 1
+
+
+def test_infer_affixes_does_not_overwrite_existing_affix(db):
+    # a mod that already has an affix (header-driven) must be left alone
+    item = _item([
+        ModValue(stat_id="", text="+130 to maximum Life", value=130.0, values=(130.0,),
+                  mod_type="explicit", affix="suffix"),   # deliberately "wrong" to prove no overwrite
+    ])
+    db.infer_affixes(item)
+    assert item.mods[0].affix == "suffix"
+    assert item.prefix_count == 0
+    assert item.suffix_count == 1
+
+
+def test_infer_affixes_ignores_implicit_mods(db):
+    item = _item([
+        ModValue(stat_id="", text="+130 to maximum Life", value=130.0, values=(130.0,),
+                  mod_type="implicit"),
+    ])
+    db.infer_affixes(item)
+    assert item.mods[0].affix == ""
+    assert item.prefix_count == 0
+    assert item.suffix_count == 0
+
+
+def test_infer_affixes_unmatched_text_stays_unclassified(db):
+    item = _item([
+        ModValue(stat_id="", text="Adds 2 to 22 Lightning Damage to Attacks",
+                  value=2.0, values=(2.0, 22.0), mod_type="explicit"),
+    ])
+    db.infer_affixes(item)   # not in the fixture's family list -- graceful miss
+    assert item.mods[0].affix == ""
+    assert item.prefix_count == 0
+
+
+def test_infer_affixes_unknown_base_no_op(db):
+    item = _item([
+        ModValue(stat_id="", text="+130 to maximum Life", value=130.0, values=(130.0,),
+                  mod_type="explicit"),
+    ], base_type="Nonexistent Base")
+    db.infer_affixes(item)
+    assert item.mods[0].affix == ""
+    assert item.prefix_count == 0

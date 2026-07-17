@@ -39,11 +39,39 @@ def test_slot_for_item_weapon_class():
 
 
 def test_slot_for_item_jewel_base_slug_matches_hub_convention():
-    # mirrors hub's _slugify_jewel_base: lowercase, strip non a-z0-9
+    # mirrors hub's _slugify_jewel_base: strip cluster-size prefix, strip the
+    # word "Jewel", lowercase, strip non a-z0-9 (verified against a real live
+    # pull of both poe1/meta/latest.json and poe2/meta/latest.json 2026-07-17)
     assert slot_for_item("Jewel", "Emerald") == "jewel:emerald"
     assert slot_for_item("Jewels", "Ruby") == "jewel:ruby"
-    assert slot_for_item("Jewel", "Timeless Jewel") == "jewel:timelessjewel"
     assert slot_for_item("Jewel", "Time-Lost Sapphire") == "jewel:timelostsapphire"
+    # "Timeless Jewel" -> "jewel:timeless", not "jewel:timelessjewel" -- the old
+    # naive strip-non-alnum never matched the hub's real key for this base in
+    # EITHER game (both PoE1 and PoE2 have a base literally named "Timeless
+    # Jewel"), so badges silently never applied to Timeless Jewels before this.
+    assert slot_for_item("Jewel", "Timeless Jewel") == "jewel:timeless"
+
+
+def test_slot_for_item_poe1_colored_jewel_strips_jewel_word():
+    assert slot_for_item("Jewel", "Cobalt Jewel") == "jewel:cobalt"
+    assert slot_for_item("Jewel", "Crimson Jewel") == "jewel:crimson"
+    assert slot_for_item("Jewel", "Viridian Jewel") == "jewel:viridian"
+    assert slot_for_item("Jewel", "Prismatic Jewel") == "jewel:prismatic"
+
+
+def test_slot_for_item_poe1_cluster_jewel_collapses_size():
+    # all 3 sizes collapse to one hub bucket, not split by size
+    assert slot_for_item("Jewel", "Small Cluster Jewel") == "jewel:cluster"
+    assert slot_for_item("Jewel", "Medium Cluster Jewel") == "jewel:cluster"
+    assert slot_for_item("Jewel", "Large Cluster Jewel") == "jewel:cluster"
+
+
+def test_slot_for_item_poe1_abyss_jewel_named_variants():
+    # PoE1 abyss jewels don't share one generic base type, unlike Cluster
+    assert slot_for_item("Jewel", "Murderous Eye Jewel") == "jewel:murderouseye"
+    assert slot_for_item("Jewel", "Searching Eye Jewel") == "jewel:searchingeye"
+    assert slot_for_item("Jewel", "Hypnotic Eye Jewel") == "jewel:hypnoticeye"
+    assert slot_for_item("Jewel", "Ghastly Eye Jewel") == "jewel:ghastlyeye"
 
 
 def test_slot_for_item_unknown_class_returns_none():
@@ -190,7 +218,7 @@ def test_badge_color_custom_rules_override():
 
 def test_load_uses_fresh_disk_cache_without_hitting_hub(tmp_path):
     db = ModBadgeDB(cache_dir=tmp_path)
-    db._save_disk_cache(_meta_payload(mods=_SAMPLE_MODS))
+    db._save_disk_cache("poe2", _meta_payload(mods=_SAMPLE_MODS))
     with patch("poe_price_trade.mod_badge.hub_client.get_meta",
                side_effect=AssertionError("should not hit network")):
         db.load()
@@ -201,7 +229,7 @@ def test_load_uses_fresh_disk_cache_without_hitting_hub(tmp_path):
 def test_load_refetches_when_disk_cache_stale(tmp_path):
     db = ModBadgeDB(cache_dir=tmp_path)
     old = (datetime.now(timezone.utc) - timedelta(hours=20)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    db._save_disk_cache(_meta_payload(generated_at=old, mods=[]))
+    db._save_disk_cache("poe2", _meta_payload(generated_at=old, mods=[]))
     fresh = _meta_payload(mods=_SAMPLE_MODS)
     with patch("poe_price_trade.mod_badge.hub_client.get_meta", return_value=fresh) as m:
         db.load()
@@ -212,7 +240,7 @@ def test_load_refetches_when_disk_cache_stale(tmp_path):
 def test_load_falls_back_to_stale_disk_cache_when_hub_unreachable(tmp_path):
     db = ModBadgeDB(cache_dir=tmp_path)
     old = (datetime.now(timezone.utc) - timedelta(hours=20)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    db._save_disk_cache(_meta_payload(generated_at=old, mods=_SAMPLE_MODS))
+    db._save_disk_cache("poe2", _meta_payload(generated_at=old, mods=_SAMPLE_MODS))
     with patch("poe_price_trade.mod_badge.hub_client.get_meta", return_value=None):
         db.load()
     assert db.available()   # stale but present beats nothing
@@ -224,6 +252,35 @@ def test_load_no_cache_no_network_degrades_silently(tmp_path):
         db.load()   # must not raise
     assert not db.available()
     assert db.badge_color("s.anything", "helmet", "all") is None
+
+
+def test_load_poe1_uses_its_own_cache_file_and_game_param(tmp_path):
+    # poe1 and poe2 must not share a cache file or clobber each other when the
+    # user switches game_version — each game gets its own disk cache path.
+    db = ModBadgeDB(cache_dir=tmp_path)
+    with patch("poe_price_trade.mod_badge.hub_client.get_meta", return_value=_meta_payload(mods=_SAMPLE_MODS)) as m:
+        db.load("poe1")
+    m.assert_called_once_with("poe1")
+    assert (tmp_path / "mod_badge_meta_poe1.json").exists()
+    assert not (tmp_path / "mod_badge_meta_poe2.json").exists()
+    assert db.badge_color("s.red_rank", "helmet", "all") == "#FF4444"
+
+
+def test_load_switching_game_reindexes_in_place(tmp_path):
+    # a single long-lived ModBadgeDB instance (per app.py's comment) must swap
+    # its in-memory index when the caller passes a different game to load(),
+    # without needing to be recreated.
+    db = ModBadgeDB(cache_dir=tmp_path)
+    poe1_mods = [{"slot": "helmet", "archetype": "all", "stat_id": "s.poe1_only",
+                  "rank_in_slot": 1, "usage_pct": 60.0}]
+    with patch("poe_price_trade.mod_badge.hub_client.get_meta", return_value=_meta_payload(mods=poe1_mods)):
+        db.load("poe1")
+    assert db.badge_color("s.poe1_only", "helmet", "all") == "#FF4444"
+
+    with patch("poe_price_trade.mod_badge.hub_client.get_meta", return_value=_meta_payload(mods=_SAMPLE_MODS)):
+        db.load("poe2")
+    assert db.badge_color("s.red_rank", "helmet", "all") == "#FF4444"
+    assert db.badge_color("s.poe1_only", "helmet", "all") is None   # poe1's row is gone now
 
 
 # ------------------------------------------------------------------
@@ -250,11 +307,20 @@ def test_config_dir_rules_override_loaded(tmp_path):
 def test_affix_cap_regular_gear_is_3():
     assert affix_cap("Gloves") == 3
     assert affix_cap("Amulets") == 3
+    assert affix_cap("Gloves", "poe1") == 3
 
 
-def test_affix_cap_jewel_is_1():
+def test_affix_cap_jewel_is_1_in_poe2():
     assert affix_cap("Jewel") == 1
     assert affix_cap("Jewels") == 1
+    assert affix_cap("Jewel", "poe2") == 1
+
+
+def test_affix_cap_jewel_is_2_in_poe1():
+    # PoE1's classic/abyss/cluster jewels all cap at 2/2 (4 total instead of a
+    # normal rare's 6), unlike PoE2's redesigned 1/1 jewels
+    assert affix_cap("Jewel", "poe1") == 2
+    assert affix_cap("Jewels", "poe1") == 2
 
 
 # ------------------------------------------------------------------
@@ -388,3 +454,30 @@ def test_tag_color_no_tag_data_at_all_returns_none():
     ]))
     meta = _FakeMetaDB({})   # no tags known for anything
     assert db.tag_color("s.white", "helmet", "all", meta) is None
+
+
+def test_tag_color_matches_hub_template_with_leading_plus():
+    # regression: a real PoE1 hub template is "+# to maximum Life" (confirmed
+    # live 2026-07-17 -- PoE2's equivalent happens to read "# to maximum Life"
+    # with no "+", which is why this never showed up in phase 2's PoE2-only
+    # smoke test). _normalize_mod never strips a "+" that precedes "#", so
+    # without stripping it in _index() this stat's tags would never resolve
+    # against mod_meta_{game}.json's RePoE family text, which never has one.
+    db = ModBadgeDB()
+    db._index(_meta_payload(
+        mods=[
+            {"slot": "helmet", "archetype": "all", "stat_id": "s.red_life",
+             "rank_in_slot": 1, "usage_pct": 60.0},
+            {"slot": "helmet", "archetype": "all", "stat_id": "s.white_mana",
+             "rank_in_slot": 50, "usage_pct": 1.0},
+        ],
+        stat_dictionary=[
+            {"stat_id": "s.red_life", "template": "+# to maximum Life", "mod_kind": "explicit"},
+            {"stat_id": "s.white_mana", "template": "+# to maximum Mana", "mod_kind": "explicit"},
+        ],
+    ))
+    meta = _FakeMetaDB({
+        "# to maximum life": {"life", "resource"},
+        "# to maximum mana": {"mana", "resource"},
+    })
+    assert db.tag_color("s.white_mana", "helmet", "all", meta) == "#4CAF50"

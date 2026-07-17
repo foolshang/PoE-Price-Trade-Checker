@@ -1,7 +1,8 @@
 """MetaDB — tier ladder + money-mod annotation (offline)
 
-โหลด mod_meta.json (สร้างด้วย tools/build_mod_meta.py จาก RePoE datamine)
-จาก %LOCALAPPDATA%\\PoePriceTrade\\ — ไม่มีไฟล์ = feature จำกัดแบบเงียบๆ
+โหลด mod_meta_{game}.json (สร้างด้วย tools/build_mod_meta.py --game {game} จาก
+RePoE datamine ของเกมนั้น) จาก %LOCALAPPDATA%\\PoePriceTrade\\ — ไม่มีไฟล์ =
+feature จำกัดแบบเงียบๆ (แยกไฟล์ต่อเกมเพราะ base_type ชนกันข้ามเกมได้)
 
 ให้ 2 อย่าง:
 1. tier ของ mod: อ่านจาก header เกม { ... (Tier: N) } เป็นหลัก + จำนวน tier
@@ -56,8 +57,8 @@ _DEFAULT_MONEY: list[dict] = [
 
 
 class MetaDB:
-    def __init__(self, app_dir: Path):
-        self._path = app_dir / "mod_meta.json"
+    def __init__(self, app_dir: Path, game_version: str):
+        self._path = app_dir / f"mod_meta_{game_version}.json"
         self._money_path = app_dir / "money_mods.json"
         self._meta: Optional[dict] = None
         self._money = _DEFAULT_MONEY
@@ -128,6 +129,34 @@ class MetaDB:
                 tiers = f["tiers"]
                 return tiers[tier - 1]["rng"] if 0 < tier <= len(tiers) else None
         return None
+
+    def infer_affixes(self, item) -> None:
+        """Best-effort prefix/suffix classification for clipboard text with no
+        { ... Modifier } header at all — confirmed live 2026-07-17: this isn't
+        a settings toggle, some clients (this user's PoE1 install) don't have
+        an "Advanced Mod Description" option to enable in the first place, so
+        item_parser.py's header path never fires and mod.affix/prefix_count/
+        suffix_count come out empty. Matches each unclassified explicit mod's
+        text against its base's RePoE family list (the exact same text match
+        tier_range() uses) and reads the affix straight off RePoE's own "gen"
+        field — real data, not a guess. Only misses genuine 2-line hybrid mods
+        (item_parser.py can't know without a header that two adjacent lines
+        belong to one mod, so it hands them over as two separate ModValues
+        that don't individually match any family text — graceful miss, same
+        as every other RePoE cross-reference in this module). Mutates
+        item.mods in place and recomputes prefix_count/suffix_count."""
+        self.load()
+        fams = self._families(item.base_type)
+        if not fams:
+            return
+        by_text = {f["text"]: f["gen"] for f in fams if f.get("gen") in ("prefix", "suffix")}
+        for m in item.mods:
+            if m.mod_type == "explicit" and not m.affix:
+                gen = by_text.get(_norm(m.text))
+                if gen:
+                    m.affix = gen
+        item.prefix_count = sum(1 for m in item.mods if m.affix == "prefix")
+        item.suffix_count = sum(1 for m in item.mods if m.affix == "suffix")
 
     def _global_tags(self) -> dict:
         """normalized family text -> set(RePoE implicit_tags), across every

@@ -5,6 +5,183 @@
 
 ---
 
+## 2026-07-17 (ต่อ) — แก้ P/S = 0/n ทุกชิ้นบน PoE1 (v0.5.1)
+
+**อาการ:** ทดสอบจริงหลัง v0.5.0 — PoE2 นับ P/S ถูกปกติ, PoE1 ขึ้น `0/n`
+ทุกชิ้นไม่เว้น สมมติฐานแรกคือ `mod_meta_poe1.json` ที่เพิ่ง build ใหม่มีปัญหา
+
+**ไล่ตามที่ user สั่ง (เช็คจริง ไม่เดา) แล้วพบว่าสมมติฐานนั้นผิด:**
+1. เทียบโครง `mod_meta_poe1.json` กับ `mod_meta_poe2.json` — เหมือนกันเป๊ะ
+2. lookup mod ยอดฮิต PoE1 ผ่าน real code path — เจอปกติ (เช็คไปแล้วตอน build
+   เฟสก่อนหน้า ยืนยันซ้ำ)
+3. **`prefix_count`/`suffix_count`/ตัวอักษร P/S ไม่ได้อ่านจาก mod_meta.json
+   เลย** — `item_parser.py` นับจาก header `{ Prefix Modifier ... }` /
+   `{ Suffix Modifier ... }` ใน clipboard text ล้วนๆ ไม่เกี่ยวกับ RePoE data
+   เลย ดังนั้นถ้าไฟล์ meta พังจริง PoE2 ต้องพังแบบเดียวกันด้วย แต่ไม่พัง
+4. ขอ raw clipboard จริงจาก user (`debug_logs/last_raw_item.txt`, rare
+   "Kraken Grip" Eelskin Gloves) — **ไม่มี header `{ ... Modifier }` เลย
+   สักบรรทัด** เทียบกับ PoE2 ที่มีครบ — ยืนยันกับ user ต่อว่า PoE1 ไม่มี
+   ตัวเลือก "Advanced Mod Description" ให้เปิดด้วยซ้ำ (ไม่ใช่แค่ setting ปิด)
+   → client บางตัวไม่ส่งข้อมูลนี้มาทาง clipboard เลยเป็นเรื่องปกติ ไม่ใช่บั๊ก
+   ของเรา แต่ต้องรองรับ
+
+**สาเหตุจริง:** `item_parser.py` คำนวณ `prefix_count`/`suffix_count`/
+`m.affix`/`m.tier` จาก header เท่านั้น ไม่มี fallback path ไหนเติมให้เลยตอน
+clipboard ไม่มี header — เจอ 0 เสมอตรงกับอาการเป๊ะ (ไม่เกี่ยวกับ
+`mod_meta_poe1.json` ตามที่สงสัยไว้ตอนแรก เพราะงั้น**ไม่ได้แก้ที่ build
+script** ตามที่ user สั่งไว้เดิม — เปลี่ยนแผนหลังเจอหลักฐานจริงขัดกับ
+สมมติฐาน)
+
+**แก้:**
+- `models.py`: เพิ่ม `ParsedItem.mods_have_headers: bool` — บอก caller ว่า
+  header parsing เชื่อถือได้ไหม
+- `item_parser.py`: fallback path (ตอนไม่มี header) เดิมมีบั๊กอยู่แล้วสองจุด
+  ที่ไม่เคยโดนทดสอบมาก่อน (เจอระหว่างแก้นี้): (1) implicit ที่ต่อท้ายด้วย
+  "(implicit)" เฉยๆ โดนนับเป็น explicit ผิด — เพิ่ม `_IMPLICIT_LINE` แยกออก
+  เหมือน `_RUNE_LINE` เดิม (2) mod ทุกตัวใน fallback ใช้ `group=-1` ร่วมกัน
+  หมด ทำให้ `MetaDB.annotate()` เอาไปรวมเป็น "hybrid mod" ก้อนเดียวผิดๆ ทั้ง
+  item — แก้เป็น group ของใครของมัน
+- `meta_db.py`: `MetaDB.infer_affixes(item)` ใหม่ — จับคู่ข้อความ mod กับ
+  RePoE family list ของ base นั้น (กลไกเดียวกับ `tier_range()`) อ่าน
+  prefix/suffix ตรงจาก field `"gen"` ของ RePoE เอง (ข้อมูลจริง ไม่ใช่เดา)
+  แล้ว mutate `item.mods[].affix` + คำนวณ `prefix_count`/`suffix_count`
+  ใหม่ — พลาดเฉพาะ mod แบบ hybrid 2 บรรทัดจริงๆ ที่ไม่มี header บอกว่าเป็น
+  มอดเดียวกัน (graceful miss เหมือนฟีเจอร์อื่นในไฟล์นี้)
+- `app.py`: เรียก `infer_affixes()` หลัง parse ทันทีเมื่อ
+  `item.mods_have_headers is False`
+
+**เพิ่มตามข้อ 5 เดิม (validation กัน build กลวงในอนาคต แม้ไม่ใช่สาเหตุรอบนี้):**
+`tools/build_mod_meta.py` เพิ่ม `_validate()` เช็คหลัง build ก่อนเขียนไฟล์ —
+bases/families ต้องไม่น้อยผิดปกติ, ต้องมีทั้ง prefix และ suffix (ไม่ใช่ฝั่ง
+เดียวหายหมด — เคสแบบ domain-crossing bug ที่เจอไปแล้ว), tag coverage ต้อง
+>= 30% — fail ทันที (`sys.exit(1)`) ถ้าไม่ผ่าน ไม่เขียนไฟล์ออกมาให้กลวง
+
+**Tests:** 124/124 passed (`test_item_parser.py` เพิ่ม 7 เคสใหม่ — ใช้ raw
+text จริงจาก user เป็น fixture ตรงๆ, `test_meta_db.py` เพิ่ม 5 เคสสำหรับ
+`infer_affixes`)
+
+**ไฟล์ที่แก้:** `models.py`, `item_parser.py`, `meta_db.py`, `app.py`,
+`tools/build_mod_meta.py`
+
+**Build:** rebuild exe แล้ว (v0.5.1) เปิดทิ้งไว้ให้ user ทดสอบซ้ำ — รอผล F5
+รอบใหม่กับ rare item เดิม
+
+**Deploy incident ระหว่างทดสอบ (2026-07-17 คืน):** รอบแรกที่ user ทดสอบ v0.5.1
+ยัง `0/n` เหมือนเดิม — สงสัย `mod_meta_poe1.json` อีกรอบ (ตามที่ user ไล่ให้
+เช็คข้อ 3 "exe ที่รันอยู่คือ build จริงไหม") สืบแล้วพบว่า **exe ที่ user
+ทดสอบเป็น build เก่า** — ตอนสงสัยว่า PyInstaller build อาจ stale เลยสั่ง
+`Stop-Process` เพื่อ `--clean` rebuild ใหม่ แต่ลืม relaunch โปรแกรมกลับ ทำให้
+user ทดสอบซ้ำกับ process ที่ค้างจาก build ก่อนหน้า — ไม่ใช่บั๊กโค้ด เป็น
+ความผิดพลาดตอน deploy ของผมเอง
+
+ระหว่างไล่ก็เจอว่าการเช็ค "exe มีโค้ดใหม่ไหม" ด้วยการ grep string ตรงๆ ในไฟล์
+exe **ใช้ไม่ได้** (โค้ด python ถูก zlib-compress อยู่ใน PYZ archive ข้างใน)
+ให้ผลลบลวงทั้งคู่ — ต้องแกะ `PyInstaller.archive.readers.CArchiveReader` +
+เดิน `co_consts`/`co_names` แบบ recursive (รวม tuple ของ kwarg names) ถึงจะ
+เชื่อถือได้จริงว่าโค้ดไหนอยู่ใน exe จริง — ใช้วิธีนี้ยืนยันได้ว่า build ล่าสุด
+มี `infer_affixes`/`mods_have_headers` ครบก่อนให้ user ทดสอบรอบใหม่
+
+เพิ่ม diagnostic ชั่วคราว (`debug_logs/infer_debug.txt`, เขียนทุก F5 ที่ไม่มี
+header — base_type, prefix/suffix count, affix ต่อ mod) ตามที่ user สั่ง
+เพื่อยืนยันแบบเห็นข้อมูลจริงไม่ใช่เดา — **ทดสอบผ่าน** (`Cobalt Jewel`:
+Prefix 2/2 · Suffix 2/2 ถูกต้อง) ลบ diagnostic ทิ้งหลังยืนยันแล้วตามที่บอกไว้
+ตอนใส่ว่าเป็นของชั่วคราว
+
+**สรุปกับ Phase 3 เดิม:** เฟส 3 (PoE2-parity) + hotfix P/S นี้ ปิดงานสมบูรณ์
+ทั้งคู่ — F5 กับ rare/jewel PoE1 ใช้งานได้ครบทุกฟีเจอร์ (สี, tier, ▲▼, P/S)
+ตรวจสอบจริงในเกมแล้ว
+
+---
+
+## 2026-07-17 — Mod Badge เฟส 3: เปิดให้ PoE1 เท่า PoE2 (v0.5.0)
+
+**เหตุผล:** ลีกใหม่ PoE1 เปิด 2026-07-25 ต้องพร้อมก่อนนั้น — ปลดเงื่อนไข
+PoE2-only ที่ค้างจากเฟส 1/2 ออกทั้งหมด ให้ badge/roll indicator/สีเขียว/P/S
+ทำงานกับ PoE1 เหมือน PoE2 ทุกจุด
+
+**เช็คก่อนเริ่ม (ตามที่สั่ง — ไม่เดา):**
+- `poe1/meta/latest.json` **live บน hub แล้วตั้งแต่ 2026-07-15** (ยืนยันจาก
+  `D:\Projects\Poe_Hub\SPEC.md` section 8.2 + curl จริง 2026-07-17 —
+  `generated_at` ล่าสุด 2026-07-16T20:44:28Z) ไม่ใช่ "ยังไม่มี" ตามที่สงสัยไว้
+  ตอนสั่งงาน — `hub_client.get_meta(game)` เป็น generic ต่อเกมอยู่แล้วตั้งแต่
+  เฟส 1 ไม่ต้องแก้ฝั่งนั้นเลย
+- stat_id resolver (`mod_db.py`) เป็น per-`GameProfile` อยู่แล้ว —
+  `POE1_PROFILE.trade_stats_url` ชี้ `trade/data/stats` (ของ PoE1) ถูกต้อง
+  ตั้งแต่แรก, `self._mod_db` ถูก recreate ตอนสลับเกมใน
+  `_on_game_version_changed()` อยู่แล้ว — ข้อ 2 ที่สั่งไว้ผ่านอยู่แล้วไม่ต้องแก้
+- tier/tag data: ดึง `repoe-fork/poe1` (org เดียวกับที่ใช้อยู่, schema ตรงกัน
+  100%) มาลอง build — **tag coverage 93.5%** (2301/2462 families) สูงกว่า
+  PoE2 (87.2%, 1952/2239) จริงตามที่ user คาดไว้
+
+**สิ่งที่แก้จริง:**
+1. `app.py`: ลบเงื่อนไข `game_version == "poe2"` ออก 2 จุด (`_mod_badge.load()`,
+   `_compute_mod_extras`) — เหลือแค่ `item.rarity != Rarity.RARE` gate
+   `_get_meta_db()` แก้เป็น recreate `MetaDB` ใหม่เมื่อ game_version เปลี่ยน
+   (เดิม cache ตัวเดียวตลอดชีวิตโปรแกรม)
+2. `mod_badge.py`: `load()`/`affix_cap()` รับ `game` param (default "poe2"
+   กัน call site เดิมพัง), cache แยกไฟล์ต่อเกม
+   (`mod_badge_meta_{game}.json`) — instance เดียวใช้ร่วมกันได้ ไม่ต้อง
+   recreate ตอนสลับเกม (`load(game)` re-index ทับของเดิมเอง)
+3. `slot_for_item()`: port hub's `_slugify_jewel_base` เวอร์ชันเต็ม (ตัด
+   cluster-size prefix + คำว่า "Jewel") แทนตัด non-alnum เฉยๆ — **แก้บั๊กเดิม
+   ที่มีอยู่แล้วในทั้งสองเกม**: "Timeless Jewel" เคยได้ slug
+   `jewel:timelessjewel` ซึ่งไม่ตรงกับ hub key จริง (`jewel:timeless`) เลย
+   ทำให้ badge ไม่เคยติด Timeless Jewel มาตั้งแต่เฟส 1 — เจอตอนเทียบกับ
+   payload จริงของทั้งสองเกม
+4. `affix_cap()`: PoE1 jewel (ทุกแบบ: ปกติ/abyss/cluster) = 2/2 (4 รวม แทน
+   6 ปกติ) ต่างจาก PoE2 jewel ที่ 1/1 — **RePoE ไม่มี field นี้เลย** (ช่องว่าง
+   เดียวกับตอน PoE2 ที่ก็ไม่ได้มาจาก datamine) ต้องยืนยันผ่าน web search แทน
+   (poewiki โดน anti-bot บล็อก 403 ตรงๆ ไม่ได้ ใช้ผลรวมจากหลายแหล่ง fan
+   community แทน) — **ความเชื่อมั่นสูงแต่ไม่ 100%** ให้ user double-check ตอน
+   ทดสอบจริงกับ jewel ในเกม
+5. `tools/build_mod_meta.py`: เพิ่ม `--game {poe1,poe2}`, output แยกไฟล์
+   `mod_meta_{game}.json`, domain allowlist ต่อเกม (PoE1 เพิ่ม
+   `abyss_jewel`/`affliction_jewel` — abyss jewel 4 แบบ + cluster jewel 3
+   ไซส์อยู่คนละ domain จาก jewel ปกติ ไม่งั้นหลุดจาก mod_meta ไปเงียบๆ)
+6. `meta_db.py`: `MetaDB(app_dir, game_version)` แยกไฟล์ต่อเกมจริง (กัน
+   base_type ชนกันข้ามเกม)
+
+**บั๊กที่เจอระหว่างทำ (ไม่ได้อยู่ใน scope เดิม แต่กระทบทั้งสองเกม เลยแก้ไปด้วย):**
+- **Domain-crossing ใน `can_spawn()`**: ตอนเพิ่ม `abyss_jewel`/
+  `affliction_jewel` เข้า allowlist พบว่า mod ของ abyss jewel รั่วเข้าไปติด
+  cluster jewel (เช่น "+X to Armour" ของ abyss ไปโผล่ใน cluster's mod pool)
+  เพราะ base ทั้งคู่มี tag "default"/"jewel" ร่วมกัน แต่ตัวเช็คเดิมดู tag
+  อย่างเดียวไม่เช็ค domain — แก้โดย key tagset เป็น `(domain, tags)` แทน
+  `tags` เฉยๆ แล้วกรอง mod candidate ด้วย domain ก่อนเช็ค tag (ทำให้ PoE1
+  `mod_meta_poe1.json` เล็กลงจาก 2.4MB เหลือ 0.7MB หลังแก้ — ก่อนแก้มี mod
+  ปนเปื้อนเยอะมาก) ยืนยันว่า PoE2 output **ไม่เปลี่ยนเลย** (bases=1782
+  tagsets=78 เท่าเดิมทั้งก่อน-หลัง) เพราะ PoE2 มีแค่ domain "item"/"misc" ที่
+  ไม่ชนกันอยู่แล้ว
+- **"+" prefix ไม่ถูกตัดตอน normalize hub template**: `_normalize_mod`
+  (mod_db.py) แทนที่ "#"/ตัวเลขล้วนๆ แต่ไม่แตะ "+" ที่นำหน้า "#" — hub
+  template บางตัวมี "+" ติด (`"+# to maximum Life"` — ยืนยันจาก payload จริง
+  ของ PoE1, PoE2 มี 249 ตัวที่เป็นแบบนี้เหมือนกัน) แต่ `mod_meta_{game}.json`
+  ไม่มี "+" ติดเลย (ตัดพร้อมตัวเลขตั้งแต่ `build_mod_meta.py`) ทำให้
+  `tags_for_template()` ไม่เจอ tag ของ stat พวกนี้เลยแบบเงียบๆ (สีเขียว
+  metacraft ไม่ติดทั้งที่ควรติด) — แก้จุดเดียวใน `mod_badge.py::_index()`
+  (ตัด "+" เฉพาะตอนสร้าง `_stat_to_templates` ที่ใช้หา tag เท่านั้น ไม่แตะ
+  `_template_index`/`_normalize_mod`/mod_db.py/F5 trade pipeline) ผลลัพธ์:
+  tag-resolvable mod rows ของ PoE1 จาก 30.0% → 60.2% (ทดสอบผ่าน real code
+  path จริง ไม่ใช่แค่ mock)
+
+**Deploy:** build `mod_meta_poe1.json` (0.7MB, bases=972, tagsets=69) +
+`mod_meta_poe2.json` (0.8MB, bases=1782, tagsets=78, เนื้อหาเหมือนเดิมเป๊ะ
+แค่เปลี่ยนชื่อไฟล์) วางที่ `%LOCALAPPDATA%\PoePriceTrade\` ลบ `mod_meta.json`
+เดิม (ชื่อเก่าไม่ใช้แล้ว)
+
+**ไฟล์ที่แก้:** `app.py`, `mod_badge.py`, `meta_db.py`, `settings.py` (ลบ
+"PoE2 only" ออกจาก label), `tools/build_mod_meta.py`, `.gitignore`
+
+**Tests:** 113/113 passed (`test_mod_badge.py` เพิ่ม ~12 เคสใหม่ — jewel slug
+ทุกแบบของ PoE1, affix_cap ต่อเกม, load/cache แยกเกม, regression เคสของบั๊ก
+"+" — `test_meta_db.py` เพิ่มเคส per-game file separation)
+
+**Build:** rebuild exe แล้ว (v0.5.0) เปิดทิ้งไว้ให้ user ทดสอบ — **ยังไม่ได้
+ทดสอบ F5 จริงกับ PoE1 rare gear/jewel ในเกม (รอ user, กำลังเล่น event
+Ancestors อยู่พอดี)**
+
+---
+
 ## 2026-07-16 — Mod Badge เฟส 2: roll indicator + metacraft สีเขียว + P/S (v0.4.0)
 
 **เหตุผล:** ปรับจากการใช้จริงหลังเฟส 1 (user ทดสอบแล้วเลือก "dot" ตัด

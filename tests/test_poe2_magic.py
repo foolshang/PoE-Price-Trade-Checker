@@ -36,12 +36,12 @@ def test_magic_parse():
 
 
 def test_resolve_base(tmp_path):
-    (tmp_path / "mod_meta.json").write_text(json.dumps({
+    (tmp_path / "mod_meta_poe2.json").write_text(json.dumps({
         "bases": {"Fortress Sabatons": {"class": "Boots", "drop_level": 75, "ts": 0},
                   "Sabatons": {"class": "Boots", "drop_level": 10, "ts": 0}},
         "tagsets": {},
     }), encoding="utf-8")
-    db = MetaDB(tmp_path)
+    db = MetaDB(tmp_path, "poe2")
     # เลือกตัวยาวสุดที่ฝังอยู่ในชื่อ (ไม่ใช่ "Sabatons" ที่สั้นกว่า)
     assert db.resolve_base("Legend's Fortress Sabatons of Grounding") == "Fortress Sabatons"
     assert db.resolve_base("Fortress Sabatons") == "Fortress Sabatons"
@@ -49,5 +49,5 @@ def test_resolve_base(tmp_path):
 
 
 def test_resolve_base_without_meta(tmp_path):
-    db = MetaDB(tmp_path)          # ไม่มีไฟล์ meta
+    db = MetaDB(tmp_path, "poe2")          # ไม่มีไฟล์ meta
     assert db.resolve_base("Legend's Fortress Sabatons of Grounding") is None

@@ -121,7 +121,7 @@ class SettingsWindow:
         self._lbl(f, "Price X-offset (px):", 5, 0)
         self._entry(f, "price_offset_px", 5, 1, width=6)
 
-        tk.Label(f, text="Mod Badge (F5 popup, PoE2 only):", bg=_BG, fg=_FG,
+        tk.Label(f, text="Mod Badge (F5 popup):", bg=_BG, fg=_FG,
                  font=_PANEL_FONT).grid(row=6, column=0, columnspan=2, sticky="w", padx=6, pady=(10, 2))
 
         self._lbl(f, "Archetype:", 7, 0)
