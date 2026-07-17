@@ -66,8 +66,12 @@ meta_db.py เป็น hub-independent ไว้ตามเดิม ไม่
 Life) ไม่มีลูกศรถูกต้อง → tier อื่นมีลูกศรตามช่วง roll จริง → สีสมเหตุสมผล
 (Life=แดง, Armour%/flat Armour=เขียวเพราะแชร์ tag กับ Life, Fire
 Resist=แดง) ทดสอบ jewel synthetic ด้วย (Item Class: Jewels, base "Emerald")
-→ slot resolve เป็น "jewel:emerald" ถูกต้อง, affix_cap=1 ถูกต้อง ยังไม่ได้
-ทดสอบ popup จริงในเกม (รอ user)
+→ slot resolve เป็น "jewel:emerald" ถูกต้อง, affix_cap=1 ถูกต้อง
+
+**ทดสอบจริงในเกม (2026-07-17):** user กด F5 กับ rare gear และ jewel จริงใน
+PoE2 ผ่าน `dist/PoE-Price-Trade-Checker.exe` (build ตรงกับ commit `3a93e04`)
+— user ยืนยันผ่านทั้งหมด (จุดสี, ลูกศร ▲/▼, P/S marker, บรรทัดสรุป
+Prefix/Suffix) เฟส 2 ปิดงานสมบูรณ์
 
 ---
 
