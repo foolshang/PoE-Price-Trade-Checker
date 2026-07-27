@@ -5,6 +5,7 @@ import logging
 import threading
 import time
 import tkinter as tk
+from datetime import datetime
 from tkinter import messagebox, ttk
 from typing import Optional
 
@@ -24,6 +25,8 @@ from .trade_url import open_trade
 from .mod_db import ModDatabase
 from . import mod_badge
 from .mod_badge import ModBadgeDB
+from . import filter_gen, filter_output, neversink_source
+from .filter_window import FilterGenWindow
 
 log = logging.getLogger(__name__)
 
@@ -79,6 +82,7 @@ class App:
 
         self._overlay: Optional[PriceOverlay] = None
         self._hotkeys: Optional[HotkeyManager] = None
+        self._filter_win: Optional[FilterGenWindow] = None
 
         # F4 scan state
         self._scan_results: list[ScanResult] = []
@@ -101,6 +105,7 @@ class App:
         self._log("F4 Scan+Hover  |  F5 Trade browser  |  F8 Settings", "dim")
 
         self._fetch_leagues_for_current_gv(auto_pick=self._config.get("auto_league", True))
+        self._root.after(60000, self._poll_filter_regen)
 
     # ------------------------------------------------------------------
     # Build UI
@@ -180,6 +185,7 @@ class App:
         btn("Refresh Prices", self._load_prices_async).pack(side=tk.LEFT, padx=4)
         btn("Refresh Leagues", self._fetch_leagues_for_current_gv).pack(side=tk.LEFT, padx=4)
         btn("Settings (F8)", self._open_settings).pack(side=tk.LEFT, padx=4)
+        btn("Filter Generator", self._open_filter_gen).pack(side=tk.LEFT, padx=4)
 
     def _build_overlay(self) -> None:
         self._overlay = PriceOverlay(
@@ -653,6 +659,156 @@ class App:
             self._root.after_idle(lambda: self._log(f"✗ โหลดราคาไม่สำเร็จ: {exc}", "err"))
 
         self._repo.load_async(league, path, on_done=_on_done, on_error=_on_error)
+
+    # ------------------------------------------------------------------
+    # Filter Generator
+    # ------------------------------------------------------------------
+
+    def _open_filter_gen(self) -> None:
+        self._filter_win = FilterGenWindow(
+            self._root, self._config, self._gv_var.get(), on_generate=self._generate_filter)
+
+    def _win_log(self, msg: str, tag: str = "info") -> None:
+        """Log to both the Filter Generator window (if still open) and the
+        main status log — the window may get closed by the user while a
+        generate/auto-regen run is still in flight on a background thread."""
+        w = self._filter_win
+        if w is not None:
+            try:
+                if w._win.winfo_exists():
+                    w.log(msg, tag)
+            except Exception:
+                pass
+        self._log(msg, tag)
+
+    def _generate_filter(self, force_base: bool) -> None:
+        """Entry point for the Tk thread (button click) — offloads the actual
+        fetch/tier/write work to a daemon thread, same pattern as _on_f4_scan/
+        _load_prices_async, since it involves several network calls."""
+        threading.Thread(target=self._do_generate_filter, args=(force_base,),
+                         daemon=True, name="FilterGen").start()
+
+    def _do_generate_filter(self, force_base: bool) -> None:
+        """Runs off the Tk thread — safe to call directly from another
+        background thread (auto-regen) without an extra thread hop."""
+        gv = self._gv_var.get()
+        league = self._league_var.get()
+        path = self._league_paths.get(league) or f"{gv}/prices/latest.json"
+        cache_dir = self._config.app_dir() / "cache"
+        app_dir = self._config.app_dir()
+        fg_cfg = dict(self._config.get("filter_gen", {}) or {})
+        out_dir = filter_output.game_filter_dir(gv, fg_cfg.get(f"game_dir_{gv}", ""))
+
+        self._root.after_idle(lambda: self._win_log(f"⟳ ดึง NeverSink base filter ({gv})…", "info"))
+        strictness = int(fg_cfg.get(f"strictness_{gv}", 2))
+        base_text, tag = neversink_source.fetch_base_filter(gv, strictness, cache_dir, force=force_base)
+        if base_text is None:
+            self._root.after_idle(
+                lambda: self._win_log("⚠ ไม่มี NeverSink base filter ให้ใช้ (GitHub ล่ม + ไม่มี cache)", "warn"))
+        else:
+            self._root.after_idle(lambda t=tag: self._win_log(f"✓ NeverSink base filter พร้อม (tag={t})", "ok"))
+
+        hub_data = None
+        try:
+            hub_data = hub_client.get_prices(path)
+        except Exception as e:
+            self._root.after_idle(lambda err=e: self._win_log(f"⚠ ดึงราคาจาก hub ไม่ได้: {err}", "warn"))
+
+        generated_section = ""
+        new_sig = None
+        if hub_data is not None:
+            staleness_hours = float(fg_cfg.get("staleness_hours", 24))
+            if filter_gen.is_stale(hub_data, staleness_hours):
+                self._root.after_idle(
+                    lambda: self._win_log("⚠ hub snapshot เก่าเกินกำหนด — ข้าม section ราคา ใช้ NeverSink ล้วน", "warn"))
+            else:
+                rules = filter_gen.load_rules(app_dir)
+                # last-resort fallback only: if a unique tier's real style can't be
+                # ripped from base_text (resolve_real_styles, inside build_filter),
+                # its hardcoded style still needs *some* sound value. Currency itself
+                # never touches this — it's 100% surgically merged or left alone.
+                rules = filter_gen.apply_base_filter_sounds(rules, base_text)
+                sound_map = {
+                    "S": fg_cfg.get("sound_s") or None,
+                    "A": fg_cfg.get("sound_a") or None,
+                    "B": fg_cfg.get("sound_b") or None,
+                }
+                copied = filter_output.copy_sounds(out_dir, sound_map)
+                generated_section, base_text, surgery_applied = filter_gen.build_filter(
+                    hub_data, rules, base_text, copied)
+                new_sig = filter_gen.signature(hub_data, rules)
+                if surgery_applied:
+                    self._root.after_idle(lambda: self._win_log(
+                        "✓ รวม currency เข้ากับ NeverSink base โดยตรง — ใช้เสียง/สไตล์ของ NeverSink เอง", "ok"))
+                else:
+                    self._root.after_idle(lambda: self._win_log(
+                        "⚠ รวม currency เข้ากับ base ไม่ได้ (หา anchor block ไม่เจอ) — "
+                        "ปล่อย currency ในไฟล์เดิมไว้ตามเดิม ไม่เติม style ของเราเอง", "warn"))
+
+        try:
+            written = filter_output.write_filter(out_dir, generated_section, base_text)
+            debug.event(f"filter generated gv={gv} league={league} base_tag={tag} "
+                        f"hub={'ok' if hub_data is not None else 'unavailable'} path={written}")
+            self._root.after_idle(lambda p=written: self._win_log(f"✓ เขียน filter แล้ว: {p}", "ok"))
+            self._root.after_idle(
+                lambda: self._win_log("Filter updated — reload in game (Options → Game)", "ok"))
+            filter_output.save_state(app_dir, gv, last_generated_at=datetime.now().isoformat(),
+                                     last_signature=new_sig, base_tag=tag)
+        except ValueError as e:
+            self._root.after_idle(lambda err=e: self._win_log(f"✗ {err} — ไฟล์เดิมไม่ถูกแตะ", "err"))
+        except Exception as e:
+            log.exception("filter generate error")
+            self._root.after_idle(lambda err=e: self._win_log(f"✗ generate ล้มเหลว: {err}", "err"))
+
+    def _poll_filter_regen(self) -> None:
+        """15-minute Tk timer tick — must never do network I/O inline (that
+        would freeze the whole UI every 15 minutes). Only starts a daemon
+        thread; the thread reschedules the next tick itself via after_idle
+        once it's done, so a slow/hung fetch can't stack overlapping polls."""
+        threading.Thread(target=self._filter_regen_check, daemon=True, name="FilterAutoRegen").start()
+
+    def _filter_regen_check(self) -> None:
+        try:
+            fg_cfg = dict(self._config.get("filter_gen", {}) or {})
+            if not fg_cfg.get("auto_regen", True):
+                return
+            gv = self._gv_var.get()
+            league = self._league_var.get()
+            if not league:
+                return
+            path = self._league_paths.get(league) or f"{gv}/prices/latest.json"
+            app_dir = self._config.app_dir()
+            state = filter_output.load_state(app_dir, gv)
+
+            last_at = state.get("last_generated_at")
+            if last_at:
+                try:
+                    last_dt = datetime.fromisoformat(last_at)
+                    cooldown_min = float(fg_cfg.get("regen_cooldown_min", 60))
+                    if (datetime.now() - last_dt).total_seconds() / 60.0 < cooldown_min:
+                        return
+                except Exception:
+                    pass
+
+            try:
+                hub_data = hub_client.get_prices(path)
+            except Exception:
+                return
+            staleness_hours = float(fg_cfg.get("staleness_hours", 24))
+            if filter_gen.is_stale(hub_data, staleness_hours):
+                return
+
+            rules = filter_gen.load_rules(app_dir)
+            sig = filter_gen.signature(hub_data, rules)
+            if sig == state.get("last_signature"):
+                return
+
+            debug.event(f"filter auto-regen: signature changed gv={gv} league={league}")
+            self._do_generate_filter(False)
+        except Exception:
+            log.exception("filter auto-regen check failed")
+        finally:
+            self._root.after_idle(lambda: self._root.after(900000, self._poll_filter_regen))
 
     # ------------------------------------------------------------------
 

@@ -30,6 +30,12 @@ _DEFAULTS: dict = {
     "match_threshold": 0.80,
     "log_level": "INFO",
     "mod_badge_archetype": "all",
+    "filter_gen": {
+        "strictness_poe1": 2, "strictness_poe2": 2,
+        "sound_s": "", "sound_a": "", "sound_b": "",
+        "game_dir_poe1": "", "game_dir_poe2": "",
+        "staleness_hours": 24, "regen_cooldown_min": 60, "auto_regen": True,
+    },
 }
 
 
@@ -94,9 +100,18 @@ class AppConfig:
             try:
                 with open(path, encoding="utf-8-sig") as f:
                     saved = json.load(f)
-                # Merge: only accept known keys
-                for k in _DEFAULTS:
-                    if k in saved:
+                # Merge: only accept known keys. Dict-valued defaults (e.g.
+                # "filter_gen") merge key-by-key instead of full replace, so a
+                # saved config from before a new sub-key was added still picks
+                # up that sub-key's default instead of raising/missing it.
+                for k, default_v in _DEFAULTS.items():
+                    if k not in saved:
+                        continue
+                    if isinstance(default_v, dict) and isinstance(saved[k], dict):
+                        merged = dict(default_v)
+                        merged.update(saved[k])
+                        self._data[k] = merged
+                    else:
                         self._data[k] = saved[k]
             except Exception as e:
                 log.warning("Config load failed: %s", e)

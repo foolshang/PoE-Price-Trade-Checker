@@ -5,6 +5,382 @@
 
 ---
 
+## 2026-07-27 — แก้ dim bucket กิน currency จริงในเกม (dead-economy incident, v0.6.2)
+
+**บั๊กที่ user รายงาน (แนบสกรีนช็อต):** Chaos Orb จากไฟล์ generated กลายเป็น
+ตัวเทาจางไม่มีกรอบ แต่ NeverSink แท้ strictness เดียวกันเป็นพื้นส้มเด่น + beam
+สาเหตุ: `bucket_currency()` เดิมยังมี fallback bucket "hidden" สำหรับ currency
+ที่ต่ำกว่า `hide_below` — bucket นี้ไปออกที่ `emit_dim_section()` ซึ่งอยู่ใน
+`generated_section` ที่เขียนไว้**ก่อน** `base_text` เสมอ (first-match-wins)
+snapshot จริงที่ user เจอเป็น dead/end-of-league (Divine 8.76c, Mirror of
+Kalandra ~42211c) ทำให้ `min_divine_pct` threshold ของทุก tier หดลงใกล้ 0 และ
+Chaos Orb เองรายงาน chaos_value เกือบ 0 ในสภาพเศรษฐกิจแบบนี้ ตกไปอยู่ใต้
+`hide_below` (0.5) → เข้า dim bucket → ทับ block จริงของ NeverSink ที่ควรเด่น
+อยู่แล้ว
+
+**แก้ 3 จุดตามที่ user สั่ง (`filter_gen.py`):**
+
+1. **ตัด currency ออกจาก dim bucket ทั้งหมด** — `bucket_currency()` ไม่มี
+   "hidden" list อีกต่อไป (signature เปลี่ยนจาก `tuple[dict, list]` เหลือ
+   แค่ `dict`) ชื่อที่ไม่เข้าเกณฑ์ tier ไหนเลย **ไม่ถูกแตะเลย** ไม่ merge ไม่
+   dim ปล่อยตามตำแหน่งเดิมใน NeverSink base filter 100% ลบ `emit_dim_section()`
+   ทั้งฟังก์ชันและ `hide_below` field ทิ้ง (ไม่ใช่แค่เลิกเรียก — ตามธรรมเนียม
+   เดิมของโปรเจกต์ที่เคยทำกับ `emit_currency_section()`/"Unique fallback")
+   รวมถึงลบ UI field "Dim below (chaos)" ออกจาก `filter_window.py` ด้วย เพราะ
+   ไม่มีผลอะไรแล้ว
+2. **Never-demote guard ใน `merge_currency_into_base()`** — ก่อนย้ายชื่อเข้า
+   block เป้าหมาย เทียบกับ block ที่ชื่อนั้นอยู่แล้ว (จาก anchor blocks S/A/B/C
+   เดิม อ่านจาก `base_text` ที่ยังไม่ถูกแก้เลย กันไม่ให้ ratchet ข้ามรอบ
+   generate) ถ้า tier ที่ hub คำนวณได้ **เด่นน้อยกว่า** ที่มันอยู่แล้ว ปฏิเสธ
+   การย้าย เก็บไว้ที่ tier เดิมแทน — งานของเราคือยกของแพงขึ้น ไม่ใช่กดของถูกลง
+   ตามที่ user สั่งตรงๆ ผลข้างเคียง: เทสต์เดิม 2 ตัวที่ทดสอบ "ย้ายลง tier"
+   (ซึ่งขัดกับ spec ใหม่) ถูกเปลี่ยนเป็นเทสต์ guard แทน
+3. **Sanity check ก่อน merge (`divine_sanity_floor`, ค่าเริ่มต้น 15c)** —
+   `_resolve_divine_chaos_for_tiering()` (ใหม่): ถ้า Divine Orb ของ snapshot
+   ต่ำกว่า floor นี้ ถือว่าเป็น dead/anomalous economy → log warning + ปิด
+   `min_divine_pct` tiering สำหรับรอบ generate นั้น (fallback ไป absolute
+   `min_chaos` แทน ซึ่งเสถียรไม่ผันตาม Divine ที่พัง) ใช้ทั้งใน
+   `bucket_currency`/`bucket_uniques` (ทั้งคู่เจอปัญหาเดียวกันได้ — diagnostic
+   2026-07-25 เจอว่า flood ทั้ง currency และ unique พร้อมกัน) ปรับ floor ได้ผ่าน
+   `filter_gen_rules.json`
+
+**ขอบเขตที่ตั้งใจไม่แตะ:** never-demote guard ใช้กับ currency (`merge_currency
+_into_base`) เท่านั้น ไม่ได้ขยายไป unique section — unique bucketing เป็น
+self-generated (ไม่ใช่ surgical merge จาก baseline จริง) การจะเช็ค "NeverSink
+เคยจัดให้เด่นกว่านี้ไหม" ต้อง simulate first-match-wins กับ block ชื่อ unique
+เฉพาะทุกตัวซึ่งเป็นงานคนละขนาดจากบั๊กที่รายงานจริง (which เป็น currency
+ล้วนๆ) — ถ้าเจอปัญหาเดียวกันฝั่ง unique ค่อยแยกทำเป็นงานใหม่
+
+**Tests:** อัปเดต `tests/test_filter_gen.py` — ลบเทส `emit_dim_section` ทั้งชุด
+(3 เคส), แก้ `bucket_currency` call site ทุกจุดให้ตรง signature ใหม่, เพิ่ม
+เทส dead-economy sanity check (`_resolve_divine_chaos_for_tiering`,
+`bucket_currency` fallback ไป absolute), เทส guard (ปฏิเสธการลด tier แต่ไม่
+บล็อกการเลื่อนขึ้น), เทส end-to-end จำลอง incident จริง (Divine 8.76c + Chaos
+Orb chaos_value ~0) ยืนยันว่า Chaos Orb ไม่ปรากฏใน `generated_section` เลยและ
+ยังอยู่ block เดิมของ NeverSink ครบ — รวม 215/215 passed (ทั้ง repo) ยืนยัน
+ด้วย manual script จำลอง snapshot จริงอีกรอบ (นอก pytest): Chaos Orb ไม่โผล่ใน
+section, ยังอยู่ block "B" เดิม, Divine Orb ไม่ถูกลดจาก S เป็น B
+
+**ไฟล์ที่แก้:** `filter_gen.py` (หลัก), `filter_window.py` (ลบ UI field),
+`tests/test_filter_gen.py`, `__init__.py` (v0.6.1 → v0.6.2)
+
+---
+
+## 2026-07-25 (ต่ออีกรอบ) — ทดสอบจริงในเกม: Plan B ผ่าน
+
+user ทดสอบ `dist/PoE-Price-Trade-Checker.exe` (v0.6.1) กับเกมจริง — **ผ่าน**
+เสียง/สี/ความเด่นของ currency (merge เข้า NeverSink base โดยตรง) และ unique
+(style จริงจาก anchor block + ตัด fallback block ที่เคยตัดหน้า) ตรงกับที่
+ควรจะเป็นแล้ว ปิดงาน Plan B เต็มรูปแบบ (entry ด้านล่าง: diagnostic + kill
+fallback + real style + tier ตามสัดส่วน Divine + max_count cascade + rebuild)
+สมบูรณ์
+
+---
+
+## 2026-07-25 (ต่อ) — Plan B เต็มรูปแบบ: kill ทุก fallback, style จริง, tier ตามสัดส่วน Divine
+
+**ต่อจาก diagnostic entry ด้านล่าง** — พบ 2 สาเหตุ (สี A/B/C hardcode ผิด, และ
+`Show # Unique fallback` ตัดหน้า unique block จริงของ NeverSink ทุกชิ้น) แก้
+ทั้งคู่ในรอบเดียวตามที่ user สั่งให้เดินหน้า Plan B เต็มรูปแบบ
+
+**1. Currency: ไม่มี fallback ของเราเองอีกต่อไป (`filter_gen.py`)** — ถาม
+user แล้วยืนยัน: ถ้า `merge_currency_into_base` resolve anchor ไม่ได้
+(edge case) **ไม่เติมอะไรแทนเลย** ปล่อย currency ในไฟล์ NeverSink ไว้แบบเดิม
+100% (log warning) ลบ `emit_currency_section()`/`generate_section()` ทิ้งทั้ง
+ฟังก์ชัน (ไม่ใช่แค่เลิกเรียก — ลบไปเลยกันหลงเรียกใช้ในอนาคต) `build_filter()`
+ไม่มี branch fallback ที่ emit currency Show block ของเราเองอีกเลยไม่ว่ากรณีใด
+
+**2. Uniques: ตัด `Unique fallback` block, ห้ามวางก่อน real rule ของ NeverSink
+โดยไม่มี BaseType คุม** — เจอใน diagnostic ว่า block นี้ (`Rarity == Unique`
+เงื่อนไขเดียว ไม่มี BaseType) ที่อยู่ก่อน `base_text` เสมอ (first-match-wins)
+ตัดหน้า unique พิเศษจริงของ NeverSink ทั้งหมด (T1/T2 by name,
+`TwiceCorrupted`/`HasVaalUniqueMod`→ม่วง beam ฯลฯ) ถาม user แล้วยืนยัน: ตัด
+block นี้ทิ้ง เหลือแค่ tier ที่มีราคาจริง (S/A/B ตาม BaseType) generated_section
+ที่เหลือปลอดภัยที่จะวางก่อน `base_text` ต่อไปได้เพราะไม่มีเงื่อนไขกว้างเกินคุม
+ของเราเองเหลืออยู่แล้ว — bases ที่ไม่ติด tier ราคาที่รู้จัก ปล่อยให้ NeverSink
+จัดการเองทั้งหมด (หลักการเดียวกับ currency: override เฉพาะที่เรามีข้อมูลจริง
+ดีกว่า)
+
+**3. Style จริงแทน hardcode (`resolve_real_styles`, ใหม่)** — ตามที่ diagnostic
+พบว่า A/B/C hardcode ผิดแทบทุกแกน (สี/bg/beam/icon) ใหม่: `resolve_real_styles
+(base_text, anchors)` ใช้ anchor resolution เดียวกับ currency merge ดึง
+border/text/background/font/beam/icon/sound เต็มชุดจาก block จริงของแต่ละ
+tier มาใช้กับ `emit_unique_section`/`emit_dim_section` โดยตรง (dim bucket ใช้
+style ของ tier C จริง — "block ระดับใกล้เคียง" ตามที่ user สั่ง) ไม่ all-or-
+nothing แบบ currency merge — tier ไหน resolve ไม่ได้แค่ tier นั้น fallback ไป
+hardcode เดิม (`_style_lines`) ยืนยันกับ real hub+NeverSink data จริง: unique
+tier A ได้ `SetBackgroundColor 245 139 87` (ส้ม) ตรงกับ Exalted Orb block จริง
+เป๊ะ แทนที่ hardcode เดิม (ดำ)
+
+**4. Tier mapping เป็น % ของ Divine แทน absolute chaos (`min_divine_pct`)**
+— threshold ของแต่ละ tier เปลี่ยนจาก `min_chaos` ตายตัว (150/20/5/1) เป็น
+สัดส่วนของราคา Divine Orb **สดจาก snapshot เดียวกัน** (`_resolve_divine_chaos`)
+แก้ปัญหาที่ user ระบุตรงๆ: วันแรกของลีก Divine อาจถูก (เช่น 40c) ของ 30-40c
+ที่เกือบเท่า Divine ควรถึง tier บนทันที ไม่ใช่รอ absolute 150c — และปลายลีก
+Divine แพงขึ้น (300c+) ของราคาเท่าเดิม (30-40c) ก็ไม่ใช่ tier บนอีกต่อไปแบบ
+อัตโนมัติ (ไม่ต้องปรับ threshold มือ) `min_chaos` เดิมเก็บไว้เป็น fallback
+เฉพาะตอน resolve ราคา Divine จาก snapshot ไม่ได้เท่านั้น ปรับได้ผ่าน
+`filter_gen_rules.json` เหมือนเดิม (ไม่ได้เพิ่ม UI ใหม่ — เปลี่ยน label ใน
+Filter Generator window ให้บอกว่าช่อง "Tier thresholds" เป็น fallback แล้ว)
+
+**บั๊กที่เจอจากการทดสอบกับ hub จริง (ไม่ได้อยู่ใน scope เดิม แต่ต้องแก้ก่อน
+ปล่อย):** ลอง % ของ Divine กับ snapshot จริง (`poe2/prices/latest.json`,
+league "Runes of Aldur") เจอ Divine = **8.76c** (ถูกกว่าที่คาดมาก) ขณะที่
+Mirror of Kalandra = 42211c (~4800 เท่าของ Divine) — Divine ไม่ใช่ "จุดสูงสุด
+ของเศรษฐกิจ" เสมอไปจริงๆ ทำให้ threshold % ล้วนๆ (เช่น S=20%×8.76=1.75c) ดัน
+ชื่อเข้า tier S ถึง **169 ชื่อ** (ทั้ง currency และ unique) ทำให้ block จริงของ
+NeverSink (ปกติมีแค่ ~14 ชื่อ) ถูก dilute จนความเด่นหายไปหมด ขัดกับเป้าหมาย
+เรื่อง "ความเด่น" ที่ user ตามหาอยู่พอดี — เพิ่ม `max_count` ต่อ tier (S=20,
+A=40, B=80, C=ไม่จำกัด) ใน `_apply_max_count()`: keep top-N ตาม chaos_value
+จริง ส่วนเกิน cascade ลง tier ถัดไป (ไม่หายไปไหน) ยืนยันซ้ำกับ snapshot จริง
+เดิม: หลังแก้ S=20/A=40/B=80/C=340 (รับ overflow ทั้งหมด) ตรงกับขนาด block จริง
+ของ NeverSink มากขึ้นมาก
+
+**ยืนยันกับ hub + NeverSink จริงทั้งชุด (poe2, semi-strict, tag 0.10.3,
+league จริง):** `build_filter()` → `applied=True`, generated_section ไม่มี
+`"Unique fallback"` และไม่มี `"Hub currency tier"` เหลือเลย, unique tier A ได้
+style สีส้ม/ดำจริงตรงกับ Exalted Orb block, currency tier count หลัง
+max_count = S20/A40/B80/C340 (จากทั้งหมด 526 ชื่อ หลัง dedup+exclude)
+
+**Tests:** เขียนใหม่/เพิ่มใน `test_filter_gen.py` — ลบเทสที่อ้าง
+`emit_currency_section`/`generate_section` (ฟังก์ชันถูกลบ), เพิ่มเทส
+`resolve_real_styles`, `tier_of` แบบ pct (รวมเคส "30-40c วันแรกต้องถึง S"
+เทียบกับ absolute เดิมที่จะพลาด), `_resolve_divine_chaos`, `_apply_max_count`
+(cap, cascade, ไม่ cap, เกิน tier ต่ำสุดแล้วไม่หาย), `build_filter` ไม่ emit
+currency ของตัวเองในทุกกรณี (รวม anchor unresolvable + ไม่มี base เลย),
+partial real_styles ตอน surgery fail บางส่วน — รวม 212/212 passed (ทั้ง repo)
+
+**ไฟล์ที่แก้:** `filter_gen.py` (หลัก), `app.py` (comment update + ข้อความ log
+ตอน surgery ล้มเหลว), `filter_window.py` (label ช่อง tier threshold),
+`tests/test_filter_gen.py`
+
+**Build workflow ถาวร (ตามที่ user สั่งให้ทำทุกครั้งจากนี้ไป):** title bar
+ใส่เลขเวอร์ชันไว้แล้วตั้งแต่ v0.3.0 (`app.py` บรรทัด `self._root.title(f"...
+v{__version__}")`) — ไม่ต้องเพิ่มใหม่ บั๊มเวอร์ชัน `__init__.py` →
+**v0.6.1** (patch บน v0.6.0 เดิม ยังเป็นฟีเจอร์ Filter Generator ตัวเดียวกัน)
+ลบ `build/`/`dist/`/`__pycache__` เก่า → `pyinstaller
+PoE-Price-Trade-Checker.spec` → **`dist/PoE-Price-Trade-Checker.exe`
+(13.85 MB)** ยืนยันว่าไม่ใช่ build ค้าง (stale) โดยแกะ PYZ ข้างใน exe จริง
+(`PyInstaller.archive.readers.CArchiveReader`/`ZlibArchiveReader`, วิธีเดียว
+กับที่เจอปัญหานี้มาก่อนเมื่อ 2026-07-17) ยืนยัน `resolve_real_styles`/
+`_apply_max_count`/`min_divine_pct` อยู่ใน `filter_gen` module จริงในไฟล์ exe,
+`emit_currency_section`/"Unique fallback" ไม่เหลือแล้ว, และ version const
+ในไฟล์ = `"0.6.1"` ตรงกับที่บั๊ม — ไม่มี process เก่าค้างอยู่ก่อน build
+(เช็คด้วย `tasklist` แล้ว ไม่ต้อง kill)
+
+---
+
+## 2026-07-25 — Diagnostic: ทำไม Plan A (anchor sound) ถึงไม่พอ
+
+**บริบท:** user รัน `.py` เวอร์ชันล่าสุดตรงๆ (ตัดประเด็น exe เก่า) แล้วรายงานว่า
+เสียง/สี/ความเด่นของไอเทมมีราคายังไม่ตรงของจริง แม้ merge_currency_into_base
+(Plan B ของ currency, entry ก่อนหน้า) จะ implement + verify ด้วย diff จริงแล้ว
+ก่อนเดินหน้าต่อ ให้รัน diagnostic จริงเทียบ Plan A (anchor sound inheritance)
+กับ block จริงแบบไม่มีเงื่อนไข เพื่อบันทึกว่า Plan A พลาดตรงไหนกันแน่
+
+**วิธีตรวจ:** ดึง NeverSink PoE2 filter จริง (tag 0.10.3, semi-strict) +
+`apply_base_filter_sounds` resolve เสียงแบบ Plan A แล้ว print
+`_style_lines()` (สิ่งที่ Plan A จะ emit จริงถ้าไม่ใช้ Plan B) เทียบกับ
+`_find_anchor_block` แกะ block จริงของ anchor แต่ละ tier แบบเต็ม (border/text/
+background/font/beam/icon/sound) ไม่ใช่แค่เสียง
+
+**ผลลัพธ์ (สรุปเป็นตาราง):**
+
+| Tier | Anchor | Plan A (hardcode) | ของจริงจากไฟล์ |
+|---|---|---|---|
+| S | Divine Orb | border/text แดง `255 0 0`, bg ขาว, size 45, beam Red, icon `0 Red Star` | ตรงเป๊ะ (ตัวนี้ตัวเดียวที่ hardcode ไว้ตรงบังเอิญ) |
+| A | Exalted Orb | border/text ส้ม `255 170 0`, bg ดำ, size 45, beam Yellow, icon `1 Yellow Circle` | text/border **ดำ**, bg `245 139 87` (ส้มอมชมพู), size **42**, beam **White**, icon เหมือนกัน |
+| B | Chaos Orb | border/text ฟ้า `0 200 255`, bg ดำ, size 40, ไม่มี beam, icon `2 Blue Circle` | text/border **ดำ**, bg `245 105 90` (แดงอมส้ม), size **42**, beam **Yellow**, icon `1 Yellow Circle` (คนละอัน) |
+| C | Orb of Augmentation | border เทา `150 150 150`, text เทาอ่อน `200 200 200`, bg ดำ, size 35 | text/border สีแทน `220 175 132`, **ไม่มี background override เลย**, size 38 |
+
+**สรุป:** Plan A (`apply_base_filter_sounds`) สืบทอดแค่ "ค่าเสียง" จาก
+NeverSink จริง — border/text/background/beam/icon ทั้งหมดเป็นค่า hardcode ของ
+เราเองที่ไม่เคยเทียบกับไฟล์จริงเลยนอกจาก tier S ที่บังเอิญตรง A/B/C ผิดแทบทุก
+แกน (สีตรงข้ามกันเลยด้วยซ้ำ — เราใช้ดำ NeverSink ใช้ขาว/ดำสลับกัน, ไอคอน B ผิด
+เป็นคนละแบบ) เป็นสาเหตุตรงของอาการ "สีผิด" ที่ user รายงาน — **แต่ยังไม่ใช่
+สาเหตุทั้งหมด**
+
+**เจอเพิ่มระหว่างตรวจ (นอกขอบเขต task 1 เดิม แต่กระทบโดยตรง):**
+`filter_output.write_filter()` เขียน `generated_section` (dim currency + our
+own unique blocks) **ก่อน** `base_text` เสมอ — เพราะ filter เป็น
+first-match-wins บรรทัด `Show # Unique fallback` (เงื่อนไขแค่
+`Rarity == Unique` ไม่มี BaseType เลย) ที่เราเองสร้าง จะ**ตัดหน้า unique ทุก
+ชิ้นในเกม** ก่อนที่ block จริงของ NeverSink (ที่แยกละเอียดมาก — T1/T2 by name,
+`TwiceCorrupted`→ม่วง beam, `HasVaalUniqueMod`→ม่วง beam, ring มีซ็อกเก็ต→ดาว
+เหลือง ฯลฯ ยืนยันจากไฟล์จริงว่ามีจริง) จะได้ทำงานเลย — ตรวจแล้วว่า block พวกนี้
+เป็น dead code ทั้งหมดตอนนี้ ถูกแทนด้วยกรอบทองแดงเรียบๆ ของเราเอง **นี่น่าจะ
+เป็นสาเหตุหลักของ "ความเด่นผิดทั้งชุด" มากกว่าสีของ currency เสียอีก** เพราะ
+กระทบ unique ทุกชิ้นไม่ว่าจะอยู่ใน tier ราคาที่เรารู้จักหรือไม่
+
+**ไฟล์ที่แตะ:** ไม่มี (diagnostic only, สคริปต์ชั่วคราวรันนอก repo) — ผลจะถูก
+ใช้เป็นหลักฐานสำหรับงานถัดไป (Plan B เต็มรูปแบบ + แก้ ordering bug)
+
+---
+
+## 2026-07-24 (ต่อ) — Filter Generator: Plan B — merge currency เข้า NeverSink base โดยตรง
+
+**สาเหตุ:** user ทดสอบในเกมแล้วเสียงยังไม่ตรงของจริงแม้แก้ anchor sound
+inheritance (turn ก่อนหน้า) แล้ว — สาเหตุจริงคือสถาปัตยกรรมเดิม copy แค่
+"ค่าเสียง" จาก NeverSink มาใส่ rule ของเราเอง (Show block ใหม่ที่เรา emit เอง)
+ยังทำให้ item ไม่ได้อยู่ใต้ rule ตัวจริงของ NeverSink (style/sound/เงื่อนไข
+อื่นๆ ต้นฉบับ) เลย — ต่อให้ copy เสียงถูกก็ยังมีความเสี่ยง drift จากของจริง
+
+**เปลี่ยนสถาปัตยกรรม (Plan B) ตามที่ user สั่ง:** เลิก emit currency Show
+block ของเราเองทั้งหมด เปลี่ยนเป็นแก้ base filter ของ NeverSink **in-place**
+แทน — ย้ายชื่อ BaseType ของแต่ละ currency item เข้าไปอยู่ใน block ของ
+NeverSink เองตรงๆ ตาม tier ที่ hub คำนวณได้ (uniques + dim-ของถูก ยังใช้วิธี
+generated section เดิม ไม่กระทบ)
+
+- `filter_gen.py`: เพิ่ม `_Block`/`_parse_blocks`/`_find_anchor_block` —
+  refactor กลไก resolve anchor block ให้ `_find_anchor_sound` (จาก turn ก่อน)
+  กับฟีเจอร์ใหม่ใช้ตัวเดียวกัน ("representative block" ของแต่ละ tier ต้อง
+  หมายถึงสิ่งเดียวกันทุกที่ ตามที่ user ระบุ)
+- `anchors` เพิ่ม tier "C" = "Orb of Augmentation" (verified จริงว่าอยู่ใน
+  block ต่ำสุดของ NeverSink — font เล็ก สีจาง ไม่มีเสียง — เลือกเป็น anchor
+  ตัวเดียวกับ S/A/B แทนที่จะ heuristic เดา "block จางสุด" จากสี ซึ่งเสี่ยง
+  ผิดพลาดกว่ามาก ยืนยันจากไฟล์จริงว่า block ที่ไม่มี BaseType condition เลย
+  (catch-all) จริงๆ แล้วเป็น "unknown item" warning สีสด ไม่ใช่ tier ต่ำ —
+  ถ้าใช้ตัวนั้นจะทำให้ของถูกเด้งเสียง/สีฉูดฉาดผิดทาง)
+- `merge_currency_into_base()`: สำหรับแต่ละ item ใน currency_tiers — ลบชื่อ
+  ออกจาก BaseType list ของทุก block **ที่อยู่ก่อนหน้า target block ในไฟล์**
+  (ไม่ใช่ block ที่ตามหลัง เพราะ first-match-wins ทำให้ block ทีหลังเป็น
+  dead code อยู่แล้วโดยธรรมชาติ ไม่ต้องไปแตะ) แล้วเพิ่มชื่อเข้า BaseType list
+  ของ target block ถ้ายังไม่มี แก้เฉพาะบรรทัด BaseType เท่านั้น ไม่แตะ
+  style/sound/เงื่อนไขอื่นเลย — ถ้า anchor ของ S/A/B/C ตัวไหน resolve ไม่ได้
+  (block หาไม่เจอ) fallback กลับไปใช้วิธี emit ของเราเองแบบเดิมทั้งหมด (กัน
+  สถานะครึ่งๆ กลางๆ ที่บาง tier ใช้ base บาง tier ใช้ของเราเอง)
+- `emit_dim_section()` แยกออกจาก `emit_currency_section()` — ส่วน dim/ของถูก
+  emit ได้ทั้งสองโหมด (surgery/fallback) โดยไม่ต้อง duplicate โค้ด
+- `build_filter()`: orchestrator ตัวใหม่ — ตัดสินใจ surgery vs fallback แล้ว
+  คืน `(generated_section, merged_base_text, applied)` ผลข้างเคียงสำคัญ: โหมด
+  surgery แล้ว **sound_map ที่ user ตั้งเองใน UI ไม่มีผลกับ currency อีกต่อ
+  ไป** (เพราะห้ามแตะ sound ของ block ใดๆ ตาม spec ข้อ 4) — ยังมีผลกับ
+  uniques เหมือนเดิม (unique section ไม่เกี่ยวกับ surgery เลย)
+- `app.py`: `_do_generate_filter` เปลี่ยนมาเรียก `build_filter()` แทน
+  `generate_section()` ตรงๆ, log แจ้ง user ว่า merge สำเร็จหรือ fallback
+
+**ยืนยันกับไฟล์ PoE2 จริง (semi-strict, tag 0.10.3):** `applied=True`,
+เปลี่ยน 21 บรรทัดทั้งหมดเป็นบรรทัด `BaseType` ล้วน (ไม่มีบรรทัดอื่นถูกแตะเลย
+— เช็ค diff เต็มไฟล์แล้ว), จำนวนบรรทัดทั้งไฟล์เท่าเดิม (ไม่มีการแทรก/ลบ
+บรรทัด), section ที่ generate เองไม่มี currency Show block ของเราเองอีกแล้ว
+(มีแต่ uniques + dim bucket)
+
+**Tests:** +19 เคสใหม่ครอบ `merge_currency_into_base`/`build_filter` — ย้าย
+tier ขึ้น/ลง (ใช้ fixture ที่จำลอง block order จริงของ NeverSink คือ S,B,A,C
+ไม่เรียงตาม rank เพื่อให้ทดสอบ cleanup จริงๆ ไม่ใช่ false positive จาก
+fixture ที่เรียงตรงกับ rank พอดี — เจอบั๊กใน test เองระหว่างเขียน เพราะ
+fixture แรกที่เขียนเรียง S,A,B,C ตรงเป๊ะทำให้ "ย้ายขึ้น" กลายเป็น backward-
+position move ที่ไม่ต้อง cleanup จริง ไม่ได้ทดสอบอะไรเลย), item ใหม่ไม่มีใน
+base, item ที่อยู่ถูกที่แล้วต้อง byte-identical ทุก bit, diff เช็คว่าเปลี่ยน
+เฉพาะบรรทัด BaseType, fallback เมื่อ anchor resolve ไม่ได้, position-based
+(ไม่ใช่ rank-based) removal ตาม quirk ของไฟล์จริง — รวม 193/193 passed
+
+---
+
+## 2026-07-24 — เพิ่ม Economy Filter Generator (v0.6.0)
+
+**ฟีเจอร์ใหม่:** generate loot filter จาก NeverSink (โครงสร้าง/rare gear) +
+poe-data-hub (ราคาสด currency/fragments/essences/div cards/uniques ติดสีตาม
+tier) + เสียง alert ที่ผู้ใช้ตั้งเอง เขียนไปที่
+`Documents\My Games\Path of Exile(2)\poe-checker.filter` พร้อม auto-regen เมื่อ
+ราคาเปลี่ยน tier จริง โมดูลใหม่ทั้งหมด — ไม่แตะ pipeline ราคา F4/F5 เดิมเลย
+(`filter_gen.py`, `neversink_source.py`, `filter_output.py`, `filter_window.py`).
+
+**สิ่งที่ต่างจาก spec/`poe_filter_gen.py` ต้นแบบ หลังเช็คของจริง (ไม่ใช่เดา):**
+
+1. `PriceRepository`/`PriceEntry` ทิ้ง field `base` (จำเป็นสำหรับ unique tier
+   by basetype) และ flatten currency[]+items[] รวมกัน — filter generator ดึง
+   hub JSON ดิบเองผ่าน `hub_client.get_prices()` ตรงๆ **ไม่ผ่าน**
+   `PriceRepository` เลย ไม่แตะ `repository.py`/`models.py`/`hub_client.py`
+
+2. category taxonomy จริงของ hub ใหญ่/ไม่แน่นอนกว่าที่ spec เขียนไว้มาก
+   (poe2 currency[] มี 16 category label, poe1 มี 10 ต่างกัน) — เลยไม่ hardcode
+   allowlist แต่ tier ทุก entry ใน `currency[]` เหมือนกันหมดแทน (generalize
+   จาก spec ไม่ใช่ตัดขอบเขต) ยกเว้น `items[]` ที่มี non-unique เจือปนเยอะ
+   (poe1 `BaseType` category เดียวมี 7500+ entries) — เอาเฉพาะ category ที่
+   ขึ้นต้นด้วย "Unique" มาทำ unique-by-basetype เท่านั้น
+
+3. **exclude `UncutGem`/`LineageGem`/`SkillGem` ออกจาก generated section**
+   (ตาม user สั่งหลังรีวิว) — hub เก็บชื่อ gem แบบผูก level ไว้ในตัว
+   ("Uncut Skill Gem (Level 20)" vs "...(Level 1)") ซึ่งเป็นชื่อสำหรับตั้งราคา
+   ของ poe.ninja ไม่ใช่ BaseType จริงในเกม (BaseType จริงคือ "Uncut Skill Gem"
+   เฉยๆ level เป็นคนละ filter condition คือ GemLevel ที่ generator นี้ไม่ได้
+   ทำ) — ถ้าไม่ exclude จะได้ `BaseType ==` ที่ไม่ match ของจริงเลย แถม gem
+   level ต่ำๆ (แทบไม่มีค่า) จะติด tier สูงไปด้วยเพราะ dedupe by max-value
+   ข้าม level เดียวกัน → เสียง tier-S ดังทุก uncut gem ตกพื้นต้นลีก ปล่อยให้
+   NeverSink filter เดิมจัดการ gem ไปแทน
+
+4. NeverSink GitHub release ไม่มี asset แนบเลย (`assets: []` ทั้งสอง repo) —
+   ไฟล์ `.filter` อยู่ในตัว repo ที่ release tag เอง (`raw.githubusercontent.com`)
+   ยืนยัน filename จริง 2 เกม/7 strictness level ตรงกับที่ spec ระบุ (0-SOFT ถึง
+   6-UBER-PLUS-STRICT)
+
+5. filter จริงของ NeverSink (โหลดมาเช็คจริง ไม่ใช่ poe_filter_gen.py เดา) ไม่มี
+   `Class` ที่ตรงกับ hub category เลย (Fragment/Rune/Omen ไม่มี Class ของตัวเอง)
+   — currency-type rule ใช้ `BaseType` ล้วนไม่มี `Class` เงื่อนไข generated
+   section เลยตัด `Class` ทิ้งไปด้วย (ง่ายกว่าต้นฉบับ ไม่ต้องรู้ชื่อ Class ต่อเกม)
+
+**auto-regen:** poll ทุก 15 นาทีผ่าน `root.after` แต่ callback เองไม่ทำ network
+call เลย (user ท้วงหลังรีวิว — เช็ค signature ต้อง fetch hub ก่อน ถ้ารันตรงบน
+Tk thread UI จะค้างทุก 15 นาที) — แค่ spawn daemon thread แล้ว thread เป็นคน
+reschedule tick ถัดไปเองผ่าน `after_idle` หลังทำงานเสร็จ กัน poll ซ้อนกันตอน
+fetch ค้าง
+
+**ยืนยันจริง:** รัน generate flow เต็ม (`neversink_source.fetch_base_filter` +
+`hub_client.get_prices` + `filter_gen.generate_section` +
+`filter_output.write_filter`) กับ live hub/GitHub จริงลง scratch dir — ได้
+`poe-checker.filter` 274KB ตรวจแล้วว่า currency section ใช้ `BaseType ==` ไม่มี
+`Class`, gem category ไม่หลุดเข้า generated section (เจอ "Uncut Skill Gem" แค่
+ในส่วน base filter ของ NeverSink เอง), unique section มี `Rarity == Unique` +
+fallback block ครบ, base filter ต่อท้ายถูกต้อง
+
+**Tests:** 169/169 passed (เพิ่ม 45 เคสใหม่ — `test_filter_gen.py`,
+`test_neversink_source.py`, `test_filter_output.py`)
+
+**แก้เพิ่ม (ต่อวันเดียวกัน):** user ทดสอบในเกมจริงแล้วบอกเสียง Divine Orb drop
+เบาไป — เปลี่ยน default sound ของ tier S/A/B (currency) จาก hardcoded
+`PlayAlertSound` เดิม ("6 300"/"1 300"/ไม่มี) มาเป็น **สืบทอดจาก base filter
+ของ NeverSink เอง** แทน: parse base filter ที่โหลดมาแล้ว (`filter_gen.py`
+เพิ่ม `apply_base_filter_sounds()` + block parser `_iter_filter_blocks()`)
+หา anchor item ต่อ tier (S=Divine Orb, A=Exalted Orb, B=Chaos Orb, ปรับได้ผ่าน
+`rules["anchors"]` ใน `filter_gen_rules.json`) แล้วดึง
+`PlayAlertSound`/`CustomAlertSound` + volume จาก**บล็อกแรกที่ match ชื่อนั้น**
+(เคารพ first-match-wins แบบ filter จริง — ถ้าบล็อกแรกที่ match เป็น Hide ถือว่า
+ไม่เจอ เพราะไอเทมนั้นจะไม่มีเสียงจริงในเกมอยู่แล้ว) parse ไม่เจอ (anchor หาย/
+อยู่ใน Hide/บล็อก Show ไม่มีบรรทัดเสียงเลย/ไม่มี base filter ให้ parse) →
+fallback กลับไปใช้ค่าเดิมใน rules file + log warning เสียง custom ที่ผู้ใช้ตั้ง
+เองใน UI (`sound_map`) ยัง override ทับทุกกรณีเหมือนเดิม (ไม่กระทบ)
+ยืนยันกับ NeverSink PoE2 filter จริง (tag 0.10.3): S→"6 300" (เท่าเดิม),
+A→"2 300", B→"2 300" (ทั้งคู่ต่างจาก default เดิม) ไม่มี anchor ไหน parse
+ไม่เจอ Tests: +11 เคสใน `test_filter_gen.py` ครอบ parse เจอ (PlayAlertSound/
+CustomAlertSound), ไม่เจอเลย, เจอแต่ใน Hide, เจอ Show แต่ไม่มีบรรทัดเสียง,
+ไม่มี base filter, tier C ไม่ถูกแตะ, ไม่ mutate input, anchors override, และ
+sound_map ยัง override เสียงที่สืบทอดมาได้ — รวม 180/180 passed
+
+**แก้เพิ่มอีกรอบ:** user สงสัยว่าเสียงที่ดึงมาไม่ตรงของจริง เพราะ
+`_find_anchor_sound` เดิมหยิบ "บล็อกแรกที่ BaseType ตรง" โดยไม่ดูเงื่อนไขอื่น
+— ถ้า block แรกมี narrowing condition (StackSize >= n ที่ n>1, AreaLevel,
+ItemLevel, Sockets, Quality ฯลฯ) ไอเทมเม็ดเดียวดรอปจริงจะไม่เข้าเงื่อนไขนั้น
+เลย ทำให้ดึงเสียงผิด block เพิ่ม `_block_matches_plain_single_item()` —
+whitelist เงื่อนไข Class/BaseType/Rarity (+ StackSize เฉพาะกรณีที่ไอเทมเม็ด
+เดียวยังผ่าน เช่น `<= 1`) เงื่อนไขอื่นที่ไม่รู้จักถือเป็น narrowing หมด (กัน
+false positive ดีกว่า blacklist เฉพาะที่คิดออก) `_find_anchor_sound` ข้าม
+(ไม่ใช่หยุด) block ที่ narrowing แล้วไล่หา block ถัดไปในลำดับไฟล์เดิมต่อ
+
+**ตรวจกับไฟล์ PoE2 จริงอีกรอบ (ครบทั้ง 7 strictness level):** resolve ได้
+S=6/300, A=2/300, B=2/300 **เหมือนเดิมทุกระดับ** — เช็คบล็อกจริงของ Divine/
+Exalted/Chaos Orb ในไฟล์ (Semi-Strict) แล้วพบว่ามีแค่ `Class`+`BaseType` ไม่มี
+narrowing condition นำหน้าอยู่แล้วในทุกกรณีนี้ กล่าวคือ **fix นี้ป้องกันเคส
+ที่ user สงสัยไว้ได้จริง (ยืนยันด้วย synthetic test 3 เคสใหม่) แต่ไม่ใช่สาเหตุ
+ของความคลาดเคลื่อนที่เจอจริงในเกม** — เสียงที่ดึงมาสำหรับ 3 anchor นี้ถูกต้อง
+ตรงกับ block ปกติอยู่แล้วทั้งก่อนและหลัง fix ถ้า user ยังได้ยินเสียงไม่ตรง
+สาเหตุน่าจะอยู่ที่อื่น (เช่น sound id ในเกมจริงกับที่ควรจะเป็นตามไฟล์ filter
+ไม่ตรงกัน หรือ path/cache เก่าที่ยังไม่ regenerate) — รอ user ทดสอบซ้ำแล้ว
+รายงานเพิ่ม Tests: +3 เคสใหม่ (StackSize>=n ข้าม, AreaLevel ข้าม, StackSize<=1
+ไม่ข้าม) รวม 183/183 passed
+
+---
+
 ## 2026-07-17 (ต่อ) — แก้ P/S = 0/n ทุกชิ้นบน PoE1 (v0.5.1)
 
 **อาการ:** ทดสอบจริงหลัง v0.5.0 — PoE2 นับ P/S ถูกปกติ, PoE1 ขึ้น `0/n`
