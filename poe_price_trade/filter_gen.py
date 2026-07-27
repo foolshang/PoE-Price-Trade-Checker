@@ -103,42 +103,85 @@ _DEFAULT_RULES: dict = {
     # "sound" fields above are only its fallback) and (b) locate each tier's
     # target block for merge_currency_into_base (Plan B — relocating hub
     # BaseTypes directly into NeverSink's own blocks instead of emitting our
-    # own). "C" ("Orb of Augmentation") verified live 2026-07-24: sits in
-    # NeverSink's real lowest ordinary currency block (small font, muted tan,
-    # no sound) — not a heuristic "most faded" detector, just another named
-    # anchor for consistency with S/A/B.
-    "anchors": {"S": "Divine Orb", "A": "Exalted Orb", "B": "Chaos Orb", "C": "Orb of Augmentation"},
+    # own).
+    #
+    # "C" = "Orb of Transmutation", not "Orb of Augmentation" — the latter
+    # was only ever verified against PoE2's filter (2026-07-24) and broke
+    # PoE1 entirely (live 2026-07-27: every PoE1 Generate logged "หา anchor
+    # block ไม่เจอ" and currency surgery never ran at all). Root-caused
+    # against the real cached filters: in PoE1's Semi-Strict filter, "Orb of
+    # Augmentation" only ever appears inside StackSize-gated "leveling"/
+    # "stackedsupplieslow" blocks or the final catch-all Hide block — never
+    # in an ordinary Show block — so it's genuinely unresolvable there, not
+    # a parser bug. "Orb of Transmutation" resolves cleanly on both real
+    # files: it's PoE1's actual lowest ordinary currency tier (small font,
+    # muted tan, no sound — same visual role "Orb of Augmentation" plays on
+    # PoE2), and on PoE2 it sits in the *exact same block* as "Orb of
+    # Augmentation" (verified: both names resolve to an identical block
+    # start in the real 0.10.3 filter), so this is a zero-risk swap for
+    # PoE2. See the real-data regression tests in test_filter_gen.py.
+    "anchors": {"S": "Divine Orb", "A": "Exalted Orb", "B": "Chaos Orb", "C": "Orb of Transmutation"},
 }
 
 
 def load_rules(config_dir: Optional[Path]) -> dict:
-    """Defaults merged with an optional filter_gen_rules.json override in the
-    app dir — same load pattern as ModBadgeDB._load_rules (mod_badge.py):
-    try/except + log.warning, never raises. A malformed/partial override
-    (missing "tiers") is rejected wholesale rather than silently running with
-    half a rule table."""
+    """Current code defaults (_DEFAULT_RULES) with only each tier's
+    min_chaos fallback threshold overridden from filter_gen_rules.json, if
+    present — the one field the Filter Generator UI actually lets the user
+    edit ("Tier thresholds (chaos, fallback)"). Every other field (anchors,
+    colors, sound, min_divine_pct, max_count, divine_sanity_floor, ...)
+    always comes from the current code, never frozen from an old save.
+
+    This is a merge, not a wholesale replace — changed 2026-07-27 after a
+    live incident: the old wholesale-replace behavior meant that on any
+    machine where the user had ever clicked "Save Settings" or "Generate"
+    (which also calls save), the *entire* rules dict loaded at that moment —
+    including anchors, which the UI has never exposed at all — got frozen to
+    disk. That silently re-broke a since-fixed anchor default on every
+    subsequent load/save cycle, on every affected machine, with no way to
+    recover short of manually deleting the file. Never raises; a file that's
+    missing, unreadable, or not a JSON object is treated the same as
+    "no overrides"."""
     rules = copy.deepcopy(_DEFAULT_RULES)
     if config_dir is None:
         return rules
     path = config_dir / "filter_gen_rules.json"
     try:
         loaded = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(loaded, dict) and isinstance(loaded.get("tiers"), list) and loaded["tiers"]:
-            rules = loaded
-            log.info("filter_gen_rules.json override loaded")
-        else:
-            log.warning("filter_gen_rules.json malformed (missing tiers) — using defaults")
     except FileNotFoundError:
-        pass
+        return rules
     except Exception as e:
         log.warning("filter_gen_rules load fail: %s", e)
+        return rules
+    if not isinstance(loaded, dict):
+        log.warning("filter_gen_rules.json malformed (not an object) — using defaults")
+        return rules
+    loaded_tiers = loaded.get("tiers")
+    if isinstance(loaded_tiers, list):
+        by_name = {t.get("name"): t for t in loaded_tiers if isinstance(t, dict) and t.get("name")}
+        for tier_cfg in rules["tiers"]:
+            override = by_name.get(tier_cfg["name"])
+            if not override or "min_chaos" not in override:
+                continue
+            try:
+                tier_cfg["min_chaos"] = float(override["min_chaos"])
+            except (TypeError, ValueError):
+                log.warning("filter_gen_rules.json: ignoring invalid min_chaos override for tier %s",
+                           tier_cfg["name"])
     return rules
 
 
 def save_rules(config_dir: Path, rules: dict) -> None:
+    """Persists only each tier's min_chaos fallback threshold — deliberately
+    not a wholesale dump of `rules` (which also carries anchors, colors,
+    sound, min_divine_pct, max_count, divine_sanity_floor — all code-owned,
+    never user-edited). See load_rules' docstring for why a full dump used
+    to silently freeze a stale value across every future code fix."""
     path = config_dir / "filter_gen_rules.json"
+    payload = {"tiers": [{"name": t["name"], "min_chaos": t.get("min_chaos")}
+                         for t in rules.get("tiers", [])]}
     try:
-        path.write_text(json.dumps(rules, indent=2), encoding="utf-8")
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     except Exception as e:
         log.warning("filter_gen_rules.json save failed: %s", e)
 

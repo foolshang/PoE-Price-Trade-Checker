@@ -1,6 +1,7 @@
 """Tests for filter_gen.py — fixtures shaped like the live hub payload
 (category/base/chaos_value fields), same unittest.mock.patch style as
 test_hub_client.py where applicable."""
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -463,10 +464,46 @@ def test_load_rules_missing_file_returns_defaults(tmp_path):
 
 
 def test_save_then_load_rules_roundtrip(tmp_path):
-    rules = _rules(divine_sanity_floor=25.0)
+    """min_chaos is the only field the Filter Generator UI actually edits —
+    the only thing save_rules/load_rules round-trip."""
+    rules = _rules()
+    rules["tiers"][0]["min_chaos"] = 999.0  # tier S
     filter_gen.save_rules(tmp_path, rules)
     loaded = filter_gen.load_rules(tmp_path)
-    assert loaded["divine_sanity_floor"] == 25.0
+    assert loaded["tiers"][0]["min_chaos"] == 999.0
+
+
+def test_save_rules_only_persists_tier_min_chaos(tmp_path):
+    """save_rules is deliberately not a wholesale dump of `rules` — anchors,
+    colors, sound, divine_sanity_floor etc. are all code-owned and must
+    never end up in the on-disk override file at all."""
+    rules = _rules()
+    filter_gen.save_rules(tmp_path, rules)
+    written = json.loads((tmp_path / "filter_gen_rules.json").read_text(encoding="utf-8"))
+    assert set(written.keys()) == {"tiers"}
+    assert all(set(t.keys()) == {"name", "min_chaos"} for t in written["tiers"])
+
+
+def test_load_rules_ignores_everything_except_tier_min_chaos(tmp_path):
+    """The actual fix for the 2026-07-27 stale-anchor incident: a full
+    legacy-format saved file (old anchors, retired hide_below field, tier
+    colors...) must never be able to freeze anything except each tier's
+    min_chaos — every other field always comes from the current code's
+    _DEFAULT_RULES, so a future default fix (like the anchor swap) can never
+    be silently shadowed by an old save again."""
+    stale = {
+        "tiers": [{"name": "S", "min_chaos": 200.0, "border": "1 1 1"}],
+        "hide_below": 0.5,  # retired field
+        "anchors": {"S": "Divine Orb", "A": "Exalted Orb", "B": "Chaos Orb",
+                    "C": "Orb of Augmentation"},  # the exact stale value from the incident
+        "divine_sanity_floor": 999.0,
+    }
+    (tmp_path / "filter_gen_rules.json").write_text(json.dumps(stale), encoding="utf-8")
+    rules = filter_gen.load_rules(tmp_path)
+    assert rules["tiers"][0]["min_chaos"] == 200.0        # the one thing that does override
+    assert rules["anchors"]["C"] == "Orb of Transmutation"  # current code default, not the stale value
+    assert rules["divine_sanity_floor"] == 15.0            # current code default, not the stale value
+    assert "hide_below" not in rules
 
 
 # ---------------------------------------------------------------------------
@@ -791,8 +828,8 @@ def test_merge_currency_into_base_diff_only_touches_basetype_lines():
 
 
 def test_merge_currency_into_base_falls_back_when_an_anchor_is_unresolvable():
-    # base filter has no "Orb of Augmentation" anywhere -> C's anchor can't be resolved
-    base = _PLAN_B_BASE_FILTER.replace("Orb of Augmentation", "Orb of Alteration")
+    # base filter has no "Orb of Transmutation" anywhere -> C's anchor can't be resolved
+    base = _PLAN_B_BASE_FILTER.replace("Orb of Transmutation", "Orb of Alteration")
     tiers = _default_currency_tiers()
     new_text, applied = filter_gen.merge_currency_into_base(base, tiers, _rules())
     assert applied is False
@@ -902,7 +939,7 @@ def test_build_filter_no_base_text_never_emits_our_own_currency():
 
 
 def test_build_filter_anchor_unresolvable_never_emits_our_own_currency(caplog):
-    base = _PLAN_B_BASE_FILTER.replace("Orb of Augmentation", "Orb of Alteration")
+    base = _PLAN_B_BASE_FILTER.replace("Orb of Transmutation", "Orb of Alteration")
     section, merged_base, applied = filter_gen.build_filter(_hub_data(), _rules(), base)
     assert applied is False
     assert merged_base == base  # left completely untouched, not partially merged
@@ -928,8 +965,728 @@ def test_build_filter_partial_real_styles_even_when_surgery_fails():
     # S/B's anchors still resolve fine — resolve_real_styles isn't
     # all-or-nothing like merge_currency_into_base, so uniques should still
     # get their real look for the tiers that do resolve.
-    base = _PLAN_B_BASE_FILTER.replace("Orb of Augmentation", "Orb of Alteration")
+    base = _PLAN_B_BASE_FILTER.replace("Orb of Transmutation", "Orb of Alteration")
     section, merged_base, applied = filter_gen.build_filter(_hub_data(), _rules(), base)
     assert applied is False
     assert "SetTextColor 255 0 0" in section  # real tier S style, not the hardcoded fallback
     assert "SetBackgroundColor" not in section
+
+
+# ---------------------------------------------------------------------------
+# Real NeverSink data regression: PoE1's anchor resolution (2026-07-27 live
+# incident -- user ran v0.6.2, Generate on PoE1 still logged app.py's
+# "รวม currency เข้ากับ base ไม่ได้ (หา anchor block ไม่เจอ)" warning). Root
+# cause, found by running _find_anchor_block against the actual cached PoE1
+# Semi-Strict filter (LOCALAPPDATA/PoePriceTrade/cache/neversink/poe1/8.20.0b_2.filter,
+# tag 8.20.0b, strictness 2): tier C's default anchor ("Orb of Augmentation")
+# was chosen and verified only against PoE2's filter. In PoE1's real filter,
+# "Orb of Augmentation" only ever appears inside StackSize-gated "leveling"/
+# "stackedsupplieslow" blocks (excluded by _block_matches_plain_single_item)
+# and the final catch-all Hide block ($tier->t9armour) -- never in an
+# ordinary Show block -- so _find_anchor_block correctly returns None for
+# it, and merge_currency_into_base aborts the whole surgery (all-or-nothing
+# across S/A/B/C) because one anchor of four can't resolve.
+#
+# "Orb of Transmutation" resolves cleanly in both real files: PoE1's real
+# lowest ordinary currency tier ($tier->t8trans, tan/no sound) genuinely
+# lists it, and in PoE2's real file it sits in the *same* block as
+# "Orb of Augmentation" ($tier->supplymagic) -- so switching anchors["C"] to
+# "Orb of Transmutation" resolves the exact same PoE2 block as before
+# (verified: both names -> identical block start in the real 0.10.3 file)
+# while newly resolving correctly on PoE1 too. Not a parser bug -- PoE1's
+# filter genuinely doesn't give Orb of Augmentation an ordinary Show rule at
+# Semi-Strict, it's simply Hidden as worthless leveling clutter.
+#
+# Fixtures below are verbatim cuts (not synthetic) from the real cached
+# files: PoE1 lines 14912-15484 of 8.20.0b_2.filter (every currency block
+# from the first StackSize-gated Exalted/Chaos Orb block through the real
+# S/A/B/C target blocks and the trailing Hide catch-all), PoE2 lines
+# 3406-3479 of 0.10.3_2.filter (the real S/A/B/C block group).
+# ---------------------------------------------------------------------------
+
+_REAL_POE1_SEMI_STRICT_EXCERPT = """Show # %D8 $type->currency->stackedsix $tier->t2
+
+	StackSize >= 6
+
+	Class == "Stackable Currency"
+
+	BaseType == "Abrasive Catalyst" "Accelerating Catalyst" "Astragali" "Blessed Orb" "Burial Medallion" "Chaos Orb" "Chromatic Orb" "Exalted Orb" "Exotic Coinage" "Gemcutter's Prism" "Glassblower's Bauble" "Grand Eldritch Ember" "Grand Eldritch Ichor" "Greater Eldritch Ember" "Greater Eldritch Ichor" "Instilling Orb" "Intrinsic Catalyst" "Lesser Eldritch Ember" "Lesser Eldritch Ichor" "Orb of Fusing" "Orb of Regret" "Orb of Unmaking" "Stacked Deck" "Tempering Catalyst" "Unstable Catalyst" "Vaal Orb"
+
+	SetFontSize 45
+
+	SetTextColor 255 255 255 255
+
+	SetBorderColor 255 255 255 255
+
+	SetBackgroundColor 240 90 35 255
+
+	PlayAlertSound 1 300
+
+	PlayEffect Red
+
+	MinimapIcon 0 Red Circle
+
+
+
+Show # %D7 $type->currency->stackedsix $tier->t3
+
+	StackSize >= 6
+
+	Class == "Stackable Currency"
+
+	BaseType == "Enkindling Orb" "Imbued Catalyst" "Noxious Catalyst" "Orb of Binding" "Orb of Scouring" "Regal Orb" "Scrap Metal" "Turbulent Catalyst"
+
+	SetFontSize 45
+
+	SetTextColor 0 0 0 255
+
+	SetBorderColor 0 0 0 255
+
+	SetBackgroundColor 240 90 35 255
+
+	PlayAlertSound 2 300
+
+	PlayEffect Yellow
+
+	MinimapIcon 1 Yellow Circle
+
+
+
+Show # %D6 $type->currency->stackedsix $tier->t4
+
+	StackSize >= 6
+
+	Class == "Stackable Currency"
+
+	BaseType == "Blacksmith's Whetstone" "Orb of Alteration" "Orb of Chance"
+
+	SetFontSize 45
+
+	SetTextColor 0 0 0 255
+
+	SetBorderColor 0 0 0 255
+
+	SetBackgroundColor 249 150 25 255
+
+	PlayAlertSound 2 300
+
+	PlayEffect White
+
+	MinimapIcon 2 White Circle
+
+
+
+Show # %DS4 $type->currency->stackedsix $tier->t5
+
+	StackSize >= 6
+
+	Class == "Stackable Currency"
+
+	BaseType == "Armourer's Scrap" "Jeweller's Orb" "Orb of Alchemy"
+
+	SetFontSize 45
+
+	SetTextColor 0 0 0 255
+
+	SetBorderColor 0 0 0 255
+
+	SetBackgroundColor 213 159 0 255
+
+	PlayAlertSound 2 300
+
+	PlayEffect White
+
+	MinimapIcon 2 White Circle
+
+
+
+#Show # %DS3 $type->currency->stackedsix $tier->t6
+
+#	StackSize >= 6
+
+#	Class == "Stackable Currency"
+
+#	SetFontSize 45
+
+#	SetTextColor 0 0 0 255
+
+#	SetBorderColor 0 0 0 255
+
+#	SetBackgroundColor 210 178 135 255
+
+#	PlayAlertSound 2 300
+
+#	PlayEffect Grey
+
+#	MinimapIcon 2 Grey Circle
+
+
+
+Show # %DS2 $type->currency->stackedsix $tier->t7
+
+	StackSize >= 6
+
+	Class == "Stackable Currency"
+
+	BaseType == "Alchemy Shard" "Alteration Shard"
+
+	SetFontSize 45
+
+	SetTextColor 0 0 0 255
+
+	SetBorderColor 0 0 0 255
+
+	SetBackgroundColor 210 178 135 255
+
+
+
+#------------------------------------
+
+#   [3906] Stacked Currencies: 3x
+
+#------------------------------------
+
+
+
+Show # %D9 $type->currency->stackedthree $tier->t1
+
+	StackSize >= 3
+
+	Class == "Stackable Currency"
+
+	BaseType == "Ancient Orb" "Dextral Catalyst" "Fertile Catalyst" "Fracturing Shard" "Orb of Annulment" "Prismatic Catalyst" "Sinistral Catalyst"
+
+	SetFontSize 45
+
+	SetTextColor 255 0 0 255
+
+	SetBorderColor 255 0 0 255
+
+	SetBackgroundColor 255 255 255 255
+
+	PlayAlertSound 6 300
+
+	PlayEffect Red
+
+	MinimapIcon 0 Red Star
+
+
+
+Show # %D8 $type->currency->stackedthree $tier->t2
+
+	StackSize >= 3
+
+	Class == "Stackable Currency"
+
+	BaseType == "Accelerating Catalyst" "Blessed Orb" "Exalted Orb" "Exotic Coinage" "Gemcutter's Prism" "Grand Eldritch Ember" "Grand Eldritch Ichor" "Greater Eldritch Ember" "Instilling Orb" "Orb of Unmaking" "Stacked Deck" "Tempering Catalyst" "Unstable Catalyst"
+
+	SetFontSize 45
+
+	SetTextColor 255 255 255 255
+
+	SetBorderColor 255 255 255 255
+
+	SetBackgroundColor 240 90 35 255
+
+	PlayAlertSound 1 300
+
+	PlayEffect Red
+
+	MinimapIcon 0 Red Circle
+
+
+
+Show # %D7 $type->currency->stackedthree $tier->t3
+
+	StackSize >= 3
+
+	Class == "Stackable Currency"
+
+	BaseType == "Abrasive Catalyst" "Astragali" "Burial Medallion" "Chaos Orb" "Chromatic Orb" "Glassblower's Bauble" "Greater Eldritch Ichor" "Intrinsic Catalyst" "Lesser Eldritch Ember" "Lesser Eldritch Ichor" "Orb of Fusing" "Orb of Regret" "Scrap Metal" "Vaal Orb"
+
+	SetFontSize 45
+
+	SetTextColor 0 0 0 255
+
+	SetBorderColor 0 0 0 255
+
+	SetBackgroundColor 240 90 35 255
+
+	PlayAlertSound 2 300
+
+	PlayEffect Yellow
+
+	MinimapIcon 1 Yellow Circle
+
+
+
+Show # %D6 $type->currency->stackedthree $tier->t4
+
+	StackSize >= 3
+
+	Class == "Stackable Currency"
+
+	BaseType == "Enkindling Orb" "Imbued Catalyst" "Noxious Catalyst" "Orb of Binding" "Orb of Scouring" "Regal Orb" "Turbulent Catalyst"
+
+	SetFontSize 45
+
+	SetTextColor 0 0 0 255
+
+	SetBorderColor 0 0 0 255
+
+	SetBackgroundColor 249 150 25 255
+
+	PlayAlertSound 2 300
+
+	PlayEffect White
+
+	MinimapIcon 2 White Circle
+
+
+
+Show # %DS4 $type->currency->stackedthree $tier->t5
+
+	StackSize >= 3
+
+	Class == "Stackable Currency"
+
+	BaseType == "Blacksmith's Whetstone" "Jeweller's Orb" "Orb of Alchemy" "Orb of Alteration" "Orb of Chance"
+
+	SetFontSize 45
+
+	SetTextColor 0 0 0 255
+
+	SetBorderColor 0 0 0 255
+
+	SetBackgroundColor 213 159 0 255
+
+	PlayAlertSound 2 300
+
+	PlayEffect White
+
+	MinimapIcon 2 White Circle
+
+
+
+Show # %DS3 $type->currency->stackedthree $tier->t6
+
+	StackSize >= 3
+
+	Class == "Stackable Currency"
+
+	BaseType == "Armourer's Scrap"
+
+	SetFontSize 45
+
+	SetTextColor 0 0 0 255
+
+	SetBorderColor 0 0 0 255
+
+	SetBackgroundColor 210 178 135 255
+
+	PlayAlertSound 2 300
+
+	PlayEffect Grey
+
+	MinimapIcon 2 Grey Circle
+
+
+
+Show # %DS2 $type->currency->stackedthree $tier->t7
+
+	StackSize >= 3
+
+	Class == "Stackable Currency"
+
+	BaseType == "Alchemy Shard" "Alteration Shard"
+
+	SetFontSize 45
+
+	SetTextColor 0 0 0 255
+
+	SetBorderColor 0 0 0 255
+
+	SetBackgroundColor 210 178 135 255
+
+
+
+# !! Waypoint c9.currency.heistcoins : "Tierlist - Currency - Heist Coins" : "Heist, Expedition, Sanctum"
+
+#------------------------------------
+
+#   [3907] Heist Coins
+
+#------------------------------------
+
+
+
+Show # %H5 $type->currency->heist $tier->highstack
+
+	StackSize >= 400
+
+	Class == "Stackable Currency"
+
+	BaseType == "Rogue's Marker"
+
+	SetFontSize 45
+
+	SetTextColor 255 178 135 255
+
+	SetBorderColor 255 178 135 255
+
+	SetBackgroundColor 150 90 70 255
+
+	PlayEffect Orange
+
+
+
+Show # %H4 $type->currency->heist $tier->any
+
+	Class == "Stackable Currency"
+
+	BaseType == "Rogue's Marker"
+
+	SetFontSize 45
+
+	SetTextColor 255 178 135 255
+
+	SetBorderColor 255 178 135 255
+
+	SetBackgroundColor 20 20 0 255
+
+	PlayEffect Orange Temp
+
+
+
+Hide # $type->currency->heist $tier->exhide
+
+	Class == "Stackable Currency"
+
+	BaseType == "Rogue's Marker"
+
+	SetFontSize 35
+
+	SetBorderColor 0 0 0
+
+
+
+Show # $type->currency->leagueexclusive $tier->silvercoin
+
+	BaseType == "Silver Coin"
+
+	SetFontSize 45
+
+	SetTextColor 0 0 0 255
+
+	SetBorderColor 0 0 0 255
+
+	SetBackgroundColor 120 200 160 255
+
+	PlayAlertSound 2 300
+
+	PlayEffect Yellow
+
+	MinimapIcon 1 Yellow Moon
+
+
+
+#===============================================================================================================
+
+# [[4000]] Currency - Regular Currency Tiering
+
+#===============================================================================================================
+
+# !! Waypoint c9.currency.single : "Tierlist - Currency - General" : "Currency and Currency-Likes"
+
+
+
+Show # $type->currency $tier->t1exalted
+
+	Class == "Stackable Currency"
+
+	BaseType == "Albino Rhoa Feather" "Awakener's Orb" "Crusader's Exalted Orb" "Dextral Catalyst" "Divine Orb" "Eternal Orb" "Foulborn Exalted Orb" "Fracturing Orb" "Hinekora's Lock" "Hunter's Exalted Orb" "Mirror of Kalandra" "Mirror Shard" "Reflecting Mist" "Sacred Crystallised Lifeforce" "Valdo's Puzzle Box" "Veiled Exalted Orb" "Warlord's Exalted Orb"
+
+	SetFontSize 45
+
+	SetTextColor 255 0 0 255
+
+	SetBorderColor 255 0 0 255
+
+	SetBackgroundColor 255 255 255 255
+
+	PlayAlertSound 6 300
+
+	PlayEffect Red
+
+	MinimapIcon 0 Red Star
+
+
+
+Show # %H8 $type->currency $tier->t2divine
+
+	Class == "Stackable Currency"
+
+	BaseType == "Ancient Orb" "Chaotic Astrolabe" "Coin of Knowledge" "Coin of Power" "Coin of Skill" "Crystallised Rancour" "Deceptive Astrolabe" "Elder's Exalted Orb" "Eldritch Chaos Orb" "Eldritch Exalted Orb" "Eldritch Orb of Annulment" "Exceptional Eldritch Ember" "Exceptional Eldritch Ichor" "Fertile Catalyst" "Flesh of Xesht" "Fracturing Shard" "Fruiting Astrolabe" "Fungal Astrolabe" "Grasping Astrolabe" "Imperial Enshrouding Crystal" "Karui Enshrouding Crystal" "Lightless Astrolabe" "Maraketh Enshrouding Crystal" "Maven's Chisel of Avarice" "Maven's Chisel of Divination" "Maven's Chisel of Proliferation" "Maven's Chisel of Scarabs" "Memory of Loneliness" "Memory of Reverence" "Memory of Trauma" "Message in a Bottle" "Nameless Astrolabe" "Orb of Annulment" "Orb of Conflict" "Orb of Dominance" "Orb of Intention" "Orb of Remembrance" "Orb of Unravelling" "Prismatic Catalyst" "Redeemer's Exalted Orb" "Refracting Fog" "Ritual Vessel" "Runic Astrolabe" "Sacred Orb" "Shaper's Exalted Orb" "Sinistral Catalyst" "Tailoring Orb" "Tainted Catalyst" "Tainted Chaos Orb" "Tainted Divine Teardrop" "Tainted Exalted Orb" "Tainted Mythic Orb" "Tainted Orb of Fusing" "Tempering Orb" "Templar Astrolabe" "Templar Enshrouding Crystal" "Timeless Astrolabe" "Vaal Enshrouding Crystal" "Veiled Chaos Orb" "Volatile Vaal Orb"
+
+	SetFontSize 45
+
+	SetTextColor 255 255 255 255
+
+	SetBorderColor 255 255 255 255
+
+	SetBackgroundColor 240 90 35 255
+
+	PlayAlertSound 1 300
+
+	PlayEffect Red
+
+	MinimapIcon 0 Red Circle
+
+
+
+Show # %H7 $type->currency $tier->t3annul
+
+	Class == "Stackable Currency"
+
+	BaseType == "Accelerating Catalyst" "Blessed Orb" "Crescent Splinter" "Exalted Orb" "Exotic Coinage" "Foulborn Orb of Augmentation" "Foulborn Regal Orb" "Gemcutter's Prism" "Grand Eldritch Ember" "Grand Eldritch Ichor" "Greater Eldritch Ember" "Instilling Orb" "Maven's Chisel of Procurement" "Orb of Unmaking" "Stacked Deck" "Tainted Chromatic Orb" "Tempering Catalyst" "Unstable Catalyst"
+
+	SetFontSize 45
+
+	SetTextColor 0 0 0 255
+
+	SetBorderColor 0 0 0 255
+
+	SetBackgroundColor 240 90 35 255
+
+	PlayAlertSound 2 300
+
+	PlayEffect Yellow
+
+	MinimapIcon 1 Yellow Circle
+
+
+
+Show # %H6 $type->currency $tier->t4chaos
+
+	Class == "Stackable Currency"
+
+	BaseType == "Abrasive Catalyst" "Astragali" "Burial Medallion" "Chaos Orb" "Chromatic Orb" "Coin of Desecration" "Glassblower's Bauble" "Greater Eldritch Ichor" "Intrinsic Catalyst" "Lesser Eldritch Ember" "Lesser Eldritch Ichor" "Orb of Fusing" "Orb of Regret" "Ritual Splinter" "Scrap Metal" "Tainted Armourer's Scrap" "Tainted Blacksmith's Whetstone" "Tainted Jeweller's Orb" "Vaal Orb" "Veiled Scarab"
+
+	SetFontSize 45
+
+	SetTextColor 0 0 0 255
+
+	SetBorderColor 0 0 0 255
+
+	SetBackgroundColor 249 150 25 255
+
+	PlayAlertSound 2 300
+
+	PlayEffect White
+
+	MinimapIcon 2 White Circle
+
+
+
+Show # %HS4 $type->currency $tier->t5alchemy
+
+	Class == "Stackable Currency"
+
+	BaseType == "Coin of Restoration" "Enkindling Orb" "Imbued Catalyst" "Noxious Catalyst" "Orb of Alchemy" "Orb of Binding" "Orb of Scouring" "Regal Orb" "Turbulent Catalyst"
+
+	SetFontSize 45
+
+	SetTextColor 0 0 0 255
+
+	SetBorderColor 0 0 0 255
+
+	SetBackgroundColor 213 159 0 255
+
+	PlayAlertSound 2 300
+
+	PlayEffect White
+
+	MinimapIcon 2 White Circle
+
+
+
+Show # %HS3 $type->currency $tier->t6chrom
+
+	Class == "Stackable Currency"
+
+	BaseType == "Blacksmith's Whetstone" "Orb of Alteration" "Orb of Chance"
+
+	SetFontSize 45
+
+	SetTextColor 0 0 0 255
+
+	SetBorderColor 0 0 0 255
+
+	SetBackgroundColor 210 178 135 255
+
+	PlayAlertSound 2 300
+
+	PlayEffect Grey
+
+	MinimapIcon 2 Grey Circle
+
+
+
+Show # %HS2 $type->currency $tier->t7chance
+
+	Class == "Stackable Currency"
+
+	BaseType == "Armourer's Scrap" "Jeweller's Orb"
+
+	SetFontSize 45
+
+	SetTextColor 0 0 0 255
+
+	SetBorderColor 0 0 0 255
+
+	SetBackgroundColor 210 178 135 255
+
+
+
+Show # %HS1 $type->currency $tier->t8trans
+
+	Class == "Stackable Currency"
+
+	BaseType == "Alchemy Shard" "Alteration Shard" "Orb of Transmutation"
+
+	SetFontSize 45
+
+	SetTextColor 190 178 135 255
+
+	SetBorderColor 190 178 135 255
+
+	SetBackgroundColor 20 20 0 255
+
+
+
+Hide # %H1 $type->currency $tier->t9armour
+
+	Class == "Stackable Currency"
+"""
+
+_REAL_POE2_SEMI_STRICT_EXCERPT = """Show # $type->currency $tier->s !apex_stier
+	Class == "Incubators" "Stackable Currency"
+	BaseType == "Albino Rhoa Feather" "Altered Collarbone" "Ancient Collarbone" "Ancient Jawbone" "Ancient Rib" "Divine Orb" "Fracturing Orb" "Hinekora's Lock" "Mirror of Kalandra" "Orb of Extraction" "Perfect Chaos Orb" "Perfect Exalted Orb" "Perfect Jeweller's Orb" "Vaal Cultivation Orb"
+	SetFontSize 45
+	SetTextColor 255 0 0 255
+	SetBorderColor 255 0 0 255
+	SetBackgroundColor 255 255 255 255
+	PlayAlertSound 6 300
+	PlayEffect Red
+	MinimapIcon 0 Red Star
+
+Show # %H8 $type->currency $tier->a !currency_a
+	Class == "Incubators" "Stackable Currency"
+	BaseType == "Architect's Orb" "Core Destabiliser" "Crystallised Corruption" "Kamasa's Orb of Sacrifice" "Kopec's Orb of Sacrifice" "Orb of Annulment" "Orb of Chance" "Perfect Regal Orb" "Preserved Collarbone" "Preserved Cranium" "Vaal Armourer's Infuser" "Vaal Blacksmith's Infuser" "Vaal Catalysing Infuser" "Yaomac's Orb of Sacrifice" "Yugul's Orb of Sacrifice"
+	SetFontSize 45
+	SetTextColor 255 255 255 255
+	SetBorderColor 255 255 255 255
+	SetBackgroundColor 245 105 90 255
+	PlayAlertSound 1 300
+	PlayEffect Red
+	MinimapIcon 0 Red Circle
+
+Show # %H7 $type->currency $tier->b !currency_b
+	Class == "Incubators" "Stackable Currency"
+	BaseType == "Ancient Infuser" "Chaos Orb" "Greater Chaos Orb" "Greater Exalted Orb" "Perfect Orb of Augmentation" "Perfect Orb of Transmutation" "Preserved Rib"
+	SetFontSize 42
+	SetTextColor 0 0 0 255
+	SetBorderColor 0 0 0 255
+	SetBackgroundColor 245 105 90 255
+	PlayAlertSound 2 300
+	PlayEffect Yellow
+	MinimapIcon 1 Yellow Circle
+
+Show # %H6 $type->currency $tier->c !currency_c
+	Class == "Incubators" "Stackable Currency"
+	BaseType == "Chance Shard" "Exalted Orb" "Gemcutter's Prism" "Glassblower's Bauble" "Gnawed Collarbone" "Greater Jeweller's Orb" "Greater Orb of Transmutation" "Greater Regal Orb" "Orb of Alchemy" "Vaal Arcanist's Infuser" "Vaal Orb"
+	SetFontSize 42
+	SetTextColor 0 0 0 255
+	SetBorderColor 0 0 0 255
+	SetBackgroundColor 245 139 87 255
+	PlayAlertSound 2 300
+	PlayEffect White
+	MinimapIcon 1 Yellow Circle
+
+Show # %H5 $type->currency $tier->d !currency_d
+	Class == "Incubators" "Stackable Currency"
+	BaseType == "Armourer's Scrap" "Artificer's Orb" "Blacksmith's Whetstone" "Gnawed Jawbone" "Gnawed Rib" "Greater Orb of Augmentation" "Preserved Jawbone" "Regal Orb" "Vaal Siphoner"
+	SetFontSize 40
+	SetTextColor 0 0 0 255
+	SetBorderColor 0 0 0 255
+	SetBackgroundColor 240 180 100 255
+	PlayAlertSound 2 300
+	PlayEffect White
+	MinimapIcon 2 White Circle
+
+Show # %H3 $type->currency $tier->e !currency_e
+	Class == "Incubators" "Stackable Currency"
+	BaseType == "Arcanist's Etcher" "Lesser Jeweller's Orb"
+	SetFontSize 40
+	SetTextColor 240 207 132
+	SetBorderColor 240 207 132
+	PlayEffect White Temp
+	MinimapIcon 2 Grey Circle
+
+Show # %H2 $type->currency $tier->supplymagic !currency_supply2
+	Class == "Incubators" "Stackable Currency"
+	BaseType == "Alchemy Shard" "Artificer's Shard" "Orb of Augmentation" "Orb of Transmutation" "Regal Shard"
+	SetFontSize 38
+	SetTextColor 220 175 132
+	SetBorderColor 220 175 132
+
+Hide # %H1 $type->currency $tier->supplieslow !currency_supply4
+	Class == "Incubators" "Stackable Currency"
+	BaseType == "Scroll of Wisdom" "Transmutation Shard"
+"""
+
+
+def test_find_anchor_block_resolves_all_default_anchors_on_real_poe1_filter():
+    lines = _REAL_POE1_SEMI_STRICT_EXCERPT.split("\n")
+    blocks = filter_gen._parse_blocks(lines)
+    for tier_name, anchor in filter_gen._DEFAULT_RULES["anchors"].items():
+        block = filter_gen._find_anchor_block(blocks, lines, anchor)
+        assert block is not None, f"tier {tier_name} anchor {anchor!r} failed to resolve on real PoE1 data"
+        assert block.block_type == "Show"
+
+
+def test_find_anchor_block_resolves_all_default_anchors_on_real_poe2_filter():
+    lines = _REAL_POE2_SEMI_STRICT_EXCERPT.split("\n")
+    blocks = filter_gen._parse_blocks(lines)
+    for tier_name, anchor in filter_gen._DEFAULT_RULES["anchors"].items():
+        block = filter_gen._find_anchor_block(blocks, lines, anchor)
+        assert block is not None, f"tier {tier_name} anchor {anchor!r} failed to resolve on real PoE2 data"
+        assert block.block_type == "Show"
+
+
+def test_merge_currency_into_base_surgery_applies_on_real_poe1_filter():
+    """The actual regression: before the anchors["C"] fix, this returned
+    applied=False (tier C anchor unresolvable) and currency was left 100%
+    untouched in the real PoE1 base filter, every Generate run."""
+    tiers = {"S": ["Divine Orb"], "A": ["Exalted Orb"], "B": ["Chaos Orb"],
+             "C": ["Orb of Transmutation"]}
+    new_text, applied = filter_gen.merge_currency_into_base(
+        _REAL_POE1_SEMI_STRICT_EXCERPT, tiers, filter_gen.load_rules(None))
+    assert applied is True
+
+
+def test_merge_currency_into_base_surgery_still_applies_on_real_poe2_filter():
+    """Same real-data check on PoE2 -- guards against the C-anchor fix
+    accidentally regressing the game it was originally verified against."""
+    tiers = {"S": ["Divine Orb"], "A": ["Exalted Orb"], "B": ["Chaos Orb"],
+             "C": ["Orb of Transmutation"]}
+    new_text, applied = filter_gen.merge_currency_into_base(
+        _REAL_POE2_SEMI_STRICT_EXCERPT, tiers, filter_gen.load_rules(None))
+    assert applied is True
+
+
+def test_default_anchor_c_is_orb_of_transmutation_not_augmentation():
+    """Pins the actual fix: Orb of Transmutation resolves in both real
+    files, Orb of Augmentation only resolves on PoE2 (see module comment
+    above) -- using the latter as the *default* breaks PoE1 entirely."""
+    assert filter_gen._DEFAULT_RULES["anchors"]["C"] == "Orb of Transmutation"

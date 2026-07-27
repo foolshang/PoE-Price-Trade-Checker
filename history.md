@@ -5,6 +5,113 @@
 
 ---
 
+## 2026-07-27 (ต่ออีกรอบ) — filter_gen_rules.json merge แทน wholesale replace (v0.6.4)
+
+**สาเหตุที่ user สั่งให้แก้:** การแก้ anchor C ใน v0.6.3 ใช้ได้เฉพาะเครื่องที่
+ไม่เคยกด "Save Settings"/"Generate" มาก่อน — เครื่องไหนเคยกด `load_rules()`
+เดิม replace ทั้ง dict เมื่อไฟล์ valid ทำให้ค่าที่ save ไว้ตอนเก่า (รวม
+`anchors` ที่ UI ไม่เคยมีให้แก้เลย) บัง default ที่แก้ใหม่ไว้ตลอดไป ต้องแก้ที่
+root ไม่ใช่แค่ลบไฟล์ user รายคน
+
+**แก้ (`filter_gen.py`):**
+- `load_rules()`: เปลี่ยนจาก wholesale replace เป็น **merge เฉพาะ
+  `tiers[].min_chaos`** — ฟิลด์เดียวที่ Filter Generator UI จริงๆ ให้แก้ได้
+  ("Tier thresholds (chaos, fallback)") ฟิลด์อื่นทั้งหมด (`anchors`, สี,
+  เสียง, `min_divine_pct`, `max_count`, `divine_sanity_floor`) มาจาก
+  `_DEFAULT_RULES` ของโค้ดปัจจุบันเสมอ ไม่มีทางถูกไฟล์เก่าบังได้อีกต่อไป
+  ไฟล์ที่ไม่มี/อ่านไม่ได้/ไม่ใช่ JSON object ถือเป็น "ไม่มี override" เหมือนเดิม
+  ไม่ throw
+- `save_rules()`: เขียนแค่ `{"tiers": [{"name", "min_chaos"}, ...]}` ไม่ dump
+  `rules` ทั้งก้อนอีกต่อไป — `filter_window.py` **ไม่ต้องแก้เลย** เพราะยังส่ง
+  `self._rules` ทั้งก้อนมาเหมือนเดิม แต่ `save_rules` เป็นคนเลือกเองว่าจะเก็บ
+  แค่ส่วนไหน (single source of truth เรื่อง schema อยู่ที่ `filter_gen.py`)
+- ผลคือไฟล์เก่าที่ค้าง `anchors.C = "Orb of Augmentation"`/`hide_below`
+  ทุกเครื่องที่เคยกด Save **self-heal อัตโนมัติ** ตั้งแต่ครั้งแรกที่เปิด v0.6.4
+  โดยไม่ต้องลบไฟล์เอง — ยืนยันจริงบนเครื่อง dev: เขียนไฟล์ stale ตัวเดิม
+  เป๊ะกลับไปที่ `%LOCALAPPDATA%\PoePriceTrade\filter_gen_rules.json` แล้ว
+  `load_rules()` คืน `anchors["C"] == "Orb of Transmutation"` ถูกต้อง (ไม่ใช่
+  ค่าเก่าในไฟล์) แล้วลบไฟล์ทดสอบทิ้ง
+
+**Tests:** อัปเดต `test_save_then_load_rules_roundtrip` (roundtrip แค่
+`min_chaos` แล้ว ไม่ใช่ `divine_sanity_floor`), เพิ่ม
+`test_save_rules_only_persists_tier_min_chaos`,
+`test_load_rules_ignores_everything_except_tier_min_chaos` (จำลอง stale file
+เป๊ะจาก incident จริง ยืนยันว่าไม่บัง default ใหม่) — รวม 222/222 passed
+
+**ไฟล์ที่แก้:** `filter_gen.py` (`load_rules`/`save_rules`),
+`tests/test_filter_gen.py`, `__init__.py` (v0.6.3 → v0.6.4)
+
+---
+
+## 2026-07-27 (ต่อ) — แก้ PoE1 anchor resolution ไม่เจอ (root-caused ด้วยไฟล์จริง, v0.6.3)
+
+**บั๊กที่ user รายงาน:** v0.6.2 รันจริงแล้ว (ยืนยันจาก title bar) กด Generate
+บน PoE1 ยังขึ้น "รวม currency เข้ากับ base ไม่ได้ (หา anchor block ไม่เจอ)"
+เหมือนเดิม user สั่งห้ามเดา ให้ debug จากไฟล์จริงที่ checker cache ไว้เท่านั้น
+
+**Diagnostic ตามลำดับที่ user สั่ง:**
+1. โหลด `%LOCALAPPDATA%\PoePriceTrade\cache\neversink\poe1\8.20.0b_2.filter`
+   (ไฟล์ cache จริงที่ runtime ใช้ อ่านจาก `last_check.json` ยืนยัน tag ตรงกับ
+   ที่ generate จริงใช้) grep หา Divine/Exalted/Chaos/Orb of Augmentation
+   ทุก block จริง
+2. รัน `filter_gen._parse_blocks`/`_find_anchor_block` ปัจจุบันกับไฟล์นั้นตรงๆ
+   พบว่า S/A/B (Divine/Exalted/Chaos Orb) resolve ได้ปกติ (ข้าม
+   StackSize-gated block ถูกต้อง) แต่ **tier C anchor เดิม ("Orb of
+   Augmentation") resolve ไม่ได้เลย** — ใน filter จริงของ PoE1, "Orb of
+   Augmentation" ปรากฏแค่ใน block ที่มี `StackSize >= N` (leveling/
+   stackedsupplieslow, ถูกกันออกโดย `_block_matches_plain_single_item`
+   ถูกต้องแล้ว) กับ block `Hide` สุดท้าย (`$tier->t9armour`) เท่านั้น — ไม่มี
+   Show block เปล่าๆ ที่มีชื่อนี้เลยสักที่ ("Orb of Augmentation" verified
+   live 2026-07-24 กับไฟล์ PoE2 เท่านั้น ไม่เคยเช็คกับ PoE1 มาก่อน)
+3. **แก้ตามที่เห็นจริง:** เปลี่ยน `anchors["C"]` จาก "Orb of Augmentation" →
+   "Orb of Transmutation" — ยืนยันกับไฟล์จริงทั้งสองเกม: PoE1 มี Show block
+   จริง (`$tier->t8trans`, สีแทน ไม่มีเสียง) ที่มีชื่อนี้ตรงๆ ส่วน PoE2 ชื่อนี้
+   อยู่ **ใน block เดียวกัน** กับ "Orb of Augmentation" เป๊ะ (`$tier->
+   supplymagic`) — เปลี่ยนแล้ว resolve ไป block เดิมทุกประการ ไม่กระทบ PoE2
+   เลย (zero-risk swap, ยืนยันด้วยไฟล์จริงทั้งคู่ ไม่ใช่เดา)
+4. **Test fixture ตัดจากไฟล์จริง** (`tests/test_filter_gen.py`) —
+   `_REAL_POE1_SEMI_STRICT_EXCERPT` (บรรทัด 14912-15484 ของ
+   `8.20.0b_2.filter`, ครอบทุก StackSize-gated block + block เป้าหมายจริง
+   ของ S/A/B/C + Hide สุดท้าย) และ `_REAL_POE2_SEMI_STRICT_EXCERPT`
+   (บรรทัด 3406-3479 ของ `0.10.3_2.filter`) — ก็อปมาตรงๆ ไม่ตัดต่อ/ปรับแต่ง
+   เพิ่มเทส `test_find_anchor_block_resolves_all_default_anchors_on_real_
+   poe1/poe2_filter`, `test_merge_currency_into_base_surgery_applies_on_
+   real_poe1/poe2_filter`, `test_default_anchor_c_is_orb_of_transmutation_
+   not_augmentation` — รันก่อนแก้โค้ดยืนยันว่า fail จริงตรงกับอาการที่ user
+   รายงาน (3 เทส fail, PoE1 anchor C resolve ไม่ได้) แล้วแก้โค้ดแล้ว pass
+   ทั้ง 5 เทสใหม่ ปรับเทสเดิม 3 ตัวที่จำลอง "anchor unresolvable" ให้ break
+   ชื่อ "Orb of Transmutation" แทน "Orb of Augmentation" (ของเดิม break ผิด
+   ชื่อไปแล้วหลังเปลี่ยน default — เทสไม่ได้ทดสอบอะไรจริงอีกต่อไปถ้าไม่แก้)
+5. **รันจริงยืนยันบนเครื่อง dev (ไม่ใช่แค่ unit test):** จำลอง
+   `app.py._do_generate_filter(gv="poe1")` ทุกขั้นตอนตรงๆ ด้วย config/cache
+   จริง (`%LOCALAPPDATA%\PoePriceTrade`) + hub data สดจริงทาง network
+   (`hub_client.get_prices("poe1/prices/latest.json")`, 837 currency
+   entries, generated_at 2026-07-27T16:08:37Z) — **`surgery_applied =
+   True`** ไม่มี warning "หา anchor block ไม่เจอ" อีกแล้ว Divine Orb/Orb of
+   Transmutation ยืนยันอยู่ block จริงของ NeverSink ใน merged output
+
+**เจอเพิ่มระหว่าง verify (นอก scope เดิมแต่บล็อกการ verify จริง):**
+`%LOCALAPPDATA%\PoePriceTrade\filter_gen_rules.json` มี override เก่าค้างอยู่
+(บันทึกจากตอน user กด "Save Settings"/"Generate" บน build เก่าก่อนหน้านี้ —
+`_save()` ใน `filter_window.py` เขียนทั้ง `self._rules` ทับกลับไปดิสก์ทุกครั้ง
+รวม `anchors` ที่ไม่มี UI ให้แก้เลย) ค่าที่ค้างอยู่ตรงกับ default เก่าทุก field
+(`anchors.C = "Orb of Augmentation"`, `hide_below` ที่ถูกลบไปแล้วจาก v0.6.2)
+— `load_rules()` replace ทั้ง dict เมื่อไฟล์ valid จึงบัง fix นี้ไว้เงียบๆ ต่อไป
+เรื่อยๆ ถ้าไม่ล้าง ลบไฟล์นี้ทิ้งบนเครื่อง dev เพื่อให้ verify ข้อ 5 สะท้อน
+โค้ดจริง (ไม่ใช่ค่าที่ค้าง) ไม่ได้แก้ logic การ save/merge ของ
+`load_rules`/`save_rules` เพราะไม่ใช่สิ่งที่ user สั่งให้แก้ในรอบนี้ — ถ้า user
+เจอ anchor ผิดแบบเดิมอีกหลัง save settings บน build เก่า สาเหตุคือไฟล์นี้
+เช่นกัน (ลบทิ้งแล้ว regenerate ใหม่ได้)
+
+**ไฟล์ที่แก้:** `filter_gen.py` (`_DEFAULT_RULES["anchors"]["C"]` + comment),
+`tests/test_filter_gen.py` (fixture จริง + เทสใหม่ 5 ตัว + แก้เทสเดิม 3 ตัว),
+`__init__.py` (v0.6.2 → v0.6.3)
+
+**Tests:** 220/220 passed (ทั้ง repo) + real end-to-end run ยืนยันแยกต่างหาก
+ตามข้อ 5 ข้างบน (ไม่ใช่แค่ unit test)
+
+---
+
 ## 2026-07-27 — แก้ dim bucket กิน currency จริงในเกม (dead-economy incident, v0.6.2)
 
 **บั๊กที่ user รายงาน (แนบสกรีนช็อต):** Chaos Orb จากไฟล์ generated กลายเป็น
