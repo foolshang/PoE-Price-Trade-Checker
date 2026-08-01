@@ -91,3 +91,10 @@ def test_state_isolated_per_game(tmp_path):
     filter_output.save_state(tmp_path, "poe2", last_signature="two")
     assert filter_output.load_state(tmp_path, "poe1")["last_signature"] == "one"
     assert filter_output.load_state(tmp_path, "poe2")["last_signature"] == "two"
+
+
+def test_state_round_trip_last_mapping(tmp_path):
+    mapping = {"c:Divine Orb": "S", "u:Headhunter": "S"}
+    filter_output.save_state(tmp_path, "poe2", last_signature="abc123", last_mapping=mapping)
+    state = filter_output.load_state(tmp_path, "poe2")
+    assert state["last_mapping"] == mapping

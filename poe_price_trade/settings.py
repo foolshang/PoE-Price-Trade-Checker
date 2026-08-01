@@ -155,12 +155,17 @@ class SettingsWindow:
         tk.Label(f, text="(0.0–1.0, higher = stricter)", bg=_BG, fg="#888",
                  font=_SMALL_FONT).grid(row=1, column=2, sticky="w", padx=4)
 
+        self._lbl(f, "Close button (X):", 2, 0)
+        self._combo(f, "close_action", ["minimize", "exit"], 2, 1, width=10)
+        tk.Label(f, text="(minimize = hide to tray; falls back to exit if tray is unavailable)",
+                 bg=_BG, fg="#888", font=_SMALL_FONT).grid(row=2, column=2, sticky="w", padx=4)
+
     # ------------------------------------------------------------------
 
     def _load_from_config(self) -> None:
         str_keys = ("game_version", "hotkey_scan", "hotkey_trade",
                     "hotkey_settings", "hotkey_quit", "log_level", "match_threshold",
-                    "price_offset_px", "mod_badge_archetype")
+                    "price_offset_px", "mod_badge_archetype", "close_action")
         for key in str_keys:
             if key in self._vars:
                 self._vars[key].set(self._config.get(key, ""))
@@ -174,7 +179,7 @@ class SettingsWindow:
     def _apply(self) -> None:
         for key in ("game_version", "hotkey_scan", "hotkey_trade",
                     "hotkey_settings", "hotkey_quit", "log_level",
-                    "mod_badge_archetype"):
+                    "mod_badge_archetype", "close_action"):
             if key in self._vars:
                 self._config.set(key, self._vars[key].get())
 

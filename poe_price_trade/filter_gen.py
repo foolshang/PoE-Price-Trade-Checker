@@ -900,10 +900,12 @@ def is_stale(hub_data: dict, staleness_hours: float) -> bool:
     return age_hours > staleness_hours
 
 
-def signature(hub_data: dict, rules: dict) -> str:
-    """sha256 of the {name: tier} mapping (currency ∪ uniques) — lets the
-    auto-regen poll detect "did anything actually change tier" so a chaos
-    price wobbling a percent doesn't retrigger a regen."""
+def tier_mapping(hub_data: dict, rules: dict) -> dict[str, str]:
+    """{"c:"/"u:" + name: tier_name} for every currency/unique bucketed into
+    a tier (currency ∪ uniques) — the raw material both signature() (hashed,
+    for cheap "did anything change" checks) and diff_mapping_count() (for
+    "how many things changed", used by the auto-regen notification) build
+    on top of."""
     tiers = bucket_currency(hub_data, rules)
     uniq_tiers = bucket_uniques(hub_data, rules)
     mapping: dict[str, str] = {}
@@ -913,5 +915,23 @@ def signature(hub_data: dict, rules: dict) -> str:
     for tier_name, names in uniq_tiers.items():
         for n in names:
             mapping[f"u:{n}"] = tier_name
-    blob = json.dumps(mapping, sort_keys=True)
+    return mapping
+
+
+def signature(hub_data: dict, rules: dict) -> str:
+    """sha256 of tier_mapping() — lets the auto-regen poll detect "did
+    anything actually change tier" so a chaos price wobbling a percent
+    doesn't retrigger a regen."""
+    blob = json.dumps(tier_mapping(hub_data, rules), sort_keys=True)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def diff_mapping_count(old: dict[str, str], new: dict[str, str]) -> int:
+    """Number of names whose tier differs between two tier_mapping()
+    results, counting a name that only appears on one side (newly
+    tiered/dropped out of a tier) as changed too. Used for the auto-regen
+    notification's "N items changed tier" — deliberately not exposed via
+    signature() alone, since a hash only tells you *whether* something
+    changed, not how many."""
+    keys = set(old) | set(new)
+    return sum(1 for k in keys if old.get(k) != new.get(k))

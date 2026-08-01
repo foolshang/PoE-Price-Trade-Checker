@@ -5,6 +5,77 @@
 
 ---
 
+## 2026-08-01 — System tray support: minimize-to-tray, auto-regen notification (v0.7.0)
+
+**เหตุผล:** ผู้ใช้อยากได้พฤติกรรมแบบ Discord — X/minimize ย่อลง tray แทนปิด
+โปรแกรม (มี setting เลือกได้ว่า X = ปิดจริงหรือย่อ) และแจ้งเตือนตอน auto-regen
+เขียน filter ใหม่สำเร็จ ("Filter updated (N items changed tier) — reload in
+game") เพราะปกติมีแค่ log line ในหน้าต่างที่ผู้ใช้อาจไม่ได้มองอยู่
+
+**ทดสอบก่อนตัดสินใจสถาปัตยกรรม:** ยิง `pystray` balloon จริงตอน PoE รัน
+fullscreen บนเครื่อง dev — **balloon ไม่ขึ้น** (Windows Focus Assist "when
+playing a game" ระงับไว้ เห็นแค่ tooltip ไอคอนเวลา hover) เพราะฉะนั้น balloon
+เป็นได้แค่ช่องทางรอง ช่องทางหลักต้องเป็น in-game overlay ที่ใช้ร่วมกับ F4
+hover (`overlay.py`'s `PriceOverlay` — topmost + click-through, พิสูจน์แล้วว่า
+render ทับเกม fullscreen ได้จริง)
+
+**เลือก `pystray`+`Pillow`** แทน raw `ctypes`/`Shell_NotifyIcon` หลังเทียบ
+tradeoff กับ user โดยตรง (tray icon ต้องมี hidden window + message loop +
+WNDPROC + popup menu ของตัวเอง ซับซ้อนกว่า DPAPI/SHGetKnownFolderPath ที่มีอยู่
+เดิมมาก) — เป็น exception ที่สองต่อจาก `winrt` (OCR) ในกฎ stdlib-only เดิม
+
+**Safety net (ผู้ใช้ขอเพิ่มก่อนอนุมัติ plan):** `TrayIcon.start()` คืน
+`bool` — ถ้า tray init ล้มเหลว (ทดสอบจริงด้วยการลบ `icon.ico`) `App` เก็บเป็น
+`self._tray_ok = False` แล้ว X-button/minimize **fallback กลับไปพฤติกรรมเดิม
+ก่อนมี feature นี้ทันที** (X = ปิดจริงเสมอ, minimize = taskbar ปกติ) ไม่ใช่
+ทำให้หน้าต่างหายแบบเรียกคืนไม่ได้ — ยืนยันแล้วทั้งระดับ `tray.py` เดี่ยวๆ และ
+ระดับแอปเต็ม (log แสดง `Tray icon unavailable — falling back...` ถูกต้อง)
+
+**`WM_TASKBARCREATED` (Explorer restart):** เช็คซอร์สโค้ด `pystray` 0.19.5
+ที่ติดตั้งจริงแล้ว (`pystray/_win32.py:46,227,258`) — มี handler จัดการเองอยู่
+แล้ว (re-register ไอคอนเอง + opt-in ผ่าน `ChangeWindowMessageFilterEx` ให้รับ
+broadcast ได้แม้รันแบบ elevated) **ไม่ใช่ known limitation** ตามที่กังวลไว้
+ตอนแรก ไม่ต้องเขียนโค้ดจัดการเพิ่ม
+
+**ไฟล์ที่แตะ:**
+- `poe_price_trade/tray.py` (ใหม่) — wrap `pystray.Icon`, `start()`คืน
+  success/fail จริง (รอ `setup` callback ผ่าน `threading.Event` + timeout 2s),
+  `set_pending()` สลับไอคอน badge จุดแดง, `notify()` best-effort ไม่มีวัน raise
+- `tools/build_icon.py` (ใหม่) + `poe_price_trade/assets/icon.ico` (ใหม่,
+  generate ด้วย Pillow, ไม่มี asset ภายนอก)
+- `app.py` — `_on_close_button`/`_on_unmap` เช็ค `self._tray_ok` ก่อนเสมอ,
+  auto-regen notification (`_filter_regen_check` → `_do_generate_filter`
+  รับ `notify_change_count` optional → `_on_auto_regen_notify`) ยิงเฉพาะ path
+  auto-regen เท่านั้น ไม่ยิงตอน manual generate (ทั้งปุ่มในแอปและเมนู tray)
+- `filter_gen.py` — เพิ่ม `tier_mapping()` (แยกออกมาจาก `signature()` เดิม)
+  และ `diff_mapping_count()` สำหรับนับ "N items changed tier" จริง (hash
+  เดิมบอกได้แค่ "เปลี่ยนหรือไม่เปลี่ยน" นับจำนวนไม่ได้)
+- `config.py` (`close_action` default), `settings.py` (Advanced tab),
+  `requirements.txt` (`pystray`, `Pillow`), `.spec` (icon= + datas + pystray
+  hiddenimport — ปรากฏว่า `pyinstaller-hooks-contrib` มี hook ของ `pystray`
+  เองอยู่แล้วด้วย เจอตอน build จริง)
+
+**บั๊กที่เจอจาก manual build จริง (คุ้มมากที่ทดสอบก่อนถือว่าเสร็จ):**
+`_asset_path()` ตอน frozen ใช้ `sys._MEIPASS/assets/icon.ico` แต่ PyInstaller
+onefile เก็บ `datas` ตาม path สัมพัทธ์จาก source จริง (`poe_price_trade/assets/`)
+ทำให้ exe จริงหา icon ไม่เจอ (`_MEI.../assets/icon.ico` ไม่มีจริง ต้องเป็น
+`_MEI.../poe_price_trade/assets/icon.ico`) — source run ไม่เจอปัญหานี้เพราะ
+`Path(__file__).parent` ไม่มี prefix `poe_price_trade` อยู่แล้ว ดังนั้น
+"รันจาก source ผ่าน" ไม่ได้แปลว่า exe จริงจะผ่านด้วย ต้อง build+รัน exe จริง
+เพื่อยืนยัน แก้แล้ว build ใหม่ยืนยันว่า tray init สำเร็จจากทั้ง source และ exe
+
+**Tests:** เพิ่ม `test_tier_mapping_matches_what_signature_hashes`,
+`test_diff_mapping_count_*` (4 เคส: identical/wobble/tier-change/add-remove)
+ใน `test_filter_gen.py`, `test_state_round_trip_last_mapping` ใน
+`test_filter_output.py` — รวม 228/228 passed
+
+**ยังไม่ทดสอบ (ต้องมือจริงกดใน UI):** left-click restore, right-click menu
+ทั้ง 4 item, การันตี fullscreen overlay ทับเกมจริงตอน auto-regen (ช่องทางหลัก
+ที่ทั้ง feature นี้มีไว้เพื่อสิ่งนี้), cold-start suppress-first-notification —
+รายการเต็มอยู่ใน plan file ตอน implement (`sparkling-purring-balloon.md`)
+
+---
+
 ## 2026-07-27 (ต่ออีกรอบ) — filter_gen_rules.json merge แทน wholesale replace (v0.6.4)
 
 **สาเหตุที่ user สั่งให้แก้:** การแก้ anchor C ใน v0.6.3 ใช้ได้เฉพาะเครื่องที่

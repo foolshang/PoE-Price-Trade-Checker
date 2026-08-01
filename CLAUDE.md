@@ -65,3 +65,26 @@ text/frame ออกแล้วหลัง user ทดสอบจริงแ
   setting ปกติใน config.json (`mod_badge_archetype`)
 - PoE1: hub ไม่มี `poe1/meta/latest.json` เลย → `ModBadgeDB.available()` เป็น
   False เสมอ → badge ไม่ขึ้นแบบเงียบๆ ไม่ error — by design ไม่ใช่บั๊ก
+
+## System tray (v0.7.0+)
+
+`poe_price_trade/tray.py` (`pystray`+`Pillow` — exception ที่สองต่อจาก
+`winrt` ในกฎ stdlib-only เดิม) X/minimize ย่อลง tray แทนปิด (setting
+`close_action` เลือกได้) **ต้องเช็ค `App._tray_ok` ก่อนเสมอ** — ถ้า
+`TrayIcon.start()` fail (icon asset หาย/shell ใช้ไม่ได้) ต้อง fallback กลับ
+พฤติกรรมเดิมก่อนมี tray (X = ปิดจริง, minimize = taskbar ปกติ) ห้ามปล่อยให้
+หน้าต่างหายแบบเรียกคืนไม่ได้
+
+**Auto-regen notification มี 2 ช่องทาง ไม่ใช่ 1** — tray balloon
+(`TrayIcon.notify()`) เป็นแค่ช่องทางรอง เพราะทดสอบจริงแล้วว่า Windows Focus
+Assist ระงับ balloon ตอนเกม fullscreen (ช่วงเวลาที่ notification นี้สำคัญ
+ที่สุด) ช่องทางหลักคือ in-game overlay ผ่าน `PriceOverlay.show_message()`
+(`overlay.py` ตัวเดียวกับที่ F4 hover ใช้ — topmost+click-through พิสูจน์แล้ว
+ว่า render ทับเกม fullscreen ได้จริง) ยิงเฉพาะตอน auto-regen เท่านั้น (ไม่ยิง
+ตอน manual generate ทั้งปุ่มในแอปและเมนู tray)
+
+Frozen-exe asset path เป็นกับดัก: `sys._MEIPASS` ของ PyInstaller onefile เก็บ
+`datas` ตาม path สัมพัทธ์จาก source (`poe_price_trade/assets/...`) — source
+run (`Path(__file__).parent`) ไม่เจอปัญหานี้เพราะไม่มี prefix `poe_price_trade`
+อยู่แล้ว ดังนั้น "รันจาก source ผ่าน" ไม่ยืนยันว่า exe จริงจะผ่าน ต้อง build+
+รัน exe จริงเช็คเสมอเวลาแก้ asset loading (`tray.py`'s `_asset_path()`)

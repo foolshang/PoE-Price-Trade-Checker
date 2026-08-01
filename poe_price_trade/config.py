@@ -30,6 +30,7 @@ _DEFAULTS: dict = {
     "match_threshold": 0.80,
     "log_level": "INFO",
     "mod_badge_archetype": "all",
+    "close_action": "minimize",
     "filter_gen": {
         "strictness_poe1": 2, "strictness_poe2": 2,
         "sound_s": "", "sound_a": "", "sound_b": "",

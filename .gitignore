@@ -5,6 +5,10 @@ __pycache__/
 dist/
 build/
 *.spec
+# PoE-Price-Trade-Checker.spec is real build config (icon/datas/hiddenimports
+# needed to produce a working .exe), not a PyInstaller-generated throwaway —
+# track it despite the blanket *.spec rule above.
+!PoE-Price-Trade-Checker.spec
 *.egg-info/
 .pytest_cache/
 *.log

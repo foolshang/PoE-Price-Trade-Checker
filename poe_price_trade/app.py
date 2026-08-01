@@ -27,6 +27,7 @@ from . import mod_badge
 from .mod_badge import ModBadgeDB
 from . import filter_gen, filter_output, neversink_source
 from .filter_window import FilterGenWindow
+from .tray import TrayIcon
 
 log = logging.getLogger(__name__)
 
@@ -64,7 +65,8 @@ class App:
         self._root.title(f"PoE Price & Trade Checker  v{__version__}")
         self._root.configure(bg="#1C1C1C")
         self._root.resizable(False, False)
-        self._root.protocol("WM_DELETE_WINDOW", self._quit)
+        self._root.protocol("WM_DELETE_WINDOW", self._on_close_button)
+        self._root.bind("<Unmap>", self._on_unmap)
 
         sw, sh = get_screen_size()
         log.info("Screen: %dx%d", sw, sh)
@@ -90,6 +92,7 @@ class App:
         self._hover_shown_key = ""
         self._safety_timer = None
         self._motion = None  # MotionWatcher
+        self._notif_token = 0  # guards the auto-regen overlay notification's auto-hide timer
 
         self._build_ui()
         self._build_overlay()
@@ -106,6 +109,16 @@ class App:
 
         self._fetch_leagues_for_current_gv(auto_pick=self._config.get("auto_league", True))
         self._root.after(60000, self._poll_filter_regen)
+
+        self._tray = TrayIcon(
+            on_show=lambda: self._root.after_idle(self._show_from_tray),
+            on_generate_now=lambda: self._root.after_idle(lambda: self._generate_filter(False)),
+            on_open_settings=lambda: self._root.after_idle(self._open_settings_from_tray),
+            on_quit=lambda: self._root.after_idle(self._quit),
+        )
+        self._tray_ok = self._tray.start()
+        if not self._tray_ok:
+            log.warning("Tray icon unavailable — falling back to normal window close/minimize")
 
     # ------------------------------------------------------------------
     # Build UI
@@ -688,9 +701,14 @@ class App:
         threading.Thread(target=self._do_generate_filter, args=(force_base,),
                          daemon=True, name="FilterGen").start()
 
-    def _do_generate_filter(self, force_base: bool) -> None:
+    def _do_generate_filter(self, force_base: bool, notify_change_count: Optional[int] = None) -> None:
         """Runs off the Tk thread — safe to call directly from another
-        background thread (auto-regen) without an extra thread hop."""
+        background thread (auto-regen) without an extra thread hop.
+
+        notify_change_count: only set by the automatic timer path
+        (_filter_regen_check) — manual generates (button, tray "Generate
+        Now") leave it None and never fire the auto-regen notification, per
+        spec ("balloon...เมื่อ auto-regen สำเร็จ", not manual generates)."""
         gv = self._gv_var.get()
         league = self._league_var.get()
         path = self._league_paths.get(league) or f"{gv}/prices/latest.json"
@@ -716,6 +734,7 @@ class App:
 
         generated_section = ""
         new_sig = None
+        new_mapping = None
         if hub_data is not None:
             staleness_hours = float(fg_cfg.get("staleness_hours", 24))
             if filter_gen.is_stale(hub_data, staleness_hours):
@@ -736,6 +755,7 @@ class App:
                 copied = filter_output.copy_sounds(out_dir, sound_map)
                 generated_section, base_text, surgery_applied = filter_gen.build_filter(
                     hub_data, rules, base_text, copied)
+                new_mapping = filter_gen.tier_mapping(hub_data, rules)
                 new_sig = filter_gen.signature(hub_data, rules)
                 if surgery_applied:
                     self._root.after_idle(lambda: self._win_log(
@@ -753,7 +773,9 @@ class App:
             self._root.after_idle(
                 lambda: self._win_log("Filter updated — reload in game (Options → Game)", "ok"))
             filter_output.save_state(app_dir, gv, last_generated_at=datetime.now().isoformat(),
-                                     last_signature=new_sig, base_tag=tag)
+                                     last_signature=new_sig, last_mapping=new_mapping, base_tag=tag)
+            if notify_change_count is not None:
+                self._root.after_idle(lambda c=notify_change_count: self._on_auto_regen_notify(c))
         except ValueError as e:
             self._root.after_idle(lambda err=e: self._win_log(f"✗ {err} — ไฟล์เดิมไม่ถูกแตะ", "err"))
         except Exception as e:
@@ -803,8 +825,12 @@ class App:
             if sig == state.get("last_signature"):
                 return
 
-            debug.event(f"filter auto-regen: signature changed gv={gv} league={league}")
-            self._do_generate_filter(False)
+            new_mapping = filter_gen.tier_mapping(hub_data, rules)
+            old_mapping = state.get("last_mapping")
+            changed = None if old_mapping is None else filter_gen.diff_mapping_count(old_mapping, new_mapping)
+
+            debug.event(f"filter auto-regen: signature changed gv={gv} league={league} changed={changed}")
+            self._do_generate_filter(False, notify_change_count=changed)
         except Exception:
             log.exception("filter auto-regen check failed")
         finally:
@@ -840,6 +866,7 @@ class App:
         self._clear_all()
         if self._hotkeys:
             self._hotkeys.stop()
+        self._tray.stop()
         if self._mutex:
             ctypes.windll.kernel32.ReleaseMutex(self._mutex)
             ctypes.windll.kernel32.CloseHandle(self._mutex)
@@ -847,3 +874,62 @@ class App:
 
     def run(self) -> None:
         self._root.mainloop()
+
+    # ------------------------------------------------------------------
+    # System tray
+    # ------------------------------------------------------------------
+
+    def _on_close_button(self) -> None:
+        """WM_DELETE_WINDOW (the X button). Only hides to tray if the tray
+        actually started — otherwise there'd be no way to bring the window
+        back, so X falls back to its pre-tray behavior (exit)."""
+        if self._tray_ok and self._config.get("close_action", "minimize") == "minimize":
+            self._root.withdraw()
+        else:
+            self._quit()
+
+    def _on_unmap(self, _event=None) -> None:
+        """Fires on any window unmap, including the native minimize button
+        (state()=="iconic") — but also for unrelated reasons, hence the
+        state check. No tray → do nothing, leaving Tk's normal taskbar
+        minimize untouched (the window stays reachable via the taskbar)."""
+        if not self._tray_ok:
+            return
+        if self._root.state() == "iconic":
+            self._root.withdraw()
+
+    def _show_from_tray(self) -> None:
+        self._root.deiconify()
+        self._root.lift()
+        self._root.focus_force()
+        self._tray.set_pending(False)
+
+    def _open_settings_from_tray(self) -> None:
+        self._show_from_tray()
+        self._open_settings()
+
+    # ------------------------------------------------------------------
+    # Auto-regen notification (tray balloon = secondary, in-game overlay =
+    # primary — a live test confirmed Windows suppresses the tray balloon
+    # while a fullscreen game has Focus Assist active, so it can't be relied
+    # on as the only channel; PriceOverlay is already proven to render on
+    # top of a fullscreen PoE via the F4 hover feature)
+    # ------------------------------------------------------------------
+
+    def _on_auto_regen_notify(self, count: int) -> None:
+        msg = f"Filter updated ({count} items changed tier) — reload in game"
+        self._tray.notify("PoE Price & Trade Checker", msg)
+        self._tray.set_pending(True)
+
+        if self._scan_active:
+            return  # don't steal the shared overlay out from under a live F4 hover
+
+        self._notif_token += 1
+        token = self._notif_token
+        sw, sh = get_screen_size()
+        self._overlay.show_message(msg, sw - 480, sh - 80, color="#88DD88")
+        self._root.after(6000, lambda t=token: self._hide_notif_if_current(t))
+
+    def _hide_notif_if_current(self, token: int) -> None:
+        if token == self._notif_token:
+            self._overlay.hide()

@@ -1,6 +1,7 @@
 """Tests for filter_gen.py — fixtures shaped like the live hub payload
 (category/base/chaos_value fields), same unittest.mock.patch style as
 test_hub_client.py where applicable."""
+import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 
@@ -447,6 +448,59 @@ def test_signature_changes_when_a_name_actually_changes_tier():
     sig_a = filter_gen.signature(data_a, _rules())
     sig_b = filter_gen.signature(data_b, _rules())
     assert sig_a != sig_b
+
+
+# ---------------------------------------------------------------------------
+# tier_mapping / diff_mapping_count (auto-regen notification's "N items
+# changed tier" count — see app.py's _filter_regen_check)
+# ---------------------------------------------------------------------------
+
+def test_tier_mapping_matches_what_signature_hashes():
+    data = _hub_data()
+    rules = _rules()
+    mapping = filter_gen.tier_mapping(data, rules)
+    blob = json.dumps(mapping, sort_keys=True)
+    expected_sig = hashlib.sha256(blob.encode("utf-8")).hexdigest()
+    assert filter_gen.signature(data, rules) == expected_sig
+
+
+def test_diff_mapping_count_zero_for_identical_mappings():
+    mapping = filter_gen.tier_mapping(_hub_data(), _rules())
+    assert filter_gen.diff_mapping_count(mapping, dict(mapping)) == 0
+
+
+def test_diff_mapping_count_zero_for_price_wobble_within_same_tier():
+    rules = _rules()
+    data_a = _hub_data()
+    data_b = _hub_data(currency=[
+        {"category": "Currency", "name": "Divine Orb", "base": None, "chaos_value": 205.0},  # still S
+        {"category": "Currency", "name": "Chaos Orb", "base": None, "chaos_value": 1.0},
+        {"category": "Fragment", "name": "Sacrifice Fragment", "base": None, "chaos_value": 25.0},
+        {"category": "Essence", "name": "Deafening Essence of Greed", "base": None, "chaos_value": 0.1},
+    ])
+    old = filter_gen.tier_mapping(data_a, rules)
+    new = filter_gen.tier_mapping(data_b, rules)
+    assert filter_gen.diff_mapping_count(old, new) == 0
+
+
+def test_diff_mapping_count_counts_tier_change():
+    rules = _rules()
+    data_a = _hub_data()
+    data_b = _hub_data(currency=[
+        {"category": "Currency", "name": "Divine Orb", "base": None, "chaos_value": 3.0},  # S -> B
+        {"category": "Currency", "name": "Chaos Orb", "base": None, "chaos_value": 1.0},
+        {"category": "Fragment", "name": "Sacrifice Fragment", "base": None, "chaos_value": 25.0},
+        {"category": "Essence", "name": "Deafening Essence of Greed", "base": None, "chaos_value": 0.1},
+    ])
+    old = filter_gen.tier_mapping(data_a, rules)
+    new = filter_gen.tier_mapping(data_b, rules)
+    assert filter_gen.diff_mapping_count(old, new) == 1
+
+
+def test_diff_mapping_count_counts_additions_and_removals():
+    old = {"c:Divine Orb": "S", "c:Exalted Orb": "A"}
+    new = {"c:Divine Orb": "S", "c:Chaos Orb": "B"}  # Exalted removed, Chaos added
+    assert filter_gen.diff_mapping_count(old, new) == 2
 
 
 # ---------------------------------------------------------------------------
