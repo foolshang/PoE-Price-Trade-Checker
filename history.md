@@ -5,6 +5,84 @@
 
 ---
 
+## 2026-08-08 — Currency anchor candidate lists: fix recurring resolution failures (v0.7.1)
+
+**Why:** Switching PoE1 to strictness 3 (STRICT) broke tier C's currency
+anchor again — same failure mode as the 2026-07-27 "Orb of Augmentation"
+incident (v0.6.3-0.6.4), just at a different strictness level. Root cause is
+systemic, not a one-off wrong name: `_DEFAULT_RULES["anchors"]` used a single
+fixed BaseType per tier, and that's inherently fragile across 14 real
+NeverSink files (2 games x 7 strictness levels 0-6) — the same tier's
+representative item sits in a different block (or no ordinary Show block at
+all) depending on game/strictness.
+
+**Fix (filter_gen.py):**
+- `_DEFAULT_RULES["anchors"]` changed from `{tier: name}` to `{tier: [name,
+  ...]}` — an ordered list of fallback candidates per tier, tried in order
+  via the new `_resolve_anchor()` helper. Plain strings are still accepted
+  everywhere an anchor is passed (treated as a one-item list), so existing
+  overrides/tests using a bare string keep working.
+- `merge_currency_into_base()` now resolves each of S/A/B/C independently
+  instead of all-or-nothing: a tier whose candidates all fail to resolve is
+  skipped (left exactly as NeverSink's base filter already has it) without
+  failing the merge for the other tiers. `applied=False` only when *none* of
+  the four tiers resolve at all.
+- New `resolve_anchors(base_text, anchors)` — standalone per-tier resolution
+  status ({tier: resolved_name_or_None}), used by `build_filter()` (now
+  returns a 4-tuple including this) and by the new verification script.
+- `apply_base_filter_sounds()` / `resolve_real_styles()` updated to resolve
+  through the same candidate-list logic.
+- `app.py`'s Generate log message now reports which tiers resolved and which
+  were skipped, instead of one lumped ok/warn line.
+
+**Candidate lists (verified against all 14 real files, see below):**
+```
+S: ["Divine Orb", "Mirror of Kalandra"]
+A: ["Exalted Orb", "Chaos Orb"]
+B: ["Chaos Orb", "Vaal Orb", "Regal Orb"]
+C: ["Orb of Transmutation", "Orb of Augmentation", "Scroll of Wisdom",
+    "Orb of Alchemy", "Chromatic Orb"]
+```
+S/A/B's first candidate alone already resolves on all 14 files (Divine/
+Exalted/Chaos Orb are never hidden at any real strictness); the rest is
+defensive slack. C is the tier that actually needs the fallback chain:
+"Orb of Transmutation" only holds through SEMI-STRICT (0-2); STRICT+ (3-5)
+falls through to "Orb of Alchemy"; PoE1's UBER-PLUS-STRICT (6) hides every
+dedicated low-currency block outright, so C only resolves there via
+"Chromatic Orb" (still bundled into the same Show block as Chaos/Exalted
+Orb at that strictness, rather than hidden).
+
+**Verification — new `tools/verify_anchors.py`:** downloads all 14 real
+NeverSink base filters (both games, strictness 0-6) through the app's own
+`neversink_source.fetch_base_filter`, resolves every tier's anchor on each
+via `filter_gen.resolve_anchors`, and fails loudly (non-zero exit, full
+per-file/per-tier matrix printed) unless every tier resolves on every file.
+Run for real against the live GitHub releases (not a single cached file) as
+part of this fix:
+
+```
+14 file(s) checked, 0 tier-resolution failure(s), 0 fetch failure(s)
+OK: every tier resolved on all 14 real NeverSink files.
+```
+
+**Files touched:** `poe_price_trade/filter_gen.py`, `poe_price_trade/app.py`,
+`tests/test_filter_gen.py`, `tools/verify_anchors.py` (new),
+`poe_price_trade/__init__.py` (version bump)
+
+**Tests:** 84/84 in `test_filter_gen.py`, 230/230 across the full suite.
+Rewrote the tests that encoded the old all-or-nothing behavior
+(`test_merge_currency_into_base_falls_back_when_an_anchor_is_unresolvable`,
+`test_build_filter_anchor_unresolvable_never_emits_our_own_currency`,
+`test_build_filter_partial_real_styles_even_when_surgery_fails`) into
+pairs that instead assert the new per-tier-skip behavior (one tier
+unresolvable doesn't sink the others) and the true all-unresolvable case.
+
+**Pending:** in-game F5/F4 regression pass not re-run this session (no
+Filter Generator UI surface changed, only the anchor resolution logic
+underneath it — covered by the real-data verification script instead).
+
+---
+
 ## 2026-08-01 — System tray support: minimize-to-tray, auto-regen notification (v0.7.0)
 
 **เหตุผล:** ผู้ใช้อยากได้พฤติกรรมแบบ Discord — X/minimize ย่อลง tray แทนปิด

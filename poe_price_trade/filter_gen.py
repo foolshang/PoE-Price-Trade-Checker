@@ -105,22 +105,45 @@ _DEFAULT_RULES: dict = {
     # BaseTypes directly into NeverSink's own blocks instead of emitting our
     # own).
     #
-    # "C" = "Orb of Transmutation", not "Orb of Augmentation" — the latter
-    # was only ever verified against PoE2's filter (2026-07-24) and broke
-    # PoE1 entirely (live 2026-07-27: every PoE1 Generate logged "หา anchor
-    # block ไม่เจอ" and currency surgery never ran at all). Root-caused
-    # against the real cached filters: in PoE1's Semi-Strict filter, "Orb of
-    # Augmentation" only ever appears inside StackSize-gated "leveling"/
-    # "stackedsupplieslow" blocks or the final catch-all Hide block — never
-    # in an ordinary Show block — so it's genuinely unresolvable there, not
-    # a parser bug. "Orb of Transmutation" resolves cleanly on both real
-    # files: it's PoE1's actual lowest ordinary currency tier (small font,
-    # muted tan, no sound — same visual role "Orb of Augmentation" plays on
-    # PoE2), and on PoE2 it sits in the *exact same block* as "Orb of
-    # Augmentation" (verified: both names resolve to an identical block
-    # start in the real 0.10.3 filter), so this is a zero-risk swap for
-    # PoE2. See the real-data regression tests in test_filter_gen.py.
-    "anchors": {"S": "Divine Orb", "A": "Exalted Orb", "B": "Chaos Orb", "C": "Orb of Transmutation"},
+    # Each tier maps to an *ordered list* of candidate BaseTypes, not one
+    # fixed name — changed 2026-08-08 after a second, more general anchor
+    # failure: switching PoE1 to strictness 3 (STRICT) broke tier C's single
+    # "Orb of Transmutation" anchor again, the same failure mode as the
+    # 2026-07-27 "Orb of Augmentation" incident (see git history), just at a
+    # different strictness. A single anchor name for a tier is inherently
+    # fragile across 14 real NeverSink files (2 games x 7 strictness levels,
+    # verified live 2026-08-08 — see tools/verify_anchors.py): NeverSink
+    # reshuffles which BaseTypes share a block, and higher strictness levels
+    # genuinely Hide low-value currency outright (no ordinary Show block for
+    # it at all), so any single fixed name can and will stop resolving on
+    # some (game, strictness) combination sooner or later. _resolve_anchor
+    # tries each tier's candidates in order and uses the first that resolves
+    # to a real Show block (_find_anchor_block); a bare string is still
+    # accepted everywhere an anchor is passed (single-candidate list of one).
+    #
+    # Ordered "closest semantic fit" first, then progressively safer
+    # fallbacks confirmed to still land in a reasonable (same-or-more-
+    # prominent, never a *lower* tier's block) Show block on every one of the
+    # 14 real files: S/A/B's first candidate alone already resolves on all
+    # 14 (Divine/Exalted/Chaos Orb are never hidden at any real strictness
+    # level), so their extra entries are pure defensive slack. C is the tier
+    # that actually needs the fallback chain in practice — "Orb of
+    # Transmutation" only holds through SEMI-STRICT (0-2) on both games;
+    # STRICT+ (3-5) falls through to "Orb of Alchemy" (still an ordinary,
+    # if less cheap, currency block on both games at those levels); PoE1's
+    # UBER-PLUS-STRICT (6) hides every dedicated low-currency block, so C
+    # only resolves there via "Chromatic Orb", which UBER-PLUS-STRICT still
+    # bundles into the same Show block as Chaos/Exalted Orb rather than
+    # hiding — landing tier C's currency there is preferable to skipping it
+    # outright (see merge_currency_into_base's per-tier skip: a tier is only
+    # ever left untouched when *none* of its candidates resolve at all).
+    "anchors": {
+        "S": ["Divine Orb", "Mirror of Kalandra"],
+        "A": ["Exalted Orb", "Chaos Orb"],
+        "B": ["Chaos Orb", "Vaal Orb", "Regal Orb"],
+        "C": ["Orb of Transmutation", "Orb of Augmentation", "Scroll of Wisdom",
+              "Orb of Alchemy", "Chromatic Orb"],
+    },
 }
 
 
@@ -286,6 +309,47 @@ def _find_anchor_block(blocks: list, lines: list, anchor_name: str) -> Optional[
     return None
 
 
+def _resolve_anchor(blocks: list, lines: list, candidates) -> Optional[tuple]:
+    """(block, resolved_name) for the first of `candidates` (tried in file-
+    declaration order) that resolves via _find_anchor_block — the shared
+    fallback-chain logic behind every anchor consumer (apply_base_filter_sounds,
+    resolve_real_styles, merge_currency_into_base, resolve_anchors), so
+    "which candidate a tier actually resolved to" always means the same
+    thing everywhere. `candidates` may be a single anchor name (back-compat
+    with plain-string overrides, e.g. in tests) or an ordered list — see
+    _DEFAULT_RULES["anchors"] for why a single name per tier isn't resilient
+    across real NeverSink files. None if none of the candidates resolve."""
+    if isinstance(candidates, str):
+        candidates = [candidates]
+    for name in candidates or []:
+        block = _find_anchor_block(blocks, lines, name)
+        if block is not None:
+            return block, name
+    return None
+
+
+def resolve_anchors(base_text: Optional[str], anchors: dict) -> dict:
+    """{tier_name: resolved_anchor_name_or_None} — the per-tier candidate
+    resolution merge_currency_into_base/apply_base_filter_sounds/
+    resolve_real_styles each perform internally, exposed standalone so a
+    caller can report *which* tier(s) failed instead of one lumped pass/
+    fail (the Filter Generator's status log, tools/verify_anchors.py). A
+    tier mapping to None here means every one of its candidates failed to
+    resolve on this base filter — merge_currency_into_base leaves that
+    tier's currency wherever NeverSink's own filter already has it rather
+    than failing the whole merge. {every tier: None} if base_text is
+    falsy."""
+    if not base_text:
+        return {name: None for name in anchors}
+    lines = base_text.split("\n")
+    blocks = _parse_blocks(lines)
+    status: dict = {}
+    for tier_name, candidates in anchors.items():
+        resolved = _resolve_anchor(blocks, lines, candidates)
+        status[tier_name] = resolved[1] if resolved else None
+    return status
+
+
 def _stacksize_excludes_single_item(op: Optional[str], n: int) -> bool:
     """Whether a lone (StackSize 1) item drop would fail this StackSize
     condition — e.g. "StackSize >= 2" excludes it, "StackSize <= 1" or
@@ -343,14 +407,16 @@ def _block_sound_directive(lines: list) -> Optional[tuple]:
     return None
 
 
-def _find_anchor_sound(base_text: str, anchor_name: str) -> Optional[tuple]:
-    """(kind, raw_directive_text) from the anchor's resolved block (see
-    _find_anchor_block) — None if the anchor can't be resolved to a
-    qualifying Show block at all, or that block has no sound line."""
+def _find_anchor_sound(base_text: str, anchor_candidates) -> Optional[tuple]:
+    """(kind, raw_directive_text) from the first candidate's resolved block
+    (see _resolve_anchor) — None if no candidate resolves to a qualifying
+    Show block at all, or that block has no sound line. `anchor_candidates`
+    is a single name or an ordered fallback list, same as everywhere else."""
     lines = base_text.split("\n")
-    block = _find_anchor_block(_parse_blocks(lines), lines, anchor_name)
-    if block is None:
+    resolved = _resolve_anchor(_parse_blocks(lines), lines, anchor_candidates)
+    if resolved is None:
         return None
+    block, _name = resolved
     return _block_sound_directive(lines[block.start + 1:block.end])
 
 
@@ -382,8 +448,8 @@ def apply_base_filter_sounds(rules: dict, base_text: Optional[str],
             continue
         found = _find_anchor_sound(base_text, anchor)
         if found is None:
-            log.warning("Filter sound inherit: anchor '%s' for tier %s not found (or only in a "
-                       "Hide rule) in base filter — using rules-file default", anchor, name)
+            log.warning("Filter sound inherit: no candidate of %r for tier %s resolved (not found, "
+                       "or only in a Hide rule) in base filter — using rules-file default", anchor, name)
             continue
         kind, raw = found
         tier_cfg["sound"] = {"kind": kind, "raw": raw}
@@ -449,24 +515,36 @@ def merge_currency_into_base(base_text: str, currency_tiers: dict, rules: dict,
     `base_text` is always freshly (re-)fetched from NeverSink upstream, not
     our own previously-merged output.
 
+    Per-tier resolution, not all-or-nothing (changed 2026-08-08 — see
+    _DEFAULT_RULES["anchors"] for the incident this fixes): each of S/A/B/C
+    tries its own candidate list independently via _resolve_anchor. A tier
+    whose candidates all fail to resolve is simply skipped — its currency is
+    left wherever NeverSink's base filter already has it, exactly like an
+    untiered name — while every other tier that *did* resolve still merges
+    normally. Use resolve_anchors(base_text, anchor_map) if a caller needs to
+    know *which* tier(s) were skipped, e.g. for a status message.
+
     Returns (new_text, applied). applied=False (new_text == base_text,
-    completely unmodified) if any of S/A/B/C's anchor can't be resolved to a
-    qualifying Show block — a partial relocation (some tiers hub-driven,
-    others not) would be worse than the caller falling back to the old
-    generated-Show-block approach for all of currency."""
+    completely unmodified) only when *none* of S/A/B/C's candidates resolve
+    to a qualifying Show block at all — nothing to merge into."""
     anchor_map = anchors if anchors is not None else rules.get("anchors", _DEFAULT_RULES["anchors"])
     lines = base_text.split("\n")
     blocks = _parse_blocks(lines)
 
     target_blocks: dict = {}
     for tier_name in ("S", "A", "B", "C"):
-        anchor = anchor_map.get(tier_name)
-        if not anchor:
-            return base_text, False
-        block = _find_anchor_block(blocks, lines, anchor)
-        if block is None:
-            return base_text, False
-        target_blocks[tier_name] = block
+        candidates = anchor_map.get(tier_name)
+        resolved = _resolve_anchor(blocks, lines, candidates) if candidates else None
+        if resolved is None:
+            log.warning("Currency surgery: no anchor candidate resolved for tier %s (tried %r) — "
+                       "that tier's currency is left wherever NeverSink's base filter already has "
+                       "it; any other tier that did resolve still merges normally",
+                       tier_name, candidates)
+            continue
+        target_blocks[tier_name], _resolved_name = resolved
+
+    if not target_blocks:
+        return base_text, False
 
     # Baseline placement, read from the anchor blocks' original (unmutated)
     # basetype_names — see never-demote guard above.
@@ -739,10 +817,11 @@ def resolve_real_styles(base_text: Optional[str], anchors: dict) -> dict:
     lines = base_text.split("\n")
     blocks = _parse_blocks(lines)
     styles: dict = {}
-    for tier_name, anchor_name in (anchors or {}).items():
-        block = _find_anchor_block(blocks, lines, anchor_name)
-        if block is None:
+    for tier_name, candidates in (anchors or {}).items():
+        resolved = _resolve_anchor(blocks, lines, candidates)
+        if resolved is None:
             continue
+        block, _name = resolved
         style_lines = _block_style_lines(lines, block)
         if style_lines:
             styles[tier_name] = style_lines
@@ -858,27 +937,29 @@ def build_filter(hub_data: dict, rules: dict, base_text: Optional[str],
     based on price risked overriding NeverSink's own prominent placement for
     that same BaseType whenever the price data was misleadingly low.
 
-    Returns (generated_section, merged_base_text, currency_surgery_applied).
-    merged_base_text equals base_text unchanged whenever surgery wasn't
-    applied (including when base_text is None)."""
+    Returns (generated_section, merged_base_text, currency_surgery_applied,
+    anchor_status). merged_base_text equals base_text unchanged whenever
+    surgery wasn't applied (including when base_text is None).
+    anchor_status is resolve_anchors' {tier_name: resolved_anchor_or_None} —
+    per-tier detail for a caller's status message, since
+    currency_surgery_applied alone can't distinguish "every tier resolved"
+    from "only some did" (see merge_currency_into_base's per-tier skip,
+    2026-08-08)."""
     tiers = bucket_currency(hub_data, rules)
     uniq_tiers = bucket_uniques(hub_data, rules)
 
+    anchors = rules.get("anchors", _DEFAULT_RULES["anchors"])
     merged_base_text = base_text
     applied = False
     real_styles: dict = {}
+    anchor_status = resolve_anchors(base_text, anchors)
     if base_text:
-        anchors = rules.get("anchors", _DEFAULT_RULES["anchors"])
         real_styles = resolve_real_styles(base_text, anchors)
         merged_base_text, applied = merge_currency_into_base(base_text, tiers, rules, anchors)
-        if not applied:
-            log.warning("Currency surgery could not resolve every tier anchor — currency "
-                       "BaseTypes left untouched in the base filter, no generated fallback "
-                       "emitted (Plan B has no partial/self-emitted currency state)")
 
     lines = ["# Generated by PoE Price & Trade Checker (Filter Generator) from poe-data-hub snapshot", ""]
     lines += emit_unique_section(uniq_tiers, rules, real_styles, sound_map)
-    return "\n".join(lines), merged_base_text, applied
+    return "\n".join(lines), merged_base_text, applied, anchor_status
 
 
 # ---------------------------------------------------------------------------

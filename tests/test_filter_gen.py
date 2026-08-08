@@ -555,7 +555,7 @@ def test_load_rules_ignores_everything_except_tier_min_chaos(tmp_path):
     (tmp_path / "filter_gen_rules.json").write_text(json.dumps(stale), encoding="utf-8")
     rules = filter_gen.load_rules(tmp_path)
     assert rules["tiers"][0]["min_chaos"] == 200.0        # the one thing that does override
-    assert rules["anchors"]["C"] == "Orb of Transmutation"  # current code default, not the stale value
+    assert rules["anchors"]["C"][0] == "Orb of Transmutation"  # current code default, not the stale value
     assert rules["divine_sanity_floor"] == 15.0            # current code default, not the stale value
     assert "hide_below" not in rules
 
@@ -881,10 +881,39 @@ def test_merge_currency_into_base_diff_only_touches_basetype_lines():
     assert diff_count == 2  # the B and A BaseType lines, nothing else
 
 
-def test_merge_currency_into_base_falls_back_when_an_anchor_is_unresolvable():
-    # base filter has no "Orb of Transmutation" anywhere -> C's anchor can't be resolved
-    base = _PLAN_B_BASE_FILTER.replace("Orb of Transmutation", "Orb of Alteration")
+def test_merge_currency_into_base_skips_tier_whose_anchor_is_unresolvable_but_merges_others(caplog):
+    """The 2026-08-08 fix: a tier's anchor candidates all failing to resolve
+    must not sink the whole merge (the original bug — switching PoE1 to
+    strictness 3 broke tier C's anchor and the *entire* currency merge
+    silently stopped, including for S/A/B which resolved fine). C's block
+    here uses names that don't match any of tier C's default candidates;
+    S/A/B are untouched and still resolve."""
+    base = _PLAN_B_BASE_FILTER.replace(
+        'BaseType == "Orb of Augmentation" "Orb of Transmutation"',
+        'BaseType == "Made Up Currency A" "Made Up Currency B"')
     tiers = _default_currency_tiers()
+    tiers["C"] = ["Made Up Currency A", "Made Up Currency B"]  # already correctly placed, no-op
+    tiers["B"] = ["Chaos Orb"]                                 # Regal Orb leaves B...
+    tiers["A"] = ["Exalted Orb", "Ancient Orb", "Regal Orb"]   # ...and joins A — real merge work
+
+    new_text, applied = filter_gen.merge_currency_into_base(base, tiers, _rules())
+    assert applied is True  # S/A/B resolved and merged even though C's anchor didn't
+
+    a_line = next(l for l in new_text.splitlines() if l.strip().startswith("BaseType") and "Exalted Orb" in l)
+    assert "Regal Orb" in a_line
+    # C's block is left byte-identical — its anchor never resolved, so it's
+    # treated the same as any other untiered NeverSink block
+    assert 'BaseType == "Made Up Currency A" "Made Up Currency B"' in new_text
+    assert "tier C" in caplog.text
+
+
+def test_merge_currency_into_base_returns_false_only_when_no_tier_resolves_at_all():
+    base = """\
+Show # no recognizable currency names at all
+\tBaseType == "Made Up Orb"
+\tSetFontSize 30
+"""
+    tiers = {"S": ["Divine Orb"]}
     new_text, applied = filter_gen.merge_currency_into_base(base, tiers, _rules())
     assert applied is False
     assert new_text == base
@@ -936,8 +965,10 @@ Show # tier C
 # ---------------------------------------------------------------------------
 
 def test_build_filter_uses_surgery_when_anchors_resolve():
-    section, merged_base, applied = filter_gen.build_filter(_hub_data(), _rules(), _PLAN_B_BASE_FILTER)
+    section, merged_base, applied, anchor_status = filter_gen.build_filter(
+        _hub_data(), _rules(), _PLAN_B_BASE_FILTER)
     assert applied is True
+    assert all(anchor_status.values())  # every tier resolved on this real-shaped fixture
     assert "Show # Hub currency tier" not in section  # no self-emitted currency blocks
     assert "Uniques by basetype ceiling" in section
     assert merged_base is not None
@@ -962,7 +993,8 @@ def test_build_filter_dead_economy_never_dims_currency_and_never_demotes_divine(
         {"category": "Currency", "name": "Chaos Orb", "base": None, "chaos_value": 0.001},
         {"category": "Currency", "name": "Regal Orb", "base": None, "chaos_value": 0.0005},
     ])
-    section, merged_base, applied = filter_gen.build_filter(data, _pct_rules(), _PLAN_B_BASE_FILTER)
+    section, merged_base, applied, anchor_status = filter_gen.build_filter(
+        data, _pct_rules(), _PLAN_B_BASE_FILTER)
     assert applied is True
 
     # currency is 100% merge-only — it must never appear in the self-generated
@@ -983,26 +1015,50 @@ def test_build_filter_dead_economy_never_dims_currency_and_never_demotes_divine(
 
 
 def test_build_filter_no_base_text_never_emits_our_own_currency():
-    section, merged_base, applied = filter_gen.build_filter(_hub_data(), _rules(), None)
+    section, merged_base, applied, anchor_status = filter_gen.build_filter(_hub_data(), _rules(), None)
     assert applied is False
     assert merged_base is None
+    assert all(v is None for v in anchor_status.values())
     # Plan B, in full: no fallback that emits our own currency Show blocks —
     # not even when there's no base filter to merge into at all.
     assert "Hub currency tier" not in section
     assert "Uniques by basetype ceiling" in section  # still self-generated
 
 
-def test_build_filter_anchor_unresolvable_never_emits_our_own_currency(caplog):
-    base = _PLAN_B_BASE_FILTER.replace("Orb of Transmutation", "Orb of Alteration")
-    section, merged_base, applied = filter_gen.build_filter(_hub_data(), _rules(), base)
+def test_build_filter_all_anchors_unresolvable_never_emits_our_own_currency(caplog):
+    base = """\
+Show # no recognizable currency names at all
+\tBaseType == "Made Up Orb"
+\tSetFontSize 30
+"""
+    section, merged_base, applied, anchor_status = filter_gen.build_filter(_hub_data(), _rules(), base)
     assert applied is False
     assert merged_base == base  # left completely untouched, not partially merged
+    assert all(v is None for v in anchor_status.values())
     assert "Hub currency tier" not in section
-    assert "currency" in caplog.text.lower()  # warned, not silent
+    assert "tier" in caplog.text.lower()  # warned per-tier, not silent
+
+
+def test_build_filter_one_tier_unresolvable_still_merges_the_others(caplog):
+    """The 2026-08-08 fix at the build_filter level: tier C's anchor being
+    unresolvable must not sink S/A/B, and anchor_status must say *which*
+    tier failed instead of one lumped pass/fail."""
+    base = _PLAN_B_BASE_FILTER.replace(
+        'BaseType == "Orb of Augmentation" "Orb of Transmutation"',
+        'BaseType == "Made Up Currency A" "Made Up Currency B"')
+    section, merged_base, applied, anchor_status = filter_gen.build_filter(_hub_data(), _rules(), base)
+    assert applied is True  # S/A/B still merged
+    assert anchor_status["S"] and anchor_status["A"] and anchor_status["B"]
+    assert anchor_status["C"] is None
+    assert "Hub currency tier" not in section
+    # Divine Orb (tier S in _hub_data) still ends up in tier S's own block
+    s_line = next(l for l in merged_base.splitlines() if l.strip().startswith("BaseType") and "Divine Orb" in l)
+    assert "Divine Orb" in s_line
 
 
 def test_build_filter_uses_real_style_for_uniques_when_surgery_succeeds():
-    section, merged_base, applied = filter_gen.build_filter(_hub_data(), _rules(), _PLAN_B_BASE_FILTER)
+    section, merged_base, applied, anchor_status = filter_gen.build_filter(
+        _hub_data(), _rules(), _PLAN_B_BASE_FILTER)
     assert applied is True
     # _hub_data()'s uniques bucket to S ("Royal Axe") and B ("Glorious Plate")
     # only. _PLAN_B_BASE_FILTER's real blocks use SetTextColor 255 0 0 (S) /
@@ -1014,14 +1070,16 @@ def test_build_filter_uses_real_style_for_uniques_when_surgery_succeeds():
     assert "SetBackgroundColor" not in section
 
 
-def test_build_filter_partial_real_styles_even_when_surgery_fails():
-    # C's anchor is broken (so currency surgery fails all-or-nothing), but
-    # S/B's anchors still resolve fine — resolve_real_styles isn't
-    # all-or-nothing like merge_currency_into_base, so uniques should still
-    # get their real look for the tiers that do resolve.
-    base = _PLAN_B_BASE_FILTER.replace("Orb of Transmutation", "Orb of Alteration")
-    section, merged_base, applied = filter_gen.build_filter(_hub_data(), _rules(), base)
-    assert applied is False
+def test_build_filter_unique_styles_still_use_whatever_tiers_resolve_when_one_tier_fails():
+    # C's anchor is broken; S/A/B still resolve fine. resolve_real_styles was
+    # already per-tier before this fix — this pins that behavior unchanged
+    # now that merge_currency_into_base is per-tier too (2026-08-08).
+    base = _PLAN_B_BASE_FILTER.replace(
+        'BaseType == "Orb of Augmentation" "Orb of Transmutation"',
+        'BaseType == "Made Up Currency A" "Made Up Currency B"')
+    section, merged_base, applied, anchor_status = filter_gen.build_filter(_hub_data(), _rules(), base)
+    assert applied is True
+    assert anchor_status["C"] is None
     assert "SetTextColor 255 0 0" in section  # real tier S style, not the hardcoded fallback
     assert "SetBackgroundColor" not in section
 
@@ -1703,19 +1761,19 @@ Hide # %H1 $type->currency $tier->supplieslow !currency_supply4
 def test_find_anchor_block_resolves_all_default_anchors_on_real_poe1_filter():
     lines = _REAL_POE1_SEMI_STRICT_EXCERPT.split("\n")
     blocks = filter_gen._parse_blocks(lines)
-    for tier_name, anchor in filter_gen._DEFAULT_RULES["anchors"].items():
-        block = filter_gen._find_anchor_block(blocks, lines, anchor)
-        assert block is not None, f"tier {tier_name} anchor {anchor!r} failed to resolve on real PoE1 data"
-        assert block.block_type == "Show"
+    for tier_name, candidates in filter_gen._DEFAULT_RULES["anchors"].items():
+        resolved = filter_gen._resolve_anchor(blocks, lines, candidates)
+        assert resolved is not None, f"tier {tier_name} candidates {candidates!r} all failed to resolve on real PoE1 data"
+        assert resolved[0].block_type == "Show"
 
 
 def test_find_anchor_block_resolves_all_default_anchors_on_real_poe2_filter():
     lines = _REAL_POE2_SEMI_STRICT_EXCERPT.split("\n")
     blocks = filter_gen._parse_blocks(lines)
-    for tier_name, anchor in filter_gen._DEFAULT_RULES["anchors"].items():
-        block = filter_gen._find_anchor_block(blocks, lines, anchor)
-        assert block is not None, f"tier {tier_name} anchor {anchor!r} failed to resolve on real PoE2 data"
-        assert block.block_type == "Show"
+    for tier_name, candidates in filter_gen._DEFAULT_RULES["anchors"].items():
+        resolved = filter_gen._resolve_anchor(blocks, lines, candidates)
+        assert resolved is not None, f"tier {tier_name} candidates {candidates!r} all failed to resolve on real PoE2 data"
+        assert resolved[0].block_type == "Show"
 
 
 def test_merge_currency_into_base_surgery_applies_on_real_poe1_filter():
@@ -1742,5 +1800,8 @@ def test_merge_currency_into_base_surgery_still_applies_on_real_poe2_filter():
 def test_default_anchor_c_is_orb_of_transmutation_not_augmentation():
     """Pins the actual fix: Orb of Transmutation resolves in both real
     files, Orb of Augmentation only resolves on PoE2 (see module comment
-    above) -- using the latter as the *default* breaks PoE1 entirely."""
-    assert filter_gen._DEFAULT_RULES["anchors"]["C"] == "Orb of Transmutation"
+    above) -- using the latter as the *first-choice* default breaks PoE1
+    entirely. It's still first in tier C's candidate list; the rest are
+    fallbacks for stricter NeverSink levels (2026-08-08, see
+    tools/verify_anchors.py)."""
+    assert filter_gen._DEFAULT_RULES["anchors"]["C"][0] == "Orb of Transmutation"

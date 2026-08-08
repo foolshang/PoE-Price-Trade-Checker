@@ -753,16 +753,23 @@ class App:
                     "B": fg_cfg.get("sound_b") or None,
                 }
                 copied = filter_output.copy_sounds(out_dir, sound_map)
-                generated_section, base_text, surgery_applied = filter_gen.build_filter(
+                generated_section, base_text, surgery_applied, anchor_status = filter_gen.build_filter(
                     hub_data, rules, base_text, copied)
                 new_mapping = filter_gen.tier_mapping(hub_data, rules)
                 new_sig = filter_gen.signature(hub_data, rules)
+                resolved_tiers = [t for t, a in anchor_status.items() if a]
+                unresolved_tiers = [t for t, a in anchor_status.items() if not a]
                 if surgery_applied:
-                    self._root.after_idle(lambda: self._win_log(
-                        "✓ รวม currency เข้ากับ NeverSink base โดยตรง — ใช้เสียง/สไตล์ของ NeverSink เอง", "ok"))
+                    msg = ("✓ รวม currency เข้ากับ NeverSink base โดยตรง — ใช้เสียง/สไตล์ของ NeverSink เอง "
+                           f"(tier {'/'.join(resolved_tiers)} resolve ได้")
+                    if unresolved_tiers:
+                        msg += f", tier {'/'.join(unresolved_tiers)} หา anchor ไม่เจอ — ข้ามเฉพาะ tier นั้น)"
+                    else:
+                        msg += ")"
+                    self._root.after_idle(lambda m=msg: self._win_log(m, "ok"))
                 else:
                     self._root.after_idle(lambda: self._win_log(
-                        "⚠ รวม currency เข้ากับ base ไม่ได้ (หา anchor block ไม่เจอ) — "
+                        "⚠ รวม currency เข้ากับ base ไม่ได้เลยสักตัว (หา anchor block ไม่เจอทุก tier) — "
                         "ปล่อย currency ในไฟล์เดิมไว้ตามเดิม ไม่เติม style ของเราเอง", "warn"))
 
         try:
