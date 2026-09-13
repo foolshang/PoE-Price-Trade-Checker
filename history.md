@@ -5,6 +5,23 @@
 
 ---
 
+## 2026-09-14 — Mod Picker: min-value prefill matches the game's mod number (v0.7.2)
+
+**Why:** F5's mod-picker window (`mod_picker.py`) prefilled the min-value
+search box as `mod.value × 0.8` rounded to 2 decimals — a deliberate search
+buffer, but the result no longer matched the number actually printed on the
+mod in-game, which read as wrong rather than as an intentional buffer.
+
+**Fix (mod_picker.py):** min-value box now prefills with the mod's own
+parsed value, formatted with `:g` instead of `round()` — whole-number mods
+show without a trailing decimal (47.0 → "47"), while mods that genuinely
+roll with a decimal in-game (e.g. 6.5%) keep it, since `round()` would have
+silently changed them away from the in-game number. Removed the now-unused
+`_MIN_PCT` constant. Users who want a search buffer can still widen the
+range manually in the box.
+
+---
+
 ## 2026-08-08 — Currency anchor candidate lists: fix recurring resolution failures (v0.7.1)
 
 **Why:** Switching PoE1 to strictness 3 (STRICT) broke tier C's currency

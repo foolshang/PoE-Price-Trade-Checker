@@ -19,7 +19,6 @@ _FONT_BOLD = ("Segoe UI", 10, "bold")
 
 # type ที่ติ๊กมาให้ตั้งแต่แรก — เหมือน search ในเกม (implicit + explicit, ไม่เอา desecrated)
 _DEFAULT_CHECKED = {"explicit", "implicit"}
-_MIN_PCT = 0.8          # default ช่อง min = value × 0.8
 _MAX_TEXT = 56          # ตัดข้อความ mod ยาวเกิน
 
 _TYPE_TAG = {
@@ -158,7 +157,7 @@ class ModPickerWindow:
         max_e = entry()     # ขวาสุด = max
         min_e = entry()     # ถัดมา = min
         if sid and mod.value is not None:
-            min_e.insert(0, f"{round(mod.value * _MIN_PCT, 2):g}")
+            min_e.insert(0, f"{mod.value:g}")
 
         self._rows.append({"var": var, "sid": sid, "min": min_e, "max": max_e})
 
