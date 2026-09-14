@@ -5,6 +5,42 @@
 
 ---
 
+## 2026-09-14 — Category-based search for rare/magic with stats (v0.7.4, phase 2/2)
+
+**Why:** Phase 1 (v0.7.3) fixed most "item not found" cases by canonicalizing
+the base name and searching all-rarity (`nonunique`), but an identified
+rare/magic item with mods still pinned an exact base type — a base that
+resolves to the wrong subtype, or any residual base-name mismatch the
+canonical DB doesn't cover, still zeroes out results. EE2's other fix for
+this is to drop the base entirely for these items and search by trade's
+broader item **category** (e.g. "Warstaff") instead, relying on the stat
+filters to narrow things down.
+
+**Fix:**
+- `profiles.py`: added `item_class_category` to `GameProfile` — a
+  `{normalized item class: trade category id}` map, populated per game
+  (PoE2 gets the full weapon/armour/accessory/jewel/flask/map set including
+  PoE2-only classes like Warstaff/Crossbow/Spear/Flail/Focus/Waystone;
+  PoE1 gets the classes that exist there). Category ids are the same
+  `weapon.*`/`armour.*`/`accessory.*` ids EE2 uses.
+- `trade_url.py`: in the identified rare/magic branch, stat filters are now
+  computed first; if any resolved **and** the item's class has a category
+  mapping, the query drops `type` entirely and searches
+  `category=<id> + rarity=nonunique + stats` instead. Otherwise it falls
+  back to phase 1's behavior (canonical base + `nonunique`, stats if any) —
+  so an unmapped item class or an item with zero resolved stats never loses
+  functionality, it just doesn't get the wider category search.
+
+**Verified before build:** throwaway script covering all four paths —
+mapped class + resolved stats → category query (no `type`, has `stats`);
+unmapped class → base fallback; mapped class but no resolved stats → base
+fallback with no `stats` key; PoE1 mapped class → category query. Also
+re-ran phase 1's unique/unidentified assertions to confirm no regression.
+Confirmed in the built exe that price/hub loading and startup are
+unaffected.
+
+---
+
 ## 2026-09-14 — Base canonical DB + rarity nonunique: fix F5 "item not found" (v0.7.3, phase 1/2)
 
 **Why:** F5 trade search sent the raw clipboard base/unique name and the

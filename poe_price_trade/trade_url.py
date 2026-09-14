@@ -49,10 +49,6 @@ def build_trade_url(item: ParsedItem, mod_db, league: str, profile, min_pct: flo
             query["type"] = _base()
 
     else:                                             # rare/magic ส่องแล้ว → ตาม mod
-        if item.base_type:
-            query["type"] = _base()
-        # EE2: normal/magic/rare ค้นด้วย nonunique (รวม 3 ระดับ — เจอกว้างกว่าผูก rarity เป๊ะ)
-        filters["type_filters"] = {"filters": {"rarity": {"option": "nonunique"}}}
         if custom_stats is not None:
             # popup (mod_picker) ส่ง filter ที่ผู้ใช้ติ๊กเลือกมาแล้ว — ใช้ตามนั้นเป๊ะ
             stat_filters = [f for f in custom_stats if f.get("id")]
@@ -66,8 +62,24 @@ def build_trade_url(item: ParsedItem, mod_db, league: str, profile, min_pct: flo
                 if mod.value is not None:
                     f["value"] = {"min": round(mod.value * min_pct, 2)}
                 stat_filters.append(f)
-        if stat_filters:
+
+        # ประกอบ query: ถ้ามี stat + map category ได้ → ค้นแบบ category กว้าง (EE2 relaxed)
+        cat_map = getattr(profile, "item_class_category", None) or {}
+        cat_id = cat_map.get(item.item_class.strip().lower())
+        if stat_filters and cat_id:
+            # relaxed: category + nonunique + stats (ไม่ผูก base → เจอกว้าง ไม่พลาดเพราะ base)
+            filters["type_filters"] = {"filters": {
+                "category": {"option": cat_id},
+                "rarity": {"option": "nonunique"},
+            }}
             query["stats"] = [{"type": "and", "filters": stat_filters}]
+        else:
+            # fallback: base + nonunique (+ stats ถ้ามี) — เหมือน phase 1
+            if item.base_type:
+                query["type"] = _base()
+            filters["type_filters"] = {"filters": {"rarity": {"option": "nonunique"}}}
+            if stat_filters:
+                query["stats"] = [{"type": "and", "filters": stat_filters}]
 
     if filters:                                       # ใส่ filters เฉพาะตอนมีจริง (กัน {} ว่าง)
         query["filters"] = filters

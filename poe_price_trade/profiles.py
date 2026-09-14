@@ -27,6 +27,10 @@ class GameProfile:
 
     display_name: str = ""
 
+    # {normalized item class: trade category id} — ใช้จริง — trade_url.py รวม rare
+    # ที่มี stat ให้ค้นด้วย category กว้างแทนผูก base เป๊ะ (EE2 relaxed search)
+    item_class_category: dict = None
+
 
 POE1_PROFILE = GameProfile(
     game_version="poe1",
@@ -37,6 +41,19 @@ POE1_PROFILE = GameProfile(
     default_leagues=["Mirage", "Hardcore Mirage"],
     trade_web_url="https://www.pathofexile.com/trade/search/{league}",
     trade_items_url="https://www.pathofexile.com/api/trade/data/items",
+    item_class_category={
+        "wands": "weapon.wand", "sceptres": "weapon.sceptre",
+        "staves": "weapon.staff", "bows": "weapon.bow",
+        "daggers": "weapon.dagger", "claws": "weapon.claw",
+        "one hand swords": "weapon.onesword", "two hand swords": "weapon.twosword",
+        "one hand axes": "weapon.oneaxe", "two hand axes": "weapon.twoaxe",
+        "one hand maces": "weapon.onemace", "two hand maces": "weapon.twomace",
+        "body armours": "armour.chest", "gloves": "armour.gloves",
+        "boots": "armour.boots", "helmets": "armour.helmet",
+        "shields": "armour.shield", "quivers": "armour.quiver",
+        "rings": "accessory.ring", "amulets": "accessory.amulet",
+        "belts": "accessory.belt", "jewels": "jewel",
+    },
 )
 
 POE2_PROFILE = GameProfile(
@@ -48,6 +65,23 @@ POE2_PROFILE = GameProfile(
     default_leagues=["Runes of Aldur", "HC Runes of Aldur"],
     trade_web_url="https://www.pathofexile.com/trade2/search/{league}",
     trade_items_url="https://www.pathofexile.com/api/trade2/data/items",
+    item_class_category={
+        "wands": "weapon.wand", "sceptres": "weapon.sceptre",
+        "staves": "weapon.staff", "quarterstaves": "weapon.warstaff",
+        "crossbows": "weapon.crossbow", "bows": "weapon.bow",
+        "spears": "weapon.spear", "flails": "weapon.flail",
+        "daggers": "weapon.dagger", "claws": "weapon.claw",
+        "one hand swords": "weapon.onesword", "two hand swords": "weapon.twosword",
+        "one hand axes": "weapon.oneaxe", "two hand axes": "weapon.twoaxe",
+        "one hand maces": "weapon.onemace", "two hand maces": "weapon.twomace",
+        "body armours": "armour.chest", "gloves": "armour.gloves",
+        "boots": "armour.boots", "helmets": "armour.helmet",
+        "shields": "armour.shield", "bucklers": "armour.buckler",
+        "foci": "armour.focus", "quivers": "armour.quiver",
+        "rings": "accessory.ring", "amulets": "accessory.amulet",
+        "belts": "accessory.belt", "jewels": "jewel",
+        "charms": "flask.charm", "waystones": "map.waystone",
+    },
 )
 
 PROFILES: dict[str, GameProfile] = {
