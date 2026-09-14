@@ -20,15 +20,23 @@ _RARITY_OPTION = {
 
 
 def build_trade_url(item: ParsedItem, mod_db, league: str, profile, min_pct: float = 0.8,
-                    custom_stats: list | None = None) -> str:
+                    custom_stats: list | None = None, base_db=None) -> str:
     query: dict = {"status": {"option": STATUS_OPTION}}
     filters: dict = {}
+
+    def _base() -> str:
+        # base/div/gem/currency -> canonical (กันหาไม่เจอเพราะ quality prefix/ชื่อเพี้ยน)
+        return base_db.resolve_type(item.base_type) if base_db else item.base_type
+
+    def _name() -> str:
+        # unique name -> canonical
+        return base_db.resolve_name(item.item_name) if base_db else item.item_name
 
     if not item.identified:
         # ของไม่ส่องทุกชนิด (unique/rare/magic) → ค้นด้วย base + rarity + identified=no
         # (ไม่มี mod/ชื่อ unique ให้ค้น เพราะเกมยังไม่เผยจนกว่าจะส่อง)
         if item.base_type:
-            query["type"] = item.base_type
+            query["type"] = _base()
         rarity_opt = _RARITY_OPTION.get(item.rarity)
         if rarity_opt:
             filters["type_filters"] = {"filters": {"rarity": {"option": rarity_opt}}}
@@ -36,16 +44,15 @@ def build_trade_url(item: ParsedItem, mod_db, league: str, profile, min_pct: flo
 
     elif item.rarity == Rarity.UNIQUE:
         # unique ส่องแล้ว → ค้นด้วยชื่อ + base
-        query["name"] = item.item_name
+        query["name"] = _name()
         if item.base_type and item.base_type != item.item_name:
-            query["type"] = item.base_type
+            query["type"] = _base()
 
     else:                                             # rare/magic ส่องแล้ว → ตาม mod
         if item.base_type:
-            query["type"] = item.base_type
-        rarity_opt = _RARITY_OPTION.get(item.rarity)
-        if rarity_opt:
-            filters["type_filters"] = {"filters": {"rarity": {"option": rarity_opt}}}
+            query["type"] = _base()
+        # EE2: normal/magic/rare ค้นด้วย nonunique (รวม 3 ระดับ — เจอกว้างกว่าผูก rarity เป๊ะ)
+        filters["type_filters"] = {"filters": {"rarity": {"option": "nonunique"}}}
         if custom_stats is not None:
             # popup (mod_picker) ส่ง filter ที่ผู้ใช้ติ๊กเลือกมาแล้ว — ใช้ตามนั้นเป๊ะ
             stat_filters = [f for f in custom_stats if f.get("id")]
@@ -70,7 +77,7 @@ def build_trade_url(item: ParsedItem, mod_db, league: str, profile, min_pct: flo
     return f"{base}?q=" + urllib.parse.quote(json.dumps(payload, separators=(",", ":")))
 
 
-def open_trade(item, mod_db, league, profile, custom_stats=None) -> str:
-    url = build_trade_url(item, mod_db, league, profile, custom_stats=custom_stats)
+def open_trade(item, mod_db, league, profile, custom_stats=None, base_db=None) -> str:
+    url = build_trade_url(item, mod_db, league, profile, custom_stats=custom_stats, base_db=base_db)
     webbrowser.open(url)
     return url

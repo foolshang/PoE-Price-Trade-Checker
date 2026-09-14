@@ -5,6 +5,46 @@
 
 ---
 
+## 2026-09-14 — Base canonical DB + rarity nonunique: fix F5 "item not found" (v0.7.3, phase 1/2)
+
+**Why:** F5 trade search sent the raw clipboard base/unique name and the
+item's exact rarity straight into the query. A quality prefix ("Superior
+..."), a base name that doesn't match trade's own spelling, or querying an
+exact rarity when the listing is actually a different one of
+normal/magic/rare all silently produced a trade search with zero results —
+same root causes Exiled-Exchange-2 (EE2) already solved via its
+findInDatabase() + rarity="nonunique" approach. Phase 1 of 2 (phase 2 =
+category-based search for rare items with mods, still to come).
+
+**Fix:**
+- New `base_db.py` (`BaseDB`): loads GGG's `trade(2)/data/items` endpoint
+  per game, caches to disk (same pattern/TTL as `mod_db.py`'s stats cache),
+  and resolves a raw base/unique name to trade's canonical spelling —
+  exact match first (so a base that genuinely starts with a quality-like
+  word, e.g. "Exceptional Verisium", isn't mangled), then quality-prefix
+  stripped, then fuzzy match; falls back to the raw name untouched if
+  nothing resolves or the fetch fails.
+- `profiles.py`: added `trade_items_url` to `GameProfile`, pointing at each
+  game's own `data/items` endpoint.
+- `trade_url.py`: `build_trade_url`/`open_trade` take an optional `base_db`
+  and resolve `query["type"]`/`query["name"]` through it before building
+  the query; identified normal/magic/rare items now search
+  `rarity=nonunique` (all three levels at once) instead of pinning the
+  exact rarity, matching EE2's relaxed default.
+- `app.py`: constructs and loads a `BaseDB` alongside the existing
+  per-profile `ModDatabase` (both places `_mod_db` is created/reset), and
+  passes it into both `open_trade` call sites.
+
+**Verified before build:** mock-data lookup tests (prefix strip, exact
+priority, fuzzy fallback), a live fetch against PoE2's real endpoint (3129
+base/type entries, 464 unique names, correct resolution), and
+`build_trade_url` payload shape for rare/unique/unidentified branches — all
+via throwaway scripts, no test files added. Confirmed in the built exe:
+previously-unfindable rares now resolve, unique/unidentified search
+unaffected.
+
+---
+
 ## 2026-09-14 — Mod Picker: min-value prefill matches the game's mod number (v0.7.2)
 
 **Why:** F5's mod-picker window (`mod_picker.py`) prefilled the min-value

@@ -23,6 +23,8 @@ class GameProfile:
     # Web trade URL สำหรับเปิด browser (F5) — ไม่ใช่ /api
     trade_web_url: str = ""
 
+    trade_items_url: str = ""  # ใช้จริง — base_db.py ดึงชื่อ base/unique canonical
+
     display_name: str = ""
 
 
@@ -34,6 +36,7 @@ POE1_PROFILE = GameProfile(
     trade_stats_url="https://www.pathofexile.com/api/trade/data/stats",
     default_leagues=["Mirage", "Hardcore Mirage"],
     trade_web_url="https://www.pathofexile.com/trade/search/{league}",
+    trade_items_url="https://www.pathofexile.com/api/trade/data/items",
 )
 
 POE2_PROFILE = GameProfile(
@@ -44,6 +47,7 @@ POE2_PROFILE = GameProfile(
     trade_stats_url="https://www.pathofexile.com/api/trade2/data/stats",
     default_leagues=["Runes of Aldur", "HC Runes of Aldur"],
     trade_web_url="https://www.pathofexile.com/trade2/search/{league}",
+    trade_items_url="https://www.pathofexile.com/api/trade2/data/items",
 )
 
 PROFILES: dict[str, GameProfile] = {

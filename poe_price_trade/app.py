@@ -23,6 +23,7 @@ from .scan import Scanner
 from .settings import SettingsWindow
 from .trade_url import open_trade
 from .mod_db import ModDatabase
+from .base_db import BaseDB
 from . import mod_badge
 from .mod_badge import ModBadgeDB
 from . import filter_gen, filter_output, neversink_source
@@ -76,6 +77,7 @@ class App:
         self._league_paths: dict[str, str] = {}   # league name -> hub file path
         self._scanner: Optional[Scanner] = None
         self._mod_db = ModDatabase(self._profile, cache_dir=self._config.app_dir() / "cache")
+        self._base_db = BaseDB(self._profile, cache_dir=self._config.app_dir() / "cache")
         # Shared across both games (unlike _repo/_mod_db which are per-profile) --
         # load(game) re-indexes in place, so switching game_version doesn't need
         # a new instance, just passing the current game to load() each time.
@@ -434,6 +436,7 @@ class App:
                     self._get_meta_db().infer_affixes(item)
                     debug.event(f"F5 no mod headers — inferred P={item.prefix_count} S={item.suffix_count}")
                 self._mod_db.load()
+                self._base_db.load()
                 self._mod_badge.load(self._profile.game_version)
                 use_picker = (bool(self._config.get("f5_mod_picker", True))
                               and item.identified
@@ -466,7 +469,8 @@ class App:
                                                   ra=roll_arrows, af=affixes:
                                           self._open_mod_picker(it, r, a, s, bc, ra, af))
                     return
-                url = open_trade(item, self._mod_db, self._league_var.get(), self._profile)
+                url = open_trade(item, self._mod_db, self._league_var.get(), self._profile,
+                                 base_db=self._base_db)
                 write_text("")                       # ② reset ท้าย — เก็บกวาดหลังเปิด browser
                 resolved = sum(1 for m in item.mods if self._mod_db.find_stat_id(m.text))
                 debug.event(f"F5 '{item.item_name}' rarity={item.rarity} id={item.identified} "
@@ -537,7 +541,8 @@ class App:
             def _go():
                 try:
                     url = open_trade(item, self._mod_db, self._league_var.get(),
-                                     self._profile, custom_stats=stat_filters)
+                                     self._profile, custom_stats=stat_filters,
+                                     base_db=self._base_db)
                     debug.event(f"F5 picker search '{item.item_name}' "
                                 f"filters={len(stat_filters)} url={url[:80]}")
                     self._root.after_idle(
@@ -578,6 +583,7 @@ class App:
         self._profile = PROFILES.get(gv, PROFILES["poe2"])
         self._repo = PriceRepository(self._profile, cache_dir=self._config.app_dir() / "cache")
         self._mod_db = ModDatabase(self._profile, cache_dir=self._config.app_dir() / "cache")
+        self._base_db = BaseDB(self._profile, cache_dir=self._config.app_dir() / "cache")
         self._league_paths = {}
         self._scanner = None
         self._league_cb.configure(values=self._profile.default_leagues)
