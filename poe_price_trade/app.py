@@ -26,6 +26,8 @@ from .mod_db import ModDatabase
 from .base_db import BaseDB
 from . import mod_badge
 from .mod_badge import ModBadgeDB
+from .skill_ref import SkillRefDB
+from .skill_ref_window import SkillRefWindow
 from . import filter_gen, filter_output, neversink_source
 from .filter_window import FilterGenWindow
 from .tray import TrayIcon
@@ -83,6 +85,11 @@ class App:
         # a new instance, just passing the current game to load() each time.
         self._mod_badge = ModBadgeDB(cache_dir=self._config.app_dir() / "cache",
                                      config_dir=self._config.app_dir())
+        # F4 "skill_ref" mode — prep only, default off (config.f4_mode == "price").
+        # Mock-backed, never touches hub/Firebase. See skill_ref.py's TODO(hub).
+        self._skill_ref_db = SkillRefDB(self._config.app_dir())
+        self._skill_ref_db_loaded = False
+        self._skill_ref_win: Optional[SkillRefWindow] = None
 
         self._overlay: Optional[PriceOverlay] = None
         self._hotkeys: Optional[HotkeyManager] = None
@@ -225,6 +232,9 @@ class App:
     # ------------------------------------------------------------------
 
     def _on_f4_scan(self) -> None:
+        if self._config.get("f4_mode", "price") == "skill_ref":
+            self._open_skill_ref()
+            return
         if not self._repo.is_ready():
             self._log("⚠ ราคายังโหลดไม่เสร็จ รอสักครู่…", "warn")
             return
@@ -257,6 +267,22 @@ class App:
             self._log(f"✓ scan {count} รายการ ({ms}ms) — hover ดูราคา (ชี้ทีละชิ้นก็ได้)", "ok")
         else:
             self._log("hover mode: ชี้ item ให้ tooltip เด้ง แล้วดูราคา", "ok")
+
+    # ------------------------------------------------------------------
+    # F4 (new) — Skill Mod Reference, hidden behind config.f4_mode
+    # ------------------------------------------------------------------
+
+    def _open_skill_ref(self) -> None:
+        if self._skill_ref_win is not None:
+            self._skill_ref_win.close()
+        if not self._skill_ref_db_loaded:
+            self._skill_ref_db.load()
+            self._skill_ref_db_loaded = True
+        self._skill_ref_win = SkillRefWindow(
+            self._root, self._skill_ref_db, on_close=self._on_skill_ref_closed)
+
+    def _on_skill_ref_closed(self) -> None:
+        self._skill_ref_win = None
 
     def _start_hover_loop(self) -> None:
         threading.Thread(target=self._hover_loop, daemon=True, name="HoverLoop").start()

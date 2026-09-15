@@ -31,6 +31,7 @@ _DEFAULTS: dict = {
     "log_level": "INFO",
     "mod_badge_archetype": "all",
     "close_action": "minimize",
+    "f4_mode": "price",   # "price" (เดิม, default) | "skill_ref" (ใหม่, prep เฉยๆ — ดู skill_ref.py)
     "filter_gen": {
         "strictness_poe1": 2, "strictness_poe2": 2,
         "sound_s": "", "sound_a": "", "sound_b": "",

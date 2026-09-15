@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "league": "MOCK",
+  "skills": [
+    {"name": "Lightning Arrow", "archetype": "attack-bow"},
+    {"name": "Ice Shot", "archetype": "attack-bow"},
+    {"name": "Lightning Strike", "archetype": "attack-melee"},
+    {"name": "Spark", "archetype": "spell-lightning"}
+  ],
+  "mods": [
+    {"stat_id": "explicit.stat_x1", "text": "# to maximum Life",
+     "slot": "body", "archetype": "attack-bow", "usage_pct": 78.0, "rank_in_slot": 1},
+    {"stat_id": "explicit.stat_x2", "text": "#% increased maximum Life",
+     "slot": "body", "archetype": "attack-bow", "usage_pct": 42.0, "rank_in_slot": 2},
+    {"stat_id": "explicit.stat_x3", "text": "#% increased Attack Speed",
+     "slot": "gloves", "archetype": "attack-bow", "usage_pct": 55.0, "rank_in_slot": 1},
+    {"stat_id": "explicit.stat_x4", "text": "+# to Dexterity",
+     "slot": "gloves", "archetype": "attack-bow", "usage_pct": 31.0, "rank_in_slot": 2},
+    {"stat_id": "explicit.stat_x5", "text": "#% increased Movement Speed",
+     "slot": "boots", "archetype": "attack-bow", "usage_pct": 64.0, "rank_in_slot": 1},
+    {"stat_id": "explicit.stat_x6", "text": "+#% to Cold Resistance",
+     "slot": "ring", "archetype": "attack-bow", "usage_pct": 47.0, "rank_in_slot": 1},
+
+    {"stat_id": "explicit.stat_y1", "text": "# to maximum Life",
+     "slot": "body", "archetype": "attack-melee", "usage_pct": 81.0, "rank_in_slot": 1},
+    {"stat_id": "explicit.stat_y2", "text": "#% increased Physical Damage",
+     "slot": "weapon", "archetype": "attack-melee", "usage_pct": 60.0, "rank_in_slot": 1},
+    {"stat_id": "explicit.stat_y3", "text": "+# to Strength",
+     "slot": "gloves", "archetype": "attack-melee", "usage_pct": 38.0, "rank_in_slot": 1},
+    {"stat_id": "explicit.stat_y4", "text": "#% increased Armour",
+     "slot": "boots", "archetype": "attack-melee", "usage_pct": 44.0, "rank_in_slot": 1},
+
+    {"stat_id": "explicit.stat_z1", "text": "# to maximum Mana",
+     "slot": "amulet", "archetype": "spell-lightning", "usage_pct": 52.0, "rank_in_slot": 1},
+    {"stat_id": "explicit.stat_z2", "text": "#% increased Spell Damage",
+     "slot": "amulet", "archetype": "spell-lightning", "usage_pct": 70.0, "rank_in_slot": 2},
+    {"stat_id": "explicit.stat_z3", "text": "+# to Lightning Damage",
+     "slot": "weapon", "archetype": "spell-lightning", "usage_pct": 66.0, "rank_in_slot": 1},
+    {"stat_id": "explicit.stat_z4", "text": "#% increased Cast Speed",
+     "slot": "gloves", "archetype": "spell-lightning", "usage_pct": 58.0, "rank_in_slot": 1},
+    {"stat_id": "explicit.stat_z5", "text": "+# to maximum Energy Shield",
+     "slot": "helmet", "archetype": "spell-lightning", "usage_pct": 33.0, "rank_in_slot": 1}
+  ],
+  "passives": []
+}

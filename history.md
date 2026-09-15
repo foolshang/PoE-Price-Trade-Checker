@@ -5,6 +5,56 @@
 
 ---
 
+## 2026-09-15 — F4 "Skill Mod Reference" prep, hidden behind flag (v0.7.5)
+
+**Why:** Future replacement for F4 price-check — pick a skill, see popular mods
+per slot (helmet/body/gloves/.../weapon), eventually a Passive section too. The
+hub doesn't publish `skills[]`/`passives[]` yet, so this round is UI+data-layer
+scaffolding only, tested against a mock file, wired behind a default-off flag
+so the existing F4 flow (scan+hover price check) stays completely untouched.
+
+**Added:**
+- `config.py`: new `f4_mode` key, default `"price"` (old behavior). Setting it
+  to `"skill_ref"` switches F4 to the new window instead.
+- `skill_ref.py` (new): `SkillRefDB` data layer — `search_skills(prefix)`
+  (autocomplete), `mods_for_skill(name)` (skill → archetype → slot → mods),
+  `passives_for_skill(name)` (phase-2 stub, always `[]`). `source="mock"` reads
+  `%LOCALAPPDATA%\PoePriceTrade\mock\skill_meta_mock.json`; `source="hub"` is an
+  intentional `NotImplementedError` stub — see the `TODO(hub)` block at the top
+  of the file for exactly what's missing hub-side before that can be wired up.
+- `skill_ref_window.py` (new): `SkillRefWindow`, a `Toplevel` styled like
+  `mod_picker.py`'s `ModPickerWindow` — skill entry with live dropdown
+  (`search_skills` on every keystroke), mod table grouped by slot/rank once a
+  skill is picked, and a static "Passive — รอข้อมูลจาก hub" placeholder section.
+- `tools/skill_meta_mock.json` (new): 4 skills / 3 archetypes (attack-bow,
+  attack-melee, spell-lightning) / ~15 mods across several slots, enough to
+  exercise autocomplete + the per-slot table.
+- `app.py`: `_on_f4_scan` gained a one-line guard at the top — if
+  `config.f4_mode == "skill_ref"`, open `SkillRefWindow` and return; otherwise
+  falls through to the existing scan+hover code completely unchanged (no other
+  line in the existing F4 path was touched).
+
+**Verified:**
+- `SkillRefDB` exercised directly against the mock file (search/mods/passives
+  incl. unknown-skill case) — correct.
+- `SkillRefWindow` driven programmatically (set skill var, select, check
+  suggestion list + rendered table + close callback) — correct.
+- Built v0.7.5 from the existing `.spec`, ran the real exe: confirmed the
+  window title bar shows `v0.7.5`; with `f4_mode` temporarily flipped to
+  `"skill_ref"` in the real config and the mock file copied into
+  `%LOCALAPPDATA%\PoePriceTrade\mock\`, a real F4 keypress (OS-level
+  `RegisterHotKey`, confirmed via `SendKeys` + window enumeration, not just
+  simulated in-process) opened the "Skill Mod Reference" window as expected.
+  Reverted `config.json` to its original state afterward (`f4_mode` absent →
+  defaults back to `"price"`) — the user's live config/session were not left
+  in the new mode.
+
+**Known gap:** hub has no `skills[]`/`passives[]` yet — see `TODO(hub)` in
+`skill_ref.py`. Do not flip the default `f4_mode` to `"skill_ref"` or point
+`source` at `"hub"` until the hub side ships that data.
+
+---
+
 ## 2026-09-14 — Category-based search for rare/magic with stats (v0.7.4, phase 2/2)
 
 **Why:** Phase 1 (v0.7.3) fixed most "item not found" cases by canonicalizing
