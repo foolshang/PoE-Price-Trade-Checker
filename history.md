@@ -5,6 +5,84 @@
 
 ---
 
+## 2026-09-22 — F4 "Skill Mod Reference" rewritten against the real hub schema (v0.7.6)
+
+**Why:** the same-day-earlier round of this feature (see the superseded
+description this entry replaces, before it was ever committed) assumed a hub
+shape — mods grouped by `archetype` via `{game}/meta/latest.json`, skills
+list derived from `passives/latest.json`'s `(main_skill, archetype)` pairs —
+that turned out not to match production at all. A fresh pull of the live hub
+schema (2026-09-22) showed: no `archetype` field exists anywhere; skills are
+routed via `{game}/skills/index.json` keyed by `(skill_type, skill)` (the
+same name can legitimately appear twice, once as `"main"` and once as
+`"spirit"` — e.g. Herald of Ice, Wolf Pack); each skill's mods live in their
+own per-skill file (`{game}/skills/{type}/{slug}.json`) with real per-slot
+`usage_pct`/`population`/`value_min`/`value_max`, broken out by level
+bracket; and `passives/latest.json` is keyed by `(skill_type, skill,
+level_bracket)`, schema_version 3. Decision: discard the archetype-grouped
+design entirely and rebuild `skill_ref.py`/`skill_ref_window.py` against the
+confirmed real schema, no mock mode (hub has real production data now).
+
+**Changed:**
+- `hub_client.py`: added `get_skills_index(game)`, `get_skill_file(path)`
+  (fetches a per-skill file by its exact hub-relative path from an index
+  entry), and `get_skills_dictionary(game)` (`{game}/skills/dictionary.json`
+  → `stat_dictionary: [{stat_id, template, mod_kind}]`, not a flat map, as
+  first assumed — the dictionary keeps a `"|N"`-suffixed `stat_id` as its own
+  entry with option-specific text, e.g. `explicit.stat_264262054|5` →
+  `"Legacy of Gold"`, so resolution tries the exact id first and only falls
+  back to the suffix-stripped id when there's no per-option entry). All three
+  return `None` on any failure, same posture as `get_meta`/`get_passives`
+  (`get_passives` itself is unchanged — its path/shape was already correct).
+- `mod_db.py`: reverted the `text_for_stat_id()` addition from the discarded
+  round — text resolution for skill_ref now comes entirely from
+  `skills/dictionary.json`, not `mod_db.py`'s GGG trade-stats table.
+- `skill_ref.py`: full rewrite. `SkillRefDB(app_dir, game_version)` — hub
+  only, no `source` param. `load()` eagerly fetches the index, dictionary,
+  and passives file (each schema-version-guarded: skills=1, dictionary=1,
+  passives=3 — a mismatch logs a warning and degrades that payload to empty
+  instead of crashing or misreading fields); `mods_for_skill(skill_type,
+  skill)` lazily fetches and caches a skill's own file on first selection,
+  returning `dict[bracket, dict[slot, list[SlotMod]]]`; `passives_for_skill`
+  returns `dict[bracket, list[Passive]]` filtered/grouped by the same key.
+- `skill_ref_window.py`: full rewrite. Autocomplete dropdown now labels each
+  row with its `skill_type` (`"Herald of Ice  [spirit]"`) since names can
+  collide, and selection carries the actual `Skill` object instead of a bare
+  name string. Added a level-bracket toggle bar (tk.Label buttons, same
+  click-to-select pattern as the existing slot tabs) — brackets are the union
+  of whatever the skill's mods/passives/populations actually have, default
+  `"90-100"` when present. Mod table gained a Range column
+  (`value_min`–`value_max`, blank when either is `None`). Passive section is
+  now filtered to the selected bracket instead of showing every bracket at
+  once. Population caption (`"ฐาน: 90-100 = N คน"`) reads real per-bracket
+  numbers from the skill's own `populations` field (index.json), with the
+  existing `_THIN_POPULATION = 50` local UI threshold for a low-sample
+  warning. A top-of-window warning appears if `db.available()` is `False`
+  (index failed to load). Kept the plain-tk tab bar (not `ttk.Notebook`) and
+  `_resize_to_content()` fixes from the discarded round — those were about
+  Windows theming/Tk geometry quirks, unrelated to the schema mistake.
+- `app.py`: `SkillRefDB` construction (both the initial one and the
+  `_on_game_version_changed` recreation) dropped the now-gone `source=`/
+  `mod_db=` args — just `app_dir` + `game_version`.
+- `tools/skill_meta_mock.json`: deleted — no mock mode left to read it.
+
+**Verified:** full `pytest` suite (230 tests) green. Self-tests run directly
+against the live hub (poe2): `SkillRefDB.load()` → 416 skills, 4436 dictionary
+entries, 417 passive-bearing skills; `search_skills("li")` returns real
+matches with `"Removed Skill"` filtered out; `mods_for_skill`/
+`passives_for_skill` on a real hit skill resolved every mod's `stat_id` to
+real text, including a `"|N"`-suffixed one (`"Legacy of Gold"`); a forced
+bad `schema_version` degraded to `available() == False` / 0 skills without
+raising. Also drove `SkillRefWindow` programmatically against the real loaded
+db (no mock): typed "herald of ice", picked the `spirit` entry out of the
+main/spirit dropdown collision, bracket toggle + slot tabs rendered, no-match
+path showed the right message, close callback fired. `f4_mode` still defaults
+to `"price"` — an actual F4 keypress against a real running build (in-game,
+via the global hotkey) and the PoE1/PoE2 game-version-switch recreation path
+are still open, left for a real-machine pass before the flag gets flipped.
+
+---
+
 ## 2026-09-15 — F4 "Skill Mod Reference" prep, hidden behind flag (v0.7.5)
 
 **Why:** Future replacement for F4 price-check — pick a skill, see popular mods

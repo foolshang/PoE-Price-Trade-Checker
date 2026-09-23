@@ -64,6 +64,49 @@ def get_meta(game: str) -> Optional[dict]:
         return None
 
 
+def get_passives(game: str) -> Optional[dict]:
+    """{game}/passives/latest.json — notable/keystone passive popularity per
+    (skill_type, skill, level_bracket). Returns None on any failure so callers
+    can degrade silently, same posture as get_meta."""
+    try:
+        return _get(f"{game}/passives/latest.json")
+    except Exception as e:
+        log.warning("hub passives fetch failed (%s): %s", game, e)
+        return None
+
+
+def get_skills_index(game: str) -> Optional[dict]:
+    """{game}/skills/index.json — routes a consumer to each skill's own mod
+    file (skill_ref.py). Returns None on any failure so callers can degrade
+    silently, same posture as get_meta/get_passives."""
+    try:
+        return _get(f"{game}/skills/index.json")
+    except Exception as e:
+        log.warning("hub skills index fetch failed (%s): %s", game, e)
+        return None
+
+
+def get_skill_file(path: str) -> Optional[dict]:
+    """Fetch a per-skill mod file by its exact hub-relative path, as given by
+    a skills/index.json entry's "path" field (e.g.
+    'poe2/skills/main/earthquake.json'). Returns None on any failure."""
+    try:
+        return _get(path)
+    except Exception as e:
+        log.warning("hub skill file fetch failed (%s): %s", path, e)
+        return None
+
+
+def get_skills_dictionary(game: str) -> Optional[dict]:
+    """{game}/skills/dictionary.json — stat_id -> display text, for the mod
+    rows in a per-skill file. Returns None on any failure."""
+    try:
+        return _get(f"{game}/skills/dictionary.json")
+    except Exception as e:
+        log.warning("hub skills dictionary fetch failed (%s): %s", game, e)
+        return None
+
+
 def get_league_files(game: str) -> dict:
     """Reshape index.json into the league->file routing table a consumer needs:
 

@@ -85,9 +85,11 @@ class App:
         # a new instance, just passing the current game to load() each time.
         self._mod_badge = ModBadgeDB(cache_dir=self._config.app_dir() / "cache",
                                      config_dir=self._config.app_dir())
-        # F4 "skill_ref" mode — prep only, default off (config.f4_mode == "price").
-        # Mock-backed, never touches hub/Firebase. See skill_ref.py's TODO(hub).
-        self._skill_ref_db = SkillRefDB(self._config.app_dir())
+        # F4 "skill_ref" mode — default off (config.f4_mode == "price"); reachable
+        # only via that flag. Hub-only (see skill_ref.py's docstring) —
+        # recreated on game-version change below.
+        self._skill_ref_db = SkillRefDB(self._config.app_dir(),
+                                        game_version=self._profile.game_version)
         self._skill_ref_db_loaded = False
         self._skill_ref_win: Optional[SkillRefWindow] = None
 
@@ -610,6 +612,9 @@ class App:
         self._repo = PriceRepository(self._profile, cache_dir=self._config.app_dir() / "cache")
         self._mod_db = ModDatabase(self._profile, cache_dir=self._config.app_dir() / "cache")
         self._base_db = BaseDB(self._profile, cache_dir=self._config.app_dir() / "cache")
+        self._skill_ref_db = SkillRefDB(self._config.app_dir(),
+                                        game_version=self._profile.game_version)
+        self._skill_ref_db_loaded = False
         self._league_paths = {}
         self._scanner = None
         self._league_cb.configure(values=self._profile.default_leagues)
