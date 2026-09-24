@@ -277,9 +277,8 @@ class App:
     def _open_skill_ref(self) -> None:
         if self._skill_ref_win is not None:
             self._skill_ref_win.close()
-        if not self._skill_ref_db_loaded:
-            self._skill_ref_db.load()
-            self._skill_ref_db_loaded = True
+        self._skill_ref_db.load()      # refetch on every open — avoids stale hub data for the whole session
+        self._skill_ref_db_loaded = True
         self._skill_ref_win = SkillRefWindow(
             self._root, self._skill_ref_db, on_close=self._on_skill_ref_closed)
 

@@ -44,6 +44,7 @@ class Skill:
     facet_count: int
     populations: dict = field(default_factory=dict)   # {"75-90": 4, "90-100": 96}
     path: str = ""
+    tags: list[str] = field(default_factory=list)     # from hub (joined from gems.json) — may be [] (e.g. Companion: X)
 
 
 @dataclass
@@ -119,6 +120,7 @@ class SkillRefDB:
                     facet_count=int(s.get("facet_count") or 0),
                     populations=s.get("populations") or {},
                     path=s.get("path", ""),
+                    tags=[str(t).lower() for t in (s.get("tags") or [])],
                 )
                 self._skills.append(skill)
                 self._skill_index[(skill.skill_type, skill.skill)] = skill
@@ -158,7 +160,22 @@ class SkillRefDB:
         p = prefix.strip().lower()
         if not p:
             return list(self._skills)
-        return [s for s in self._skills if s.skill.lower().startswith(p)]
+        # Match rank: name prefix (0) > name contains (1) > tag contains (2);
+        # within a rank, higher facet_count (popular skills) first.
+        ranked: list[tuple[int, int, Skill]] = []
+        for s in self._skills:
+            name = s.skill.lower()
+            if name.startswith(p):
+                rank = 0
+            elif p in name:
+                rank = 1
+            elif any(p in t for t in s.tags):     # tags are lowercased in load()
+                rank = 2
+            else:
+                continue
+            ranked.append((rank, -s.facet_count, s))
+        ranked.sort(key=lambda x: (x[0], x[1]))
+        return [s for _, _, s in ranked]
 
     def skill_meta(self, skill_type: str, skill: str) -> Optional[Skill]:
         return self._skill_index.get((skill_type, skill))
