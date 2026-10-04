@@ -71,8 +71,13 @@ jobs:
           TAG: ${{ steps.ver.outputs.tag }}
         shell: bash
         run: |
+          PRERELEASE=""
+          case "$TAG" in
+            *-*) PRERELEASE="--prerelease" ;;   # v0.8.6-test -> prerelease, never becomes "Latest"
+          esac
           gh release create "$TAG" \
             --repo foolshang/PoE-Filter-Generator \
             --title "PoE Filter Generator $TAG" \
             --notes "Standalone PoE1 & PoE2 Filter Generator. ถ้าเจอ error เขียนไฟล์ไม่ได้ / [Errno 9] ดูหัวข้อ 'แก้ปัญหา' (Controlled Folder Access) ใน README." \
+            $PRERELEASE \
             "dist/PoE-Filter-Generator.exe"
