@@ -18,6 +18,7 @@ _INPUT_BG = "#2A2A2A"
 _BUTTON_BG = "#3A3020"
 _PANEL_FONT = ("Segoe UI", 9)
 _SMALL_FONT = ("Segoe UI", 8)
+_RARITIES = ["Normal", "Magic", "Rare", "Unique"]
 _MONO_FONT = ("Consolas", 8)
 
 _STRICTNESS_VALUES = [f"{i} - {lvl}" for i, lvl in enumerate(LEVELS)]
@@ -32,6 +33,7 @@ class FilterGenWindow:
         self._on_generate = on_generate
         self._hub_loader = hub_loader
         self._cat_exclude: dict[str, list[str]] = {}
+        self._custom_entries: list[dict] = []   # {"name", "rarities"} = source of truth
         self._refine_win: Optional[tk.Toplevel] = None
         self._rules = filter_gen.load_rules(config.app_dir())
 
@@ -187,7 +189,7 @@ class FilterGenWindow:
         self._check(f, "whitelist_unique_enabled",
                     "รวม unique ที่ขายถึงเกณฑ์ด้วย (โชว์ตาม base)", row, 0, columnspan=3)
         row += 1
-        tk.Label(f, text="ชื่อที่พิมพ์เอง (contains, ทุก rarity):", bg=_BG, fg=_FG,
+        tk.Label(f, text="ชื่อที่พิมพ์เอง (contains) + เลือก rarity:", bg=_BG, fg=_FG,
                  font=_SMALL_FONT).grid(row=row, column=0, columnspan=3, sticky="w", padx=6, pady=(4, 0))
         row += 1
         custom_frame = tk.Frame(f, bg=_BG)
@@ -199,10 +201,22 @@ class FilterGenWindow:
         entry.bind("<Return>", lambda _e: self._add_custom())
         self._btn(custom_frame, "เพิ่ม", self._add_custom, row=0, column=1)
         self._btn(custom_frame, "ลบที่เลือก", self._remove_custom, row=0, column=2)
+        # rarity picker: used by "เพิ่ม" and "ตั้ง rarity ที่เลือก"
+        rar_frame = tk.Frame(custom_frame, bg=_BG)
+        rar_frame.grid(row=1, column=0, columnspan=3, sticky="w", pady=(3, 0))
+        self._cust_rar = {}
+        for r in _RARITIES:
+            v = tk.BooleanVar(value=(r == "Normal"))   # default = Normal
+            self._cust_rar[r] = v
+            tk.Checkbutton(rar_frame, text=r, variable=v, bg=_BG, fg=_FG,
+                           selectcolor="#2A2020", activebackground=_BG,
+                           font=_SMALL_FONT).pack(side=tk.LEFT)
+        self._btn(rar_frame, "ตั้ง rarity ที่เลือก", self._set_custom_rarity, side=tk.LEFT)
         self._custom_list = tk.Listbox(custom_frame, bg=_INPUT_BG, fg=_FG, font=_PANEL_FONT,
-                                       height=4, width=36, relief=tk.FLAT, selectmode=tk.EXTENDED,
+                                       height=4, width=44, relief=tk.FLAT, selectmode=tk.EXTENDED,
                                        exportselection=False)
-        self._custom_list.grid(row=1, column=0, columnspan=3, sticky="w", pady=(3, 0))
+        self._custom_list.grid(row=2, column=0, columnspan=3, sticky="w", pady=(3, 0))
+        self._custom_list.bind("<<ListboxSelect>>", self._on_custom_select)
         row += 1
         tk.Label(f, text="(เปิดโหมดนี้ = ข้าม filter ปกติ | unique โชว์ทุกตัวบน base ที่มีของแพง)", bg=_BG, fg="#666",
                  font=_SMALL_FONT).grid(row=row, column=0, columnspan=3, sticky="w", padx=6)
@@ -353,18 +367,60 @@ class FilterGenWindow:
         top._refine = {"sel": sel, "q": q, "items": item_vars, "toggle": toggle,
                        "select_all": select_all, "select_none": select_none}
 
+    @staticmethod
+    def _rarity_tag(rarities) -> str:
+        abbr = {"Normal": "N", "Magic": "M", "Rare": "R", "Unique": "U"}
+        rs = [r for r in _RARITIES if r in set(rarities)]
+        return "/".join(abbr[r] for r in rs) if rs else "N"
+
+    def _render_custom(self) -> None:
+        self._custom_list.delete(0, tk.END)
+        for e in self._custom_entries:
+            self._custom_list.insert(
+                tk.END, f"{e['name']}   [{self._rarity_tag(e['rarities'])}]")
+
+    def _current_rarities(self) -> list:
+        rs = [r for r in _RARITIES if self._cust_rar[r].get()]
+        return rs or ["Normal"]       # never empty
+
     def _add_custom(self) -> None:
         text = self._custom_var.get().strip()
         if not text:
             return
-        existing = {t.lower() for t in self._custom_list.get(0, tk.END)}
-        if text.lower() not in existing:
-            self._custom_list.insert(tk.END, text)
+        if any(e["name"].lower() == text.lower() for e in self._custom_entries):
+            self._custom_var.set("")
+            return
+        self._custom_entries.append({"name": text, "rarities": self._current_rarities()})
         self._custom_var.set("")
+        self._render_custom()
 
     def _remove_custom(self) -> None:
-        for idx in reversed(self._custom_list.curselection()):
-            self._custom_list.delete(idx)
+        for idx in sorted(self._custom_list.curselection(), reverse=True):
+            if 0 <= idx < len(self._custom_entries):
+                del self._custom_entries[idx]
+        self._render_custom()
+
+    def _on_custom_select(self, _e=None) -> None:
+        # selecting a name loads its rarities back into the checkboxes
+        sel = self._custom_list.curselection()
+        if not sel or sel[0] >= len(self._custom_entries):
+            return
+        rs = set(self._custom_entries[sel[0]]["rarities"])
+        for r in _RARITIES:
+            self._cust_rar[r].set(r in rs)
+
+    def _set_custom_rarity(self) -> None:
+        # apply the currently ticked rarities to every selected name
+        sel = list(self._custom_list.curselection())
+        if not sel:
+            return
+        rs = self._current_rarities()
+        for idx in sel:
+            if 0 <= idx < len(self._custom_entries):
+                self._custom_entries[idx]["rarities"] = list(rs)
+        self._render_custom()
+        for i in sel:
+            self._custom_list.selection_set(i)
 
     def _browse_game_dir(self) -> None:
         path = filedialog.askdirectory(title="Select the game's filter folder")
@@ -418,9 +474,14 @@ class FilterGenWindow:
         self._cat_exclude = {
             str(c): list(v) for c, v in
             dict(fg.get(f"whitelist_cat_exclude_{self._game_version}", {}) or {}).items() if v}
-        self._custom_list.delete(0, tk.END)
-        for name in fg.get(f"whitelist_custom_{self._game_version}", []):
-            self._custom_list.insert(tk.END, name)
+        self._custom_entries = []
+        for item in fg.get(f"whitelist_custom_{self._game_version}", []):
+            if isinstance(item, str):                       # pre-0.8.2 = any rarity (nothing disappears)
+                self._custom_entries.append({"name": item, "rarities": list(_RARITIES)})
+            elif isinstance(item, dict) and item.get("name"):
+                rs = [r for r in _RARITIES if r in set(item.get("rarities") or [])]
+                self._custom_entries.append({"name": item["name"], "rarities": rs or ["Normal"]})
+        self._render_custom()
         for label, _bts in filter_gen.WHITELIST_CURRENCIES.get(self._game_version, []):
             self._vars[f"whitelist_cur_{label}"].set(label in selected)
 
@@ -466,7 +527,9 @@ class FilterGenWindow:
         fg[f"whitelist_cats_{self._game_version}"] = [
             cat for cat in filter_gen.WHITELIST_CATEGORIES.get(self._game_version, [])
             if self._vars[f"whitelist_cat_{cat}"].get()]
-        fg[f"whitelist_custom_{self._game_version}"] = list(self._custom_list.get(0, tk.END))
+        fg[f"whitelist_custom_{self._game_version}"] = [
+            {"name": e["name"], "rarities": list(e["rarities"])}
+            for e in self._custom_entries]
         fg[f"whitelist_selected_{self._game_version}"] = [
             label for label, _bts in filter_gen.WHITELIST_CURRENCIES.get(self._game_version, [])
             if self._vars[f"whitelist_cur_{label}"].get()]

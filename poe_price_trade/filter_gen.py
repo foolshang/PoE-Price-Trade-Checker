@@ -16,6 +16,7 @@ import hashlib
 import json
 import logging
 import re
+from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -1168,6 +1169,28 @@ def unique_bases_worth_at_least(hub_data: dict, min_divine: float) -> list[str]:
     return out
 
 
+_RARITY_ORDER = ["Normal", "Magic", "Rare", "Unique"]
+
+
+def _normalize_custom(contains_names):
+    """Accepts list[str] (pre-0.8.2 = any rarity) and list[{name, rarities}].
+    Returns [(name, tuple(rarities in canonical order))]. Empty/invalid
+    rarities fall back to every rarity so a name never silently vanishes."""
+    out = []
+    for e in (contains_names or []):
+        if isinstance(e, str):
+            nm, rar = e.strip(), tuple(_RARITY_ORDER)
+        elif isinstance(e, dict):
+            nm = str(e.get("name", "")).strip()
+            rs = [r for r in _RARITY_ORDER if r in set(e.get("rarities") or [])]
+            rar = tuple(rs) if rs else tuple(_RARITY_ORDER)
+        else:
+            continue
+        if nm:
+            out.append((nm, rar))
+    return out
+
+
 def build_whitelist_section(exact_basetypes, unique_bases=None, contains_names=None) -> str:
     """Show exact BaseTypes + Show typed names (BaseType without `==` =
     substring match, any rarity) + Show unique bases (+ Rarity Unique) + Hide
@@ -1175,7 +1198,7 @@ def build_whitelist_section(exact_basetypes, unique_bases=None, contains_names=N
     guard (an all-Hide filter blanks the screen)."""
     exact = sorted({b for b in (exact_basetypes or []) if b})
     uniq = sorted({b for b in (unique_bases or []) if b})
-    cont = sorted({c.strip() for c in (contains_names or []) if c and c.strip()})
+    cont = _normalize_custom(contains_names)
     if not exact and not uniq and not cont:
         return ""
     lines = ["# === PoE Checker - Whitelist (show only) ==="]
@@ -1194,20 +1217,32 @@ def build_whitelist_section(exact_basetypes, unique_bases=None, contains_names=N
             "",
         ]
     if cont:
-        names = " ".join(f'"{c}"' for c in cont)
-        lines += [
-            "# typed names (contains match, any rarity)",
-            "Show",
-            f"    BaseType {names}",
-            "    SetFontSize 45",
-            "    SetTextColor 0 255 255 255",
-            "    SetBorderColor 0 255 255 255",
-            "    SetBackgroundColor 0 50 60 255",
-            "    PlayAlertSound 2 300",
-            "    MinimapIcon 0 Cyan Star",
-            "    PlayEffect Cyan",
-            "",
-        ]
+        # one Show block per rarity set (a block carries one BaseType + one Rarity line)
+        groups = OrderedDict()
+        for nm, rar in cont:
+            groups.setdefault(rar, set()).add(nm)
+        allset = set(_RARITY_ORDER)
+        for rar, names_set in sorted(
+                groups.items(), key=lambda kv: [_RARITY_ORDER.index(r) for r in kv[0]]):
+            joined = " ".join(f'"{c}"' for c in sorted(names_set))
+            tag = "any rarity" if set(rar) == allset else "/".join(rar)
+            lines += [
+                f"# typed names (contains match, {tag})",
+                "Show",
+                f"    BaseType {joined}",
+            ]
+            if set(rar) != allset:
+                lines.append(f"    Rarity {' '.join(rar)}")
+            lines += [
+                "    SetFontSize 45",
+                "    SetTextColor 0 255 255 255",
+                "    SetBorderColor 0 255 255 255",
+                "    SetBackgroundColor 0 50 60 255",
+                "    PlayAlertSound 2 300",
+                "    MinimapIcon 0 Cyan Star",
+                "    PlayEffect Cyan",
+                "",
+            ]
     if uniq:
         names = " ".join(f'"{b}"' for b in uniq)
         lines += [

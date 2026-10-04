@@ -1908,3 +1908,26 @@ def test_expand_categories_without_exclude_shows_whole_category():
                         {"category": "Rune", "name": "Lesser Rune"}]}
     assert sorted(filter_gen.expand_categories(hub, ["Rune"])) == ["Adept Rune", "Lesser Rune"]
     assert sorted(filter_gen.expand_categories(hub, ["Rune"], {})) == ["Adept Rune", "Lesser Rune"]
+
+
+def test_typed_names_legacy_strings_have_no_rarity_line():
+    out = filter_gen.build_whitelist_section([], None, ["Heavy Belt", "Sapphire"])
+    assert out.count("Show") == 1
+    assert '    BaseType "Heavy Belt" "Sapphire"' in out
+    assert "Rarity" not in out
+
+
+def test_typed_names_split_blocks_by_rarity_set():
+    out = filter_gen.build_whitelist_section([], None, [
+        {"name": "Heavy Belt", "rarities": ["Normal"]},
+        {"name": "Vaal Regalia", "rarities": ["Unique", "Rare"]},
+    ])
+    assert out.count("Show") == 2
+    assert "    Rarity Normal" in out and "    Rarity Rare Unique" in out
+    assert out.index('"Heavy Belt"') < out.index('"Vaal Regalia"')
+    assert out.rstrip().splitlines()[-1] == "Hide"
+
+
+def test_typed_names_empty_rarities_fall_back_to_any():
+    out = filter_gen.build_whitelist_section([], None, [{"name": "Heavy Belt", "rarities": []}])
+    assert "Rarity" not in out and '"Heavy Belt"' in out
