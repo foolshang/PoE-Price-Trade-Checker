@@ -28,7 +28,7 @@ from . import mod_badge
 from .mod_badge import ModBadgeDB
 from .skill_ref import SkillRefDB
 from .skill_ref_window import SkillRefWindow
-from . import filter_gen, filter_output, neversink_source
+from . import filter_gen, filter_output, filter_service
 from .filter_window import FilterGenWindow
 from .tray import TrayIcon
 
@@ -751,125 +751,23 @@ class App:
         gv = self._gv_var.get()
         league = self._league_var.get()
         path = self._league_paths.get(league) or f"{gv}/prices/latest.json"
-        cache_dir = self._config.app_dir() / "cache"
-        app_dir = self._config.app_dir()
-        fg_cfg = dict(self._config.get("filter_gen", {}) or {})
-        out_dir = filter_output.game_filter_dir(gv, fg_cfg.get(f"game_dir_{gv}", ""))
 
-        if fg_cfg.get("whitelist_enabled"):
-            cur_map = dict(filter_gen.WHITELIST_CURRENCIES.get(gv, []))
-            exact = [bt for lb in fg_cfg.get(f"whitelist_selected_{gv}", [])
-                     for bt in cur_map.get(lb, [])]
-            if fg_cfg.get("whitelist_gold"):
-                exact += filter_gen.GOLD_BASETYPES
-            contains = list(fg_cfg.get(f"whitelist_custom_{gv}", []))
-            # poe2: uncut gem + level per type | poe1: gem names -> contains
-            gem_uncut = [(b, int(lv)) for b, lv in
-                         (fg_cfg.get(f"whitelist_gem_uncut_{gv}", {}) or {}).items()]
-            contains += list(fg_cfg.get(f"whitelist_gem_names_{gv}", []))
-            cats = fg_cfg.get(f"whitelist_cats_{gv}", [])
-            uniq_bases: list[str] = []
+        def _log(msg: str, tag: str = "info") -> None:
+            self._root.after_idle(lambda m=msg, t=tag: self._win_log(m, t))
 
-            if cats:
-                try:
-                    hub_data = hub_client.get_prices(path)
-                    exact += filter_gen.expand_categories(
-                        hub_data, cats, fg_cfg.get(f"whitelist_cat_exclude_{gv}", {}))
-                except Exception as e:
-                    self._root.after_idle(lambda err=e: self._win_log(
-                        f"⚠ ดึง hub ไม่ได้ ใช้เฉพาะ currency/ชื่อที่ติ๊ก: {err}", "warn"))
+        res = filter_service.generate_filter(self._config, gv, path,
+                                             force_base=force_base, league=league, log=_log)
 
-            if not exact and not uniq_bases and not contains and not gem_uncut:
-                self._root.after_idle(lambda: self._win_log(
-                    "⚠ โหมดโชว์เฉพาะ: ยังไม่ได้เลือกอะไร — ไม่ generate", "warn"))
-                return
-            section = filter_gen.build_whitelist_section(exact, uniq_bases, contains,
-                                                         gem_uncut=gem_uncut)
-            try:
-                out_path = filter_output.write_filter(out_dir, section, base_text=None)
-            except Exception as e:
-                log.exception("whitelist filter write error")
-                self._root.after_idle(lambda err=e: self._win_log(f"✗ generate ล้มเหลว: {err}", "err"))
-                return
-            count = len(set(exact)) + len(set(uniq_bases)) + len(contains) + len(gem_uncut)
-            debug.event(f"whitelist filter generated gv={gv} items={count} path={out_path}")
-            self._root.after_idle(lambda p=out_path, c=count: self._win_log(
-                f"✓ filter โหมดโชว์เฉพาะ ({c} รายการ) → {p}", "ok"))
-            self._root.after_idle(
-                lambda: self._win_log("Filter updated — reload in game (Options → Game)", "ok"))
-            return
-
-        self._root.after_idle(lambda: self._win_log(f"⟳ ดึง NeverSink base filter ({gv})…", "info"))
-        strictness = int(fg_cfg.get(f"strictness_{gv}", 2))
-        base_text, tag = neversink_source.fetch_base_filter(gv, strictness, cache_dir, force=force_base)
-        if base_text is None:
-            self._root.after_idle(
-                lambda: self._win_log("⚠ ไม่มี NeverSink base filter ให้ใช้ (GitHub ล่ม + ไม่มี cache)", "warn"))
-        else:
-            self._root.after_idle(lambda t=tag: self._win_log(f"✓ NeverSink base filter พร้อม (tag={t})", "ok"))
-
-        hub_data = None
-        try:
-            hub_data = hub_client.get_prices(path)
-        except Exception as e:
-            self._root.after_idle(lambda err=e: self._win_log(f"⚠ ดึงราคาจาก hub ไม่ได้: {err}", "warn"))
-
-        generated_section = ""
-        new_sig = None
-        new_mapping = None
-        if hub_data is not None:
-            staleness_hours = float(fg_cfg.get("staleness_hours", 24))
-            if filter_gen.is_stale(hub_data, staleness_hours):
-                self._root.after_idle(
-                    lambda: self._win_log("⚠ hub snapshot เก่าเกินกำหนด — ข้าม section ราคา ใช้ NeverSink ล้วน", "warn"))
-            else:
-                rules = filter_gen.load_rules(app_dir)
-                # last-resort fallback only: if a unique tier's real style can't be
-                # ripped from base_text (resolve_real_styles, inside build_filter),
-                # its hardcoded style still needs *some* sound value. Currency itself
-                # never touches this — it's 100% surgically merged or left alone.
-                rules = filter_gen.apply_base_filter_sounds(rules, base_text)
-                sound_map = {
-                    "S": fg_cfg.get("sound_s") or None,
-                    "A": fg_cfg.get("sound_a") or None,
-                    "B": fg_cfg.get("sound_b") or None,
-                }
-                copied = filter_output.copy_sounds(out_dir, sound_map)
-                generated_section, base_text, surgery_applied, anchor_status = filter_gen.build_filter(
-                    hub_data, rules, base_text, copied)
-                new_mapping = filter_gen.tier_mapping(hub_data, rules)
-                new_sig = filter_gen.signature(hub_data, rules)
-                resolved_tiers = [t for t, a in anchor_status.items() if a]
-                unresolved_tiers = [t for t, a in anchor_status.items() if not a]
-                if surgery_applied:
-                    msg = ("✓ รวม currency เข้ากับ NeverSink base โดยตรง — ใช้เสียง/สไตล์ของ NeverSink เอง "
-                           f"(tier {'/'.join(resolved_tiers)} resolve ได้")
-                    if unresolved_tiers:
-                        msg += f", tier {'/'.join(unresolved_tiers)} หา anchor ไม่เจอ — ข้ามเฉพาะ tier นั้น)"
-                    else:
-                        msg += ")"
-                    self._root.after_idle(lambda m=msg: self._win_log(m, "ok"))
-                else:
-                    self._root.after_idle(lambda: self._win_log(
-                        "⚠ รวม currency เข้ากับ base ไม่ได้เลยสักตัว (หา anchor block ไม่เจอทุก tier) — "
-                        "ปล่อย currency ในไฟล์เดิมไว้ตามเดิม ไม่เติม style ของเราเอง", "warn"))
-
-        try:
-            written = filter_output.write_filter(out_dir, generated_section, base_text)
-            debug.event(f"filter generated gv={gv} league={league} base_tag={tag} "
-                        f"hub={'ok' if hub_data is not None else 'unavailable'} path={written}")
-            self._root.after_idle(lambda p=written: self._win_log(f"✓ เขียน filter แล้ว: {p}", "ok"))
-            self._root.after_idle(
-                lambda: self._win_log("Filter updated — reload in game (Options → Game)", "ok"))
-            filter_output.save_state(app_dir, gv, last_generated_at=datetime.now().isoformat(),
-                                     last_signature=new_sig, last_mapping=new_mapping, base_tag=tag)
+        if res and res.get("mode") == "tier" and res.get("path"):
+            filter_output.save_state(
+                self._config.app_dir(), gv,
+                last_generated_at=datetime.now().isoformat(),
+                last_signature=res.get("signature"),
+                last_mapping=res.get("mapping"),
+                base_tag=res.get("base_tag"))
             if notify_change_count is not None:
-                self._root.after_idle(lambda c=notify_change_count: self._on_auto_regen_notify(c))
-        except ValueError as e:
-            self._root.after_idle(lambda err=e: self._win_log(f"✗ {err} — ไฟล์เดิมไม่ถูกแตะ", "err"))
-        except Exception as e:
-            log.exception("filter generate error")
-            self._root.after_idle(lambda err=e: self._win_log(f"✗ generate ล้มเหลว: {err}", "err"))
+                self._root.after_idle(
+                    lambda c=notify_change_count: self._on_auto_regen_notify(c))
 
     def _poll_filter_regen(self) -> None:
         """15-minute Tk timer tick — must never do network I/O inline (that
