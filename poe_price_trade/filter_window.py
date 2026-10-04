@@ -180,15 +180,6 @@ class FilterGenWindow:
         self._btn(cat_frame, "ปรับรายการในหมวด…", self._open_cat_refine,
                   row=(len(filter_gen.WHITELIST_CATEGORIES.get(self._game_version, [])) + 2) // 3, column=0, columnspan=3, sticky="w", pady=(4, 0))
         row += 1
-        min_frame = tk.Frame(f, bg=_BG)
-        min_frame.grid(row=row, column=0, columnspan=3, sticky="w")
-        self._check(min_frame, "whitelist_min_enabled", "ของขาย ≥", 0, 0, columnspan=1)
-        self._entry(min_frame, "whitelist_min_value", 0, 1, width=6)
-        self._combo(min_frame, "whitelist_min_unit", ["div", "ex"], 0, 2, width=5)
-        row += 1
-        self._check(f, "whitelist_unique_enabled",
-                    "รวม unique ที่ขายถึงเกณฑ์ด้วย (โชว์ตาม base)", row, 0, columnspan=3)
-        row += 1
         tk.Label(f, text="ชื่อที่พิมพ์เอง (contains) + เลือก rarity:", bg=_BG, fg=_FG,
                  font=_SMALL_FONT).grid(row=row, column=0, columnspan=3, sticky="w", padx=6, pady=(4, 0))
         row += 1
@@ -218,7 +209,7 @@ class FilterGenWindow:
         self._custom_list.grid(row=2, column=0, columnspan=3, sticky="w", pady=(3, 0))
         self._custom_list.bind("<<ListboxSelect>>", self._on_custom_select)
         row += 1
-        tk.Label(f, text="(เปิดโหมดนี้ = ข้าม filter ปกติ | unique โชว์ทุกตัวบน base ที่มีของแพง)", bg=_BG, fg="#666",
+        tk.Label(f, text="(เปิดโหมดนี้ = ข้าม filter ปกติ, generate เฉพาะที่เลือก)", bg=_BG, fg="#666",
                  font=_SMALL_FONT).grid(row=row, column=0, columnspan=3, sticky="w", padx=6)
         row += 1
 
@@ -461,10 +452,6 @@ class FilterGenWindow:
         self._vars["regen_cooldown_min"].set(str(fg.get("regen_cooldown_min", 60)))
         self._vars["auto_regen"].set(bool(fg.get("auto_regen", True)))
         self._vars["whitelist_enabled"].set(bool(fg.get("whitelist_enabled", False)))
-        self._vars["whitelist_min_enabled"].set(bool(fg.get("whitelist_min_enabled", False)))
-        self._vars["whitelist_min_value"].set(str(fg.get("whitelist_min_value", "1")))
-        self._vars["whitelist_min_unit"].set(fg.get("whitelist_min_unit", "div"))
-        self._vars["whitelist_unique_enabled"].set(bool(fg.get("whitelist_unique_enabled", False)))
         selected = set(fg.get(f"whitelist_selected_{self._game_version}", []))
         # pre-0.8.0 configs stored Gold as a currency label
         self._vars["whitelist_gold"].set(bool(fg.get("whitelist_gold", "Gold" in selected)))
@@ -517,10 +504,6 @@ class FilterGenWindow:
             pass
         fg["auto_regen"] = bool(self._vars["auto_regen"].get())
         fg["whitelist_enabled"] = bool(self._vars["whitelist_enabled"].get())
-        fg["whitelist_min_enabled"] = bool(self._vars["whitelist_min_enabled"].get())
-        fg["whitelist_min_value"] = self._vars["whitelist_min_value"].get().strip() or "1"
-        fg["whitelist_min_unit"] = self._vars["whitelist_min_unit"].get() or "div"
-        fg["whitelist_unique_enabled"] = bool(self._vars["whitelist_unique_enabled"].get())
         fg["whitelist_gold"] = bool(self._vars["whitelist_gold"].get())
         fg[f"whitelist_cat_exclude_{self._game_version}"] = {
             c: sorted(v) for c, v in self._cat_exclude.items() if v}

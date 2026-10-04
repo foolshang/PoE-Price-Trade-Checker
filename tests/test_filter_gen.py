@@ -1826,54 +1826,12 @@ def test_whitelist_currencies_cover_both_games():
     assert filter_gen.GOLD_BASETYPES == ["Gold"]
 
 
-def _mock_hub():
-    return {
-        "currency": [
-            {"category": "Currency", "name": "Divine Orb", "divine_value": 1.0, "listing_count": 500,
-             "value": 400.0, "value_currency": "exalted"},
-            {"category": "Currency", "name": "Chaos Orb", "divine_value": 0.01, "listing_count": 900,
-             "value": 4.0, "value_currency": "exalted"},
-            {"category": "Currency", "name": "Rare Thing", "divine_value": 5.0, "listing_count": 1},
-        ],
-        "items": [
-            {"category": "UniqueWeapon", "name": "Redbeak", "base": "Shortsword",
-             "divine_value": 2.0, "listing_count": 10},
-            {"category": "UniqueWeapon", "name": "Winter's Bite", "base": "Glass Shank",
-             "divine_value": 3789766.0, "listing_count": 2},
-            {"category": "UniqueArmour", "name": "Cheap", "base": "Rags",
-             "divine_value": 0.1, "listing_count": 50},
-            {"category": "SkillGem", "name": "Awakened Gem", "divine_value": 3.0, "listing_count": 8},
-        ],
-    }
-
-
 def test_whitelist_two_blocks_when_unique_bases_given():
     out = filter_gen.build_whitelist_section(["Divine Orb"], ["Shortsword"])
     assert out.count("Show") == 2
     assert "Rarity Unique" in out and '"Shortsword"' in out
     assert out.rstrip().splitlines()[-1] == "Hide"
     assert filter_gen.build_whitelist_section([], []) == ""
-
-
-def test_basetypes_worth_at_least_skips_unique_gem_and_low_listings():
-    got = filter_gen.basetypes_worth_at_least(_mock_hub(), 1)
-    assert got == ["Divine Orb"]  # SkillGem + unique + low-listing all skipped
-
-
-def test_unique_bases_worth_at_least_filters_outliers():
-    got = filter_gen.unique_bases_worth_at_least(_mock_hub(), 1)
-    assert got == ["Shortsword"]  # Winter's Bite (2 listings) dropped, Cheap below N
-
-
-def test_ex_per_div_picks_best_listed_exalted_and_converts_threshold():
-    hub = {"currency": [
-        {"category": "Currency", "name": "Exalted Orb", "divine_value": 0.002, "listing_count": 900},
-        {"category": "Currency", "name": "Divine Orb", "divine_value": 1.0, "listing_count": 900},
-    ], "items": [{"category": "Currency", "name": "Exalted Orb", "divine_value": 0.9}]}
-    assert filter_gen._ex_per_div(hub) == pytest.approx(500)
-    min_div = 100 / filter_gen._ex_per_div(hub)       # >= 100 ex == >= 0.2 div
-    assert filter_gen.basetypes_worth_at_least(hub, min_div) == ["Divine Orb"]
-    assert filter_gen._ex_per_div({}) == 0.0
 
 
 def test_names_in_categories_ignores_price_and_case():

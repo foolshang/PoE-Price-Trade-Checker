@@ -1048,7 +1048,7 @@ WHITELIST_CURRENCIES = {
 
 GOLD_BASETYPES = ["Gold"]   # BaseType == "Gold" (verified in NeverSink poe2 + poe1)
 
-# Whole-category checkboxes (hub category ids). Subset of _WORTH_CATEGORIES.
+# Whole-category checkboxes (hub category ids).
 WHITELIST_CATEGORIES = {
     "poe2": ["Currency", "Fragment", "Rune", "Essence", "SoulCore", "Omen",
              "Catalyst", "Delirium", "Verisium", "AbyssalBone", "Artifact",
@@ -1057,29 +1057,11 @@ WHITELIST_CATEGORIES = {
              "Scarab", "Artifact", "DeliriumOrb", "DivinationCard"],
 }
 
-# Outlier guard: entries with fewer listings than this don't count toward the
-# ">= N" threshold (their price is unreliable). 0 disables the guard.
-_MIN_LISTINGS_FOR_VALUE = 3
-
-# Hub categories whose entry `name` is a real in-game BaseType of a droppable
-# stackable/item, i.e. safe to emit as `BaseType == "<name>"` in the ">= N"
-# threshold. Verified against live hub payloads (union of both games; names are
-# lowercase). Deliberately NOT included:
-#   basetype / clusterjewel (poe1)  priced crafting bases / enchant-text names
-#   skillgem (both games)           priced per level/quality variant, but the
-#                                   filter would show every copy of the gem
-#   uncutgem (poe2)                 names like "Uncut Spirit Gem (Level 4)"
-#   map (poe1)                      name format unverified, none worth >= 1 div
-_WORTH_CATEGORIES = {
-    # poe2
-    "abyssalbone", "catalyst", "delirium", "expedition", "idol", "lineagegem",
-    "omen", "rune", "soulcore", "verisium", "precursortablet",
-    # poe1
-    "deliriumorb", "divinationcard", "fossil", "oil", "resonator", "scarab",
-    "incubator",
-    # both
-    "artifact", "currency", "essence", "fragment",
-}
+# Hub categories NOT offered as whole-category checkboxes (verified against live
+# hub payloads): basetype / clusterjewel (poe1) are priced crafting bases and
+# enchant-text names; skillgem (both) is priced per level/quality variant but a
+# filter would show every copy; uncutgem (poe2) names look like
+# "Uncut Spirit Gem (Level 4)" (not a BaseType); map (poe1) name format unverified.
 
 
 def _iter_hub_items(hub_data: dict):
@@ -1089,28 +1071,6 @@ def _iter_hub_items(hub_data: dict):
         for it in (hub_data or {}).get(section, []) or []:
             if isinstance(it, dict):
                 yield it
-
-
-def _ex_per_div(hub_data: dict) -> float:
-    """Exalted Orb's price expressed as 1/divine_value (= how many exalted make
-    one divine). Uses the best-listed Exalted Orb entry (poe2 has a second,
-    listing-less one with a different rate). 0.0 when unavailable."""
-    best, best_listings = 0.0, -1
-    for it in _iter_hub_items(hub_data):
-        if (it.get("name") or "").strip() == "Exalted Orb":
-            n = int(it.get("listing_count") or 0)
-            dv = float(it.get("divine_value") or 0)
-            if dv > 0 and n > best_listings:
-                best, best_listings = dv, n
-    return (1.0 / best) if best > 0 else 0.0
-
-
-def _is_unique(it: dict) -> bool:
-    return str(it.get("category") or "").lower().startswith("unique")
-
-
-def _reliable(it: dict) -> bool:
-    return int(it.get("listing_count") or 0) >= _MIN_LISTINGS_FOR_VALUE
 
 
 def names_in_categories(hub_data: dict, categories) -> list[str]:
@@ -1133,39 +1093,6 @@ def expand_categories(hub_data: dict, categories, exclude: Optional[dict] = None
     for cat in categories or []:
         skip = set(exclude.get(cat, []))
         out += [n for n in names_in_categories(hub_data, [cat]) if n not in skip]
-    return out
-
-
-def basetypes_worth_at_least(hub_data: dict, min_divine: float) -> list[str]:
-    """Allowlisted-category entries worth >= min_divine (the threshold is
-    always in divine; the caller converts ex -> div via _ex_per_div) ->
-    BaseType names (= entry name)."""
-    out = []
-    for it in _iter_hub_items(hub_data):
-        name = (it.get("name") or "").strip()
-        cat = str(it.get("category") or "").lower()
-        if not name or cat not in _WORTH_CATEGORIES or not _reliable(it):
-            continue
-        if float(it.get("divine_value") or 0) >= min_divine:
-            out.append(name)
-    return out
-
-
-def unique_bases_worth_at_least(hub_data: dict, min_divine: float) -> list[str]:
-    """Uniques worth >= min_divine -> their `base` field, for
-    Show BaseType + Rarity Unique. The game shows an unidentified unique only
-    as base + colour, so we can't filter per unique: every unique on that
-    base gets shown.
-    TODO (poe1): UniqueMap bases are maps (better matched by Class "Maps") and
-    UniqueJewel bases are just Cobalt/Crimson/Viridian Jewel (shows nearly all
-    unique jewels) - consider skipping those categories."""
-    out = []
-    for it in _iter_hub_items(hub_data):
-        base = (it.get("base") or "").strip()
-        if not _is_unique(it) or not base or not _reliable(it):
-            continue
-        if float(it.get("divine_value") or 0) >= min_divine:
-            out.append(base)
     return out
 
 

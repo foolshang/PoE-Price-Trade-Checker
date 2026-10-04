@@ -766,30 +766,11 @@ class App:
             cats = fg_cfg.get(f"whitelist_cats_{gv}", [])
             uniq_bases: list[str] = []
 
-            min_on = bool(fg_cfg.get("whitelist_min_enabled"))
-            if cats or min_on:
+            if cats:
                 try:
                     hub_data = hub_client.get_prices(path)
-                    if cats:
-                        exact += filter_gen.expand_categories(
-                            hub_data, cats, fg_cfg.get(f"whitelist_cat_exclude_{gv}", {}))
-                    if min_on:
-                        try:
-                            n = float(fg_cfg.get("whitelist_min_value") or 1)
-                        except (TypeError, ValueError):
-                            n = 1.0
-                        unit = fg_cfg.get("whitelist_min_unit", "div")
-                        if unit == "ex":
-                            epd = filter_gen._ex_per_div(hub_data)
-                            min_div = (n / epd) if epd > 0 else float("inf")
-                        else:
-                            min_div = n
-                        with_unique = bool(fg_cfg.get("whitelist_unique_enabled"))
-                        exact += filter_gen.basetypes_worth_at_least(hub_data, min_div)
-                        if with_unique:
-                            uniq_bases += filter_gen.unique_bases_worth_at_least(hub_data, min_div)
-                        self._root.after_idle(lambda: self._win_log(
-                            f"✓ hub: ของขาย ≥ {n:g} {unit}" + (" (รวม unique)" if with_unique else ""), "ok"))
+                    exact += filter_gen.expand_categories(
+                        hub_data, cats, fg_cfg.get(f"whitelist_cat_exclude_{gv}", {}))
                 except Exception as e:
                     self._root.after_idle(lambda err=e: self._win_log(
                         f"⚠ ดึง hub ไม่ได้ ใช้เฉพาะ currency/ชื่อที่ติ๊ก: {err}", "warn"))
@@ -805,7 +786,7 @@ class App:
                 log.exception("whitelist filter write error")
                 self._root.after_idle(lambda err=e: self._win_log(f"✗ generate ล้มเหลว: {err}", "err"))
                 return
-            count = len(set(exact)) + len(set(uniq_bases)) + len(set(contains))
+            count = len(set(exact)) + len(set(uniq_bases)) + len(contains)
             debug.event(f"whitelist filter generated gv={gv} items={count} path={out_path}")
             self._root.after_idle(lambda p=out_path, c=count: self._win_log(
                 f"✓ filter โหมดโชว์เฉพาะ ({c} รายการ) → {p}", "ok"))
