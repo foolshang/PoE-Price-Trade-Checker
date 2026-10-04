@@ -23,6 +23,8 @@ _MAX_SUGGESTIONS = 8
 # hub. Anything below this still gets shown (the hub already published it),
 # just with an honest "ข้อมูลน้อย" caption next to the population count.
 _THIN_POPULATION = 50
+# Max height of the scrollable mod/passive body before a scrollbar appears.
+_MAX_BODY_H = 380
 
 
 def _fmt_num(v: float) -> str:
@@ -76,7 +78,8 @@ class SkillRefWindow:
             win, bg=_ENTRY_BG, fg=_FG, font=_FONT, relief=tk.FLAT, height=0,
             selectbackground="#3A3020", activestyle="none", highlightthickness=0,
         )
-        self._suggest_list.pack(fill=tk.X, padx=12, pady=(2, 0))
+        self._search_row = search
+        self._suggest_list.pack(fill=tk.X, padx=12, pady=(2, 0), after=search)
         self._suggest_list.pack_forget()    # ซ่อนจนกว่าจะมี suggestion
 
         self._skill_var.trace_add("write", lambda *_a: self._on_type())
@@ -90,17 +93,28 @@ class SkillRefWindow:
         self._population_label = tk.Label(win, text="", bg=_BG, fg=_DIM, font=_FONT_SMALL)
         self._population_label.pack(anchor="w", padx=12, pady=(2, 0))
 
-        self._table_label = tk.Label(win, text="พิมพ์ชื่อสกิลแล้วเลือกจาก dropdown",
+        body_wrap = tk.Frame(win, bg=_BG)
+        body_wrap.pack(fill=tk.BOTH, expand=True, padx=(12, 0))
+        self._canvas = tk.Canvas(body_wrap, bg=_BG, highlightthickness=0, height=1)
+        self._scrollbar = tk.Scrollbar(body_wrap, orient=tk.VERTICAL, command=self._canvas.yview)
+        self._canvas.configure(yscrollcommand=self._scrollbar.set)
+        self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        body = tk.Frame(self._canvas, bg=_BG)
+        self._body = body
+        self._canvas.create_window((0, 0), window=body, anchor="nw")
+        win.bind_all("<MouseWheel>", self._on_mousewheel)
+
+        self._table_label = tk.Label(body, text="พิมพ์ชื่อสกิลแล้วเลือกจาก dropdown",
                                       bg=_BG, fg=_DIM, font=_FONT_SMALL, justify=tk.LEFT)
-        self._table_label.pack(anchor="w", padx=12, pady=(6, 2))
+        self._table_label.pack(anchor="w", pady=(6, 2))
 
-        self._table_frame = tk.Frame(win, bg=_BG)
-        self._table_frame.pack(fill=tk.BOTH, padx=12)
+        self._table_frame = tk.Frame(body, bg=_BG)
+        self._table_frame.pack(fill=tk.BOTH, padx=(0, 12))
 
-        tk.Label(win, text="Passive", bg=_BG, fg=_ACC, font=_FONT_BOLD).pack(
-            anchor="w", padx=12, pady=(10, 0))
-        self._passive_frame = tk.Frame(win, bg=_BG)
-        self._passive_frame.pack(fill=tk.X, padx=12, pady=(0, 8))
+        tk.Label(body, text="Passive", bg=_BG, fg=_ACC, font=_FONT_BOLD).pack(
+            anchor="w", pady=(10, 0))
+        self._passive_frame = tk.Frame(body, bg=_BG)
+        self._passive_frame.pack(fill=tk.X, padx=(0, 12), pady=(0, 8))
 
         btns = tk.Frame(win, bg=_BG)
         btns.pack(fill=tk.X, padx=10, pady=(4, 10))
@@ -127,16 +141,19 @@ class SkillRefWindow:
         self._suggest_list.delete(0, tk.END)
         if not prefix.strip():
             self._suggest_list.pack_forget()
+            self._resize_to_content()
             return
         matches = self._db.search_skills(prefix)[:_MAX_SUGGESTIONS]
         if not matches:
             self._suggest_list.pack_forget()
+            self._resize_to_content()
             return
         for m in matches:
             self._suggest_list.insert(tk.END, f"{m.skill}  [{m.skill_type}]")
         self._suggest_skills = matches
         self._suggest_list.config(height=len(matches))
-        self._suggest_list.pack(fill=tk.X, padx=12, pady=(2, 0))
+        self._suggest_list.pack(fill=tk.X, padx=12, pady=(2, 0), after=self._search_row)
+        self._resize_to_content()
 
     def _on_type_enter(self, *_ignored) -> None:
         typed = self._skill_var.get().strip()
@@ -180,6 +197,16 @@ class SkillRefWindow:
         clips silently at the old edge instead of growing the window (caught
         visually testing v0.7.6 against real hub data, 2026-09-21)."""
         win = self._win
+        body = self._body
+        body.update_idletasks()
+        body_h = body.winfo_reqheight()
+        self._canvas.config(width=body.winfo_reqwidth(), height=min(body_h, _MAX_BODY_H))
+        self._canvas.configure(scrollregion=(0, 0, body.winfo_reqwidth(), body_h))
+        self._canvas.yview_moveto(0)
+        if body_h > _MAX_BODY_H:
+            self._scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        else:
+            self._scrollbar.pack_forget()
         win.geometry("")   # drop the previous explicit size first — once geometry()
         win.update_idletasks()   # has been set once, reqwidth/reqheight stop tracking
         win.geometry(f"{win.winfo_reqwidth()}x{win.winfo_reqheight()}")  # natural content size otherwise
@@ -323,7 +350,15 @@ class SkillRefWindow:
 
     # ------------------------------------------------------------------
 
+    def _on_mousewheel(self, event) -> None:
+        if self._scrollbar.winfo_ismapped():
+            self._canvas.yview_scroll(int(-event.delta / 120), "units")
+
     def close(self) -> None:
+        try:
+            self._win.unbind_all("<MouseWheel>")
+        except Exception:
+            pass
         try:
             self._win.destroy()
         except Exception:
