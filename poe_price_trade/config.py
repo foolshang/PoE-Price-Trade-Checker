@@ -81,15 +81,15 @@ def _dpapi_decrypt(ciphertext: bytes) -> str:
 # ---------------------------------------------------------------------------
 
 class AppConfig:
-    def __init__(self):
+    def __init__(self, app_dir_name: str = _APP_DIR_NAME):
+        self._app_dir_name = app_dir_name
         self._data: dict = dict(_DEFAULTS)
         self._dir: Path = self._resolve_dir()
         self.load()
 
-    @staticmethod
-    def _resolve_dir() -> Path:
+    def _resolve_dir(self) -> Path:
         base = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
-        p = Path(base) / _APP_DIR_NAME
+        p = Path(base) / self._app_dir_name
         p.mkdir(parents=True, exist_ok=True)
         return p
 

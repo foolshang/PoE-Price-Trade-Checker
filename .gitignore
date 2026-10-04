@@ -9,6 +9,8 @@ build/
 # needed to produce a working .exe), not a PyInstaller-generated throwaway —
 # track it despite the blanket *.spec rule above.
 !PoE-Price-Trade-Checker.spec
+# Same for the standalone Filter Generator's build config.
+!PoE-Filter-Generator.spec
 *.egg-info/
 .pytest_cache/
 *.log

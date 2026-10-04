@@ -4,7 +4,10 @@ No Tk, no app state: takes config + game + league path + a log callback and
 returns what was produced, so the caller can persist state / notify. The
 checker (app.py) and any standalone front-end share this one implementation."""
 from __future__ import annotations
+import errno
 import logging
+import sys
+from pathlib import Path
 from typing import Callable, Optional
 
 from . import debug, filter_gen, filter_output, hub_client, neversink_source
@@ -14,6 +17,28 @@ log_ = logging.getLogger(__name__)
 
 def _noop(msg: str, tag: str = "info") -> None:
     pass
+
+
+# errno / winerror values Windows hands back when something refuses the write.
+# Controlled Folder Access (Defender's anti-ransomware) surfaces as EBADF /
+# EACCES / ENOENT depending on the caller, so the raw text alone is useless.
+_BLOCKED_ERRNOS = {errno.EBADF, errno.EACCES, errno.ENOENT, errno.EPERM}
+_BLOCKED_WINERRORS = {5, 6}          # ERROR_ACCESS_DENIED, ERROR_INVALID_HANDLE
+
+
+def _write_fail_msg(err: BaseException, out_dir) -> str:
+    """User-facing text for a failed filter write. Points at Controlled Folder
+    Access for the errors it is known to cause, keeps the raw error visible."""
+    code = getattr(err, "errno", None)
+    winerr = getattr(err, "winerror", None)
+    if code in _BLOCKED_ERRNOS or winerr in _BLOCKED_WINERRORS:
+        exe = Path(sys.executable).name if getattr(sys, "frozen", False) else "โปรแกรมนี้"
+        return (f"✗ เขียน filter ลงโฟลเดอร์ไม่ได้: {out_dir}\n"
+                f"   Windows อาจบล็อกการเขียน (Controlled Folder Access / Ransomware protection) — "
+                f"อนุญาต {exe} ใน Windows Security → Ransomware protection "
+                f"หรือเลือก Game folder override เป็นโฟลเดอร์อื่น\n"
+                f"   ({err})")
+    return f"✗ เขียน filter ไม่ได้: {err}"
 
 
 def generate_filter(config, game_version: str, league_path: str,
@@ -64,6 +89,10 @@ def generate_filter(config, game_version: str, league_path: str,
                                                      gem_uncut=gem_uncut)
         try:
             out_path = filter_output.write_filter(out_dir, section, base_text=None)
+        except OSError as e:
+            log_.exception("whitelist filter write error")
+            log(_write_fail_msg(e, out_dir), "err")
+            return None
         except Exception as e:
             log_.exception("whitelist filter write error")
             log(f"✗ generate ล้มเหลว: {e}", "err")
@@ -136,6 +165,9 @@ def generate_filter(config, game_version: str, league_path: str,
                 "mapping": new_mapping, "base_tag": tag}
     except ValueError as e:
         log(f"✗ {e} — ไฟล์เดิมไม่ถูกแตะ", "err")
+    except OSError as e:
+        log_.exception("filter generate error")
+        log(_write_fail_msg(e, out_dir), "err")
     except Exception as e:
         log_.exception("filter generate error")
         log(f"✗ generate ล้มเหลว: {e}", "err")

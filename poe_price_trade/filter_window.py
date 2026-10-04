@@ -27,21 +27,27 @@ _STRICTNESS_VALUES = [f"{i} - {lvl}" for i, lvl in enumerate(LEVELS)]
 class FilterGenWindow:
     def __init__(self, parent: tk.Misc, config: AppConfig, game_version: str,
                  on_generate: Optional[Callable[[bool], None]] = None,
-                 hub_loader: Optional[Callable[[], dict]] = None):
+                 hub_loader: Optional[Callable[[], dict]] = None,
+                 *, as_toplevel: bool = True, show_auto_regen: bool = True):
         self._config = config
         self._game_version = game_version
         self._on_generate = on_generate
+        self._as_toplevel = as_toplevel
+        self._show_auto_regen = show_auto_regen
         self._hub_loader = hub_loader
         self._cat_exclude: dict[str, list[str]] = {}
         self._custom_entries: list[dict] = []   # {"name", "rarities"} = source of truth
         self._refine_win: Optional[tk.Toplevel] = None
         self._rules = filter_gen.load_rules(config.app_dir())
 
-        self._win = tk.Toplevel(parent)
-        self._win.title("PoE Price & Trade Checker — Filter Generator")
-        self._win.configure(bg=_BG)
-        self._win.resizable(False, False)
-        self._win.protocol("WM_DELETE_WINDOW", self._win.destroy)
+        if as_toplevel:
+            self._win = tk.Toplevel(parent)
+            self._win.title("PoE Price & Trade Checker — Filter Generator")
+            self._win.configure(bg=_BG)
+            self._win.resizable(False, False)
+            self._win.protocol("WM_DELETE_WINDOW", self._win.destroy)
+        else:
+            self._win = parent          # build into the frame/root handed in
 
         self._vars: dict[str, tk.Variable] = {}
         self._build()
@@ -261,14 +267,20 @@ class FilterGenWindow:
             self._gem_list.grid(row=2, column=0, columnspan=3, sticky="w", pady=(3, 0))
         row += 1
 
-        self._lbl(f, "Staleness limit (hours):", row, 0)
-        self._entry(f, "staleness_hours", row, 1, width=8)
-        row += 1
-        self._lbl(f, "Regen cooldown (min):", row, 0)
-        self._entry(f, "regen_cooldown_min", row, 1, width=8)
-        row += 1
-        self._check(f, "auto_regen", "Auto-regenerate when hub prices move tiers", row, 0, columnspan=3)
-        row += 1
+        if self._show_auto_regen:
+            self._lbl(f, "Staleness limit (hours):", row, 0)
+            self._entry(f, "staleness_hours", row, 1, width=8)
+            row += 1
+            self._lbl(f, "Regen cooldown (min):", row, 0)
+            self._entry(f, "regen_cooldown_min", row, 1, width=8)
+            row += 1
+            self._check(f, "auto_regen", "Auto-regenerate when hub prices move tiers", row, 0, columnspan=3)
+            row += 1
+        else:
+            # hidden, but load/save/generate still read these vars -> keep defaults
+            self._vars["staleness_hours"] = tk.StringVar(value="24")
+            self._vars["regen_cooldown_min"] = tk.StringVar(value="60")
+            self._vars["auto_regen"] = tk.BooleanVar(value=False)
 
         tk.Label(f, text="Status:", bg=_BG, fg=_FG, font=_PANEL_FONT).grid(
             row=row, column=0, sticky="nw", pady=(8, 2))
@@ -288,7 +300,8 @@ class FilterGenWindow:
         self._btn(btn_frame, "Generate Now", self._on_generate_clicked, side=tk.LEFT)
         self._btn(btn_frame, "Refresh NeverSink Base", self._on_refresh_clicked, side=tk.LEFT)
         self._btn(btn_frame, "Save Settings", self._save, side=tk.LEFT)
-        self._btn(btn_frame, "Close", self._win.destroy, side=tk.LEFT)
+        if self._as_toplevel:
+            self._btn(btn_frame, "Close", self._win.destroy, side=tk.LEFT)
 
     def _open_cat_refine(self) -> None:
         """Popup: per-category checklist. Checked = shown (default), unchecked =
