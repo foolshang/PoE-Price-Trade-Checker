@@ -151,6 +151,57 @@ class FilterGenWindow:
                  font=_SMALL_FONT).grid(row=row, column=0, columnspan=3, sticky="w", padx=6)
         row += 1
 
+        tk.Label(f, text="Whitelist mode (show only):", bg=_BG, fg=_FG,
+                 font=_PANEL_FONT).grid(row=row, column=0, columnspan=3, sticky="w", padx=6, pady=(8, 2))
+        row += 1
+        self._check(f, "whitelist_enabled",
+                    "โหมดโชว์เฉพาะ (whitelist) — ซ่อนที่เหลือ", row, 0, columnspan=3)
+        row += 1
+        cur_frame = tk.Frame(f, bg=_BG)
+        cur_frame.grid(row=row, column=0, columnspan=3, sticky="w", padx=6)
+        for i, (label, _bts) in enumerate(filter_gen.WHITELIST_CURRENCIES.get(self._game_version, [])):
+            self._check(cur_frame, f"whitelist_cur_{label}", label, i // 3, i % 3, columnspan=1)
+        row += 1
+        self._check(f, "whitelist_gold", "Gold", row, 0, columnspan=3)
+        row += 1
+        tk.Label(f, text="หมวด (โชว์ทั้งหมวด):", bg=_BG, fg=_FG, font=_SMALL_FONT).grid(
+            row=row, column=0, columnspan=3, sticky="w", padx=6)
+        row += 1
+        cat_frame = tk.Frame(f, bg=_BG)
+        cat_frame.grid(row=row, column=0, columnspan=3, sticky="w", padx=6)
+        for i, cat in enumerate(filter_gen.WHITELIST_CATEGORIES.get(self._game_version, [])):
+            self._check(cat_frame, f"whitelist_cat_{cat}", cat, i // 3, i % 3, columnspan=1)
+        row += 1
+        min_frame = tk.Frame(f, bg=_BG)
+        min_frame.grid(row=row, column=0, columnspan=3, sticky="w")
+        self._check(min_frame, "whitelist_min_enabled", "ของขาย ≥", 0, 0, columnspan=1)
+        self._entry(min_frame, "whitelist_min_value", 0, 1, width=6)
+        self._combo(min_frame, "whitelist_min_unit", ["div", "ex"], 0, 2, width=5)
+        row += 1
+        self._check(f, "whitelist_unique_enabled",
+                    "รวม unique ที่ขายถึงเกณฑ์ด้วย (โชว์ตาม base)", row, 0, columnspan=3)
+        row += 1
+        tk.Label(f, text="ชื่อที่พิมพ์เอง (contains, ทุก rarity):", bg=_BG, fg=_FG,
+                 font=_SMALL_FONT).grid(row=row, column=0, columnspan=3, sticky="w", padx=6, pady=(4, 0))
+        row += 1
+        custom_frame = tk.Frame(f, bg=_BG)
+        custom_frame.grid(row=row, column=0, columnspan=3, sticky="w", padx=6)
+        self._custom_var = tk.StringVar()
+        entry = tk.Entry(custom_frame, textvariable=self._custom_var, bg=_INPUT_BG, fg=_FG,
+                         insertbackground=_FG, relief=tk.FLAT, font=_PANEL_FONT, width=24)
+        entry.grid(row=0, column=0, padx=(0, 4))
+        entry.bind("<Return>", lambda _e: self._add_custom())
+        self._btn(custom_frame, "เพิ่ม", self._add_custom, row=0, column=1)
+        self._btn(custom_frame, "ลบที่เลือก", self._remove_custom, row=0, column=2)
+        self._custom_list = tk.Listbox(custom_frame, bg=_INPUT_BG, fg=_FG, font=_PANEL_FONT,
+                                       height=4, width=36, relief=tk.FLAT, selectmode=tk.EXTENDED,
+                                       exportselection=False)
+        self._custom_list.grid(row=1, column=0, columnspan=3, sticky="w", pady=(3, 0))
+        row += 1
+        tk.Label(f, text="(เปิดโหมดนี้ = ข้าม filter ปกติ | unique โชว์ทุกตัวบน base ที่มีของแพง)", bg=_BG, fg="#666",
+                 font=_SMALL_FONT).grid(row=row, column=0, columnspan=3, sticky="w", padx=6)
+        row += 1
+
         self._lbl(f, "Staleness limit (hours):", row, 0)
         self._entry(f, "staleness_hours", row, 1, width=8)
         row += 1
@@ -179,6 +230,19 @@ class FilterGenWindow:
         self._btn(btn_frame, "Refresh NeverSink Base", self._on_refresh_clicked, side=tk.LEFT)
         self._btn(btn_frame, "Save Settings", self._save, side=tk.LEFT)
         self._btn(btn_frame, "Close", self._win.destroy, side=tk.LEFT)
+
+    def _add_custom(self) -> None:
+        text = self._custom_var.get().strip()
+        if not text:
+            return
+        existing = {t.lower() for t in self._custom_list.get(0, tk.END)}
+        if text.lower() not in existing:
+            self._custom_list.insert(tk.END, text)
+        self._custom_var.set("")
+
+    def _remove_custom(self) -> None:
+        for idx in reversed(self._custom_list.curselection()):
+            self._custom_list.delete(idx)
 
     def _browse_game_dir(self) -> None:
         path = filedialog.askdirectory(title="Select the game's filter folder")
@@ -218,6 +282,22 @@ class FilterGenWindow:
         self._vars["staleness_hours"].set(str(fg.get("staleness_hours", 24)))
         self._vars["regen_cooldown_min"].set(str(fg.get("regen_cooldown_min", 60)))
         self._vars["auto_regen"].set(bool(fg.get("auto_regen", True)))
+        self._vars["whitelist_enabled"].set(bool(fg.get("whitelist_enabled", False)))
+        self._vars["whitelist_min_enabled"].set(bool(fg.get("whitelist_min_enabled", False)))
+        self._vars["whitelist_min_value"].set(str(fg.get("whitelist_min_value", "1")))
+        self._vars["whitelist_min_unit"].set(fg.get("whitelist_min_unit", "div"))
+        self._vars["whitelist_unique_enabled"].set(bool(fg.get("whitelist_unique_enabled", False)))
+        selected = set(fg.get(f"whitelist_selected_{self._game_version}", []))
+        # pre-0.8.0 configs stored Gold as a currency label
+        self._vars["whitelist_gold"].set(bool(fg.get("whitelist_gold", "Gold" in selected)))
+        cats = set(fg.get(f"whitelist_cats_{self._game_version}", []))
+        for cat in filter_gen.WHITELIST_CATEGORIES.get(self._game_version, []):
+            self._vars[f"whitelist_cat_{cat}"].set(cat in cats)
+        self._custom_list.delete(0, tk.END)
+        for name in fg.get(f"whitelist_custom_{self._game_version}", []):
+            self._custom_list.insert(tk.END, name)
+        for label, _bts in filter_gen.WHITELIST_CURRENCIES.get(self._game_version, []):
+            self._vars[f"whitelist_cur_{label}"].set(label in selected)
 
     def _save(self) -> dict:
         """Persist all fields (config.json's filter_gen dict + the
@@ -250,6 +330,19 @@ class FilterGenWindow:
         except ValueError:
             pass
         fg["auto_regen"] = bool(self._vars["auto_regen"].get())
+        fg["whitelist_enabled"] = bool(self._vars["whitelist_enabled"].get())
+        fg["whitelist_min_enabled"] = bool(self._vars["whitelist_min_enabled"].get())
+        fg["whitelist_min_value"] = self._vars["whitelist_min_value"].get().strip() or "1"
+        fg["whitelist_min_unit"] = self._vars["whitelist_min_unit"].get() or "div"
+        fg["whitelist_unique_enabled"] = bool(self._vars["whitelist_unique_enabled"].get())
+        fg["whitelist_gold"] = bool(self._vars["whitelist_gold"].get())
+        fg[f"whitelist_cats_{self._game_version}"] = [
+            cat for cat in filter_gen.WHITELIST_CATEGORIES.get(self._game_version, [])
+            if self._vars[f"whitelist_cat_{cat}"].get()]
+        fg[f"whitelist_custom_{self._game_version}"] = list(self._custom_list.get(0, tk.END))
+        fg[f"whitelist_selected_{self._game_version}"] = [
+            label for label, _bts in filter_gen.WHITELIST_CURRENCIES.get(self._game_version, [])
+            if self._vars[f"whitelist_cur_{label}"].get()]
 
         self._config.set("filter_gen", fg)
         self._config.save()

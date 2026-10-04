@@ -753,6 +753,62 @@ class App:
         fg_cfg = dict(self._config.get("filter_gen", {}) or {})
         out_dir = filter_output.game_filter_dir(gv, fg_cfg.get(f"game_dir_{gv}", ""))
 
+        if fg_cfg.get("whitelist_enabled"):
+            cur_map = dict(filter_gen.WHITELIST_CURRENCIES.get(gv, []))
+            exact = [bt for lb in fg_cfg.get(f"whitelist_selected_{gv}", [])
+                     for bt in cur_map.get(lb, [])]
+            if fg_cfg.get("whitelist_gold"):
+                exact += filter_gen.GOLD_BASETYPES
+            contains = list(fg_cfg.get(f"whitelist_custom_{gv}", []))
+            cats = fg_cfg.get(f"whitelist_cats_{gv}", [])
+            uniq_bases: list[str] = []
+
+            min_on = bool(fg_cfg.get("whitelist_min_enabled"))
+            if cats or min_on:
+                try:
+                    hub_data = hub_client.get_prices(path)
+                    if cats:
+                        exact += filter_gen.names_in_categories(hub_data, cats)
+                    if min_on:
+                        try:
+                            n = float(fg_cfg.get("whitelist_min_value") or 1)
+                        except (TypeError, ValueError):
+                            n = 1.0
+                        unit = fg_cfg.get("whitelist_min_unit", "div")
+                        if unit == "ex":
+                            epd = filter_gen._ex_per_div(hub_data)
+                            min_div = (n / epd) if epd > 0 else float("inf")
+                        else:
+                            min_div = n
+                        with_unique = bool(fg_cfg.get("whitelist_unique_enabled"))
+                        exact += filter_gen.basetypes_worth_at_least(hub_data, min_div)
+                        if with_unique:
+                            uniq_bases += filter_gen.unique_bases_worth_at_least(hub_data, min_div)
+                        self._root.after_idle(lambda: self._win_log(
+                            f"✓ hub: ของขาย ≥ {n:g} {unit}" + (" (รวม unique)" if with_unique else ""), "ok"))
+                except Exception as e:
+                    self._root.after_idle(lambda err=e: self._win_log(
+                        f"⚠ ดึง hub ไม่ได้ ใช้เฉพาะ currency/ชื่อที่ติ๊ก: {err}", "warn"))
+
+            if not exact and not uniq_bases and not contains:
+                self._root.after_idle(lambda: self._win_log(
+                    "⚠ โหมดโชว์เฉพาะ: ยังไม่ได้เลือกอะไร — ไม่ generate", "warn"))
+                return
+            section = filter_gen.build_whitelist_section(exact, uniq_bases, contains)
+            try:
+                out_path = filter_output.write_filter(out_dir, section, base_text=None)
+            except Exception as e:
+                log.exception("whitelist filter write error")
+                self._root.after_idle(lambda err=e: self._win_log(f"✗ generate ล้มเหลว: {err}", "err"))
+                return
+            count = len(set(exact)) + len(set(uniq_bases)) + len(set(contains))
+            debug.event(f"whitelist filter generated gv={gv} items={count} path={out_path}")
+            self._root.after_idle(lambda p=out_path, c=count: self._win_log(
+                f"✓ filter โหมดโชว์เฉพาะ ({c} รายการ) → {p}", "ok"))
+            self._root.after_idle(
+                lambda: self._win_log("Filter updated — reload in game (Options → Game)", "ok"))
+            return
+
         self._root.after_idle(lambda: self._win_log(f"⟳ ดึง NeverSink base filter ({gv})…", "info"))
         strictness = int(fg_cfg.get(f"strictness_{gv}", 2))
         base_text, tag = neversink_source.fetch_base_filter(gv, strictness, cache_dir, force=force_base)
@@ -835,7 +891,7 @@ class App:
     def _filter_regen_check(self) -> None:
         try:
             fg_cfg = dict(self._config.get("filter_gen", {}) or {})
-            if not fg_cfg.get("auto_regen", True):
+            if not fg_cfg.get("auto_regen", True) or fg_cfg.get("whitelist_enabled"):
                 return
             gv = self._gv_var.get()
             league = self._league_var.get()
