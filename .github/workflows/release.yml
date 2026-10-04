@@ -1,0 +1,78 @@
+name: Build & Release Standalone
+
+on:
+  push:
+    tags: ['v*']                 # push a tag like v0.8.7 -> runs automatically
+  workflow_dispatch:             # or run by hand from the Actions tab
+    inputs:
+      version:
+        description: 'Release tag (e.g. v0.8.7)'
+        required: true
+
+jobs:
+  build-release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      # The standalone exe only needs the stdlib + tkinter (PoE-Filter-Generator.spec
+      # excludes pystray/PIL/winrt), so don't install the checker-only dependencies
+      # from requirements.txt — fewer things that can fail on the runner.
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install "pyinstaller>=6.0"
+
+      - name: Resolve tag
+        id: ver
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            tag="$INPUT_VERSION"
+          else
+            tag="$REF_NAME"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Release tag: $tag"
+
+      # The exe embeds __version__ (window title / log marker): refuse to ship a tag
+      # that doesn't match it. "v0.8.6-test" is accepted for v0.8.6 (suffix ignored).
+      - name: Check tag matches __version__
+        shell: bash
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          src=$(python -c "import re;print(re.search(r'__version__\s*=\s*\"([^\"]+)\"', open('poe_price_trade/__init__.py', encoding='utf-8').read()).group(1))")
+          want="${TAG#v}"; want="${want%%-*}"
+          echo "tag=$TAG  source __version__=$src"
+          if [ "$want" != "$src" ]; then
+            echo "::error::Tag $TAG does not match __version__ $src — bump poe_price_trade/__init__.py first"
+            exit 1
+          fi
+
+      - name: Build standalone exe
+        run: pyinstaller PoE-Filter-Generator.spec --noconfirm
+
+      - name: Check exe exists
+        shell: bash
+        run: ls -la dist/PoE-Filter-Generator.exe
+
+      - name: Publish release to public repo
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        shell: bash
+        run: |
+          gh release create "$TAG" \
+            --repo foolshang/PoE-Filter-Generator \
+            --title "PoE Filter Generator $TAG" \
+            --notes "Standalone PoE1 & PoE2 Filter Generator. ถ้าเจอ error เขียนไฟล์ไม่ได้ / [Errno 9] ดูหัวข้อ 'แก้ปัญหา' (Controlled Folder Access) ใน README." \
+            "dist/PoE-Filter-Generator.exe"
