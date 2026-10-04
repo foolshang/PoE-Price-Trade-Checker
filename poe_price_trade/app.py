@@ -763,6 +763,10 @@ class App:
             if fg_cfg.get("whitelist_gold"):
                 exact += filter_gen.GOLD_BASETYPES
             contains = list(fg_cfg.get(f"whitelist_custom_{gv}", []))
+            # poe2: uncut gem + level per type | poe1: gem names -> contains
+            gem_uncut = [(b, int(lv)) for b, lv in
+                         (fg_cfg.get(f"whitelist_gem_uncut_{gv}", {}) or {}).items()]
+            contains += list(fg_cfg.get(f"whitelist_gem_names_{gv}", []))
             cats = fg_cfg.get(f"whitelist_cats_{gv}", [])
             uniq_bases: list[str] = []
 
@@ -775,18 +779,19 @@ class App:
                     self._root.after_idle(lambda err=e: self._win_log(
                         f"⚠ ดึง hub ไม่ได้ ใช้เฉพาะ currency/ชื่อที่ติ๊ก: {err}", "warn"))
 
-            if not exact and not uniq_bases and not contains:
+            if not exact and not uniq_bases and not contains and not gem_uncut:
                 self._root.after_idle(lambda: self._win_log(
                     "⚠ โหมดโชว์เฉพาะ: ยังไม่ได้เลือกอะไร — ไม่ generate", "warn"))
                 return
-            section = filter_gen.build_whitelist_section(exact, uniq_bases, contains)
+            section = filter_gen.build_whitelist_section(exact, uniq_bases, contains,
+                                                         gem_uncut=gem_uncut)
             try:
                 out_path = filter_output.write_filter(out_dir, section, base_text=None)
             except Exception as e:
                 log.exception("whitelist filter write error")
                 self._root.after_idle(lambda err=e: self._win_log(f"✗ generate ล้มเหลว: {err}", "err"))
                 return
-            count = len(set(exact)) + len(set(uniq_bases)) + len(contains)
+            count = len(set(exact)) + len(set(uniq_bases)) + len(contains) + len(gem_uncut)
             debug.event(f"whitelist filter generated gv={gv} items={count} path={out_path}")
             self._root.after_idle(lambda p=out_path, c=count: self._win_log(
                 f"✓ filter โหมดโชว์เฉพาะ ({c} รายการ) → {p}", "ok"))

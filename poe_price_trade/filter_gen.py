@@ -1048,6 +1048,13 @@ WHITELIST_CURRENCIES = {
 
 GOLD_BASETYPES = ["Gold"]   # BaseType == "Gold" (verified in NeverSink poe2 + poe1)
 
+# Uncut gems (poe2 only) - BaseType as in the game; level gated by GemLevel >= N.
+# "Uncut Spirit Gem" is the source of meta gems (no separate 4th BaseType).
+WHITELIST_GEM_UNCUT = {
+    "poe2": ["Uncut Skill Gem", "Uncut Support Gem", "Uncut Spirit Gem"],
+    "poe1": [],
+}
+
 # Whole-category checkboxes (hub category ids).
 WHITELIST_CATEGORIES = {
     "poe2": ["Currency", "Fragment", "Rune", "Essence", "SoulCore", "Omen",
@@ -1118,7 +1125,8 @@ def _normalize_custom(contains_names):
     return out
 
 
-def build_whitelist_section(exact_basetypes, unique_bases=None, contains_names=None) -> str:
+def build_whitelist_section(exact_basetypes, unique_bases=None, contains_names=None,
+                            gem_uncut=None) -> str:
     """Show exact BaseTypes + Show typed names (BaseType without `==` =
     substring match, any rarity) + Show unique bases (+ Rarity Unique) + Hide
     catch-all. Standalone. "" when all inputs are empty - the caller must
@@ -1126,7 +1134,8 @@ def build_whitelist_section(exact_basetypes, unique_bases=None, contains_names=N
     exact = sorted({b for b in (exact_basetypes or []) if b})
     uniq = sorted({b for b in (unique_bases or []) if b})
     cont = _normalize_custom(contains_names)
-    if not exact and not uniq and not cont:
+    gems = [(str(b), int(lv)) for b, lv in (gem_uncut or []) if b]
+    if not exact and not uniq and not cont and not gems:
         return ""
     lines = ["# === PoE Checker - Whitelist (show only) ==="]
     if exact:
@@ -1184,6 +1193,21 @@ def build_whitelist_section(exact_basetypes, unique_bases=None, contains_names=N
             "    PlayAlertSound 3 300",
             "    MinimapIcon 0 Brown Star",
             "    PlayEffect Brown",
+            "",
+        ]
+    for base, lvl in gems:
+        lines += [
+            f"# uncut gem: {base} (GemLevel >= {lvl})",
+            "Show",
+            f'    BaseType "{base}"',
+            f"    GemLevel >= {lvl}",
+            "    SetFontSize 45",
+            "    SetTextColor 255 255 255 255",
+            "    SetBorderColor 60 220 120 255",
+            "    SetBackgroundColor 10 50 25 255",
+            "    PlayAlertSound 1 300",
+            "    MinimapIcon 0 Green Star",
+            "    PlayEffect Green",
             "",
         ]
     lines += ["# hide everything else", "Hide", ""]

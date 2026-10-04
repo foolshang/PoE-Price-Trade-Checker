@@ -75,6 +75,16 @@ def get_passives(game: str) -> Optional[dict]:
         return None
 
 
+def get_gems(game: str) -> Optional[dict]:
+    """{game}/gems.json — gem list for autocomplete. Returns None on any
+    failure so callers can degrade (free-type without suggestions)."""
+    try:
+        return _get(f"{game}/gems.json")
+    except Exception as e:
+        log.warning("hub gems fetch failed (%s): %s", game, e)
+        return None
+
+
 def get_skills_index(game: str) -> Optional[dict]:
     """{game}/skills/index.json — routes a consumer to each skill's own mod
     file (skill_ref.py). Returns None on any failure so callers can degrade

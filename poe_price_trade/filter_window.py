@@ -5,7 +5,7 @@ import tkinter as tk
 from tkinter import filedialog, ttk
 from typing import Callable, Optional
 
-from . import filter_gen
+from . import filter_gen, hub_client
 from .config import AppConfig
 from .neversink_source import LEVELS
 
@@ -213,6 +213,54 @@ class FilterGenWindow:
                  font=_SMALL_FONT).grid(row=row, column=0, columnspan=3, sticky="w", padx=6)
         row += 1
 
+        # ---- Gem filter ----
+        tk.Label(f, text="Gem:", bg=_BG, fg=_FG, font=_SMALL_FONT).grid(
+            row=row, column=0, columnspan=3, sticky="w", padx=6, pady=(4, 0))
+        row += 1
+        gem_frame = tk.Frame(f, bg=_BG)
+        gem_frame.grid(row=row, column=0, columnspan=3, sticky="w", padx=6)
+        self._gem_level_vars = {}        # base_type -> StringVar(level)
+        self._gem_enable_vars = {}       # base_type -> BooleanVar
+        self._gem_all_names: list[str] = []     # lazy-loaded from hub (poe1 autocomplete)
+        uncut = filter_gen.WHITELIST_GEM_UNCUT.get(self._game_version, [])
+        if uncut:
+            # poe2: one checkbox + minimum level per uncut type
+            for i, base in enumerate(uncut):
+                ev = tk.BooleanVar()
+                self._gem_enable_vars[base] = ev
+                tk.Checkbutton(gem_frame, text=base, variable=ev, bg=_BG, fg=_FG,
+                               selectcolor="#2A2020", activebackground=_BG,
+                               font=_SMALL_FONT).grid(row=i, column=0, sticky="w")
+                tk.Label(gem_frame, text="level ≥", bg=_BG, fg=_FG,
+                         font=_SMALL_FONT).grid(row=i, column=1, sticky="w", padx=(6, 2))
+                lv = tk.StringVar(value="1")
+                self._gem_level_vars[base] = lv
+                tk.Entry(gem_frame, textvariable=lv, bg=_INPUT_BG, fg=_FG, width=4,
+                         insertbackground=_FG, relief=tk.FLAT,
+                         font=_PANEL_FONT).grid(row=i, column=2, sticky="w")
+        else:
+            # poe1: type a gem name + autocomplete + add several
+            self._gem_name_var = tk.StringVar()
+            ge = tk.Entry(gem_frame, textvariable=self._gem_name_var, bg=_INPUT_BG, fg=_FG,
+                          insertbackground=_FG, relief=tk.FLAT, font=_PANEL_FONT, width=24)
+            ge.grid(row=0, column=0, padx=(0, 4))
+            ge.bind("<KeyRelease>", self._gem_suggest)
+            ge.bind("<Return>", lambda _e: self._gem_add())
+            self._btn(gem_frame, "เพิ่ม", self._gem_add, row=0, column=1)
+            self._btn(gem_frame, "ลบที่เลือก", self._gem_remove, row=0, column=2)
+            # suggestions — click = put the name into the entry, double-click = add it to the list
+            self._gem_sugg = tk.Listbox(gem_frame, bg=_INPUT_BG, fg=_FG, font=_PANEL_FONT,
+                                        height=5, width=36, relief=tk.FLAT, exportselection=False)
+            self._gem_sugg.grid(row=1, column=0, columnspan=3, sticky="w", pady=(3, 0))
+            self._gem_sugg.bind("<ButtonRelease-1>", self._gem_pick_sugg)        # click once = fill the entry
+            self._gem_sugg.bind("<Double-Button-1>", lambda _e: self._gem_add())  # double-click = add to list
+            # chosen names
+            self._gem_list = tk.Listbox(gem_frame, bg=_INPUT_BG, fg=_FG, font=_PANEL_FONT,
+                                        height=4, width=36, relief=tk.FLAT,
+                                        selectmode=tk.EXTENDED, exportselection=False)
+            self._gem_list.grid(row=2, column=0, columnspan=3, sticky="w", pady=(3, 0))
+        row += 1
+
         self._lbl(f, "Staleness limit (hours):", row, 0)
         self._entry(f, "staleness_hours", row, 1, width=8)
         row += 1
@@ -374,6 +422,54 @@ class FilterGenWindow:
         rs = [r for r in _RARITIES if self._cust_rar[r].get()]
         return rs or ["Normal"]       # never empty
 
+    def _gem_load_names(self) -> None:
+        if self._gem_all_names:
+            return
+        try:
+            data = hub_client.get_gems(self._game_version) or {}
+            seen, out = set(), []
+            for g in data.get("gems", []):
+                nm = (g.get("display_name") or "").strip()
+                if not nm or nm == "..." or nm.lower() in seen:
+                    continue
+                seen.add(nm.lower())
+                out.append(nm)
+            self._gem_all_names = sorted(out)
+        except Exception as e:
+            self.log(f"⚠ โหลดรายชื่อ gem ไม่ได้ (พิมพ์เองได้): {e}", "warn")
+            self._gem_all_names = []
+
+    def _gem_suggest(self, _e=None) -> None:
+        self._gem_load_names()
+        kw = self._gem_name_var.get().strip().lower()
+        self._gem_sugg.delete(0, tk.END)
+        if not kw:
+            return
+        for nm in self._gem_all_names:
+            if kw in nm.lower():
+                self._gem_sugg.insert(tk.END, nm)
+                if self._gem_sugg.size() >= 20:
+                    break
+
+    def _gem_pick_sugg(self, _e=None) -> None:
+        sel = self._gem_sugg.curselection()
+        if sel:
+            self._gem_name_var.set(self._gem_sugg.get(sel[0]))
+
+    def _gem_add(self) -> None:
+        nm = self._gem_name_var.get().strip()
+        if not nm:
+            return
+        existing = {x.lower() for x in self._gem_list.get(0, tk.END)}
+        if nm.lower() not in existing:
+            self._gem_list.insert(tk.END, nm)
+        self._gem_name_var.set("")
+        self._gem_sugg.delete(0, tk.END)
+
+    def _gem_remove(self) -> None:
+        for idx in reversed(self._gem_list.curselection()):
+            self._gem_list.delete(idx)
+
     def _add_custom(self) -> None:
         text = self._custom_var.get().strip()
         if not text:
@@ -469,6 +565,17 @@ class FilterGenWindow:
                 rs = [r for r in _RARITIES if r in set(item.get("rarities") or [])]
                 self._custom_entries.append({"name": item["name"], "rarities": rs or ["Normal"]})
         self._render_custom()
+        # gem filter
+        if filter_gen.WHITELIST_GEM_UNCUT.get(self._game_version):   # poe2
+            saved = fg.get(f"whitelist_gem_uncut_{self._game_version}", {}) or {}
+            for base, ev in self._gem_enable_vars.items():
+                ev.set(base in saved)
+                if base in saved:
+                    self._gem_level_vars[base].set(str(saved[base]))
+        else:                                                        # poe1
+            self._gem_list.delete(0, tk.END)
+            for nm in fg.get(f"whitelist_gem_names_{self._game_version}", []):
+                self._gem_list.insert(tk.END, nm)
         for label, _bts in filter_gen.WHITELIST_CURRENCIES.get(self._game_version, []):
             self._vars[f"whitelist_cur_{label}"].set(label in selected)
 
@@ -505,6 +612,17 @@ class FilterGenWindow:
         fg["auto_regen"] = bool(self._vars["auto_regen"].get())
         fg["whitelist_enabled"] = bool(self._vars["whitelist_enabled"].get())
         fg["whitelist_gold"] = bool(self._vars["whitelist_gold"].get())
+        if filter_gen.WHITELIST_GEM_UNCUT.get(self._game_version):   # poe2
+            gem_out = {}
+            for base, ev in self._gem_enable_vars.items():
+                if ev.get():
+                    try:
+                        gem_out[base] = max(1, int(self._gem_level_vars[base].get() or 1))
+                    except ValueError:
+                        gem_out[base] = 1
+            fg[f"whitelist_gem_uncut_{self._game_version}"] = gem_out
+        else:                                                        # poe1
+            fg[f"whitelist_gem_names_{self._game_version}"] = list(self._gem_list.get(0, tk.END))
         fg[f"whitelist_cat_exclude_{self._game_version}"] = {
             c: sorted(v) for c, v in self._cat_exclude.items() if v}
         fg[f"whitelist_cats_{self._game_version}"] = [

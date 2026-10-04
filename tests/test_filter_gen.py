@@ -1889,3 +1889,20 @@ def test_typed_names_split_blocks_by_rarity_set():
 def test_typed_names_empty_rarities_fall_back_to_any():
     out = filter_gen.build_whitelist_section([], None, [{"name": "Heavy Belt", "rarities": []}])
     assert "Rarity" not in out and '"Heavy Belt"' in out
+
+
+def test_gem_uncut_block_has_basetype_and_gemlevel():
+    out = filter_gen.build_whitelist_section([], None, None, gem_uncut=[("Uncut Spirit Gem", 20)])
+    assert '    BaseType "Uncut Spirit Gem"' in out and "    GemLevel >= 20" in out
+    assert out.count("Show") == 1 and out.rstrip().splitlines()[-1] == "Hide"
+
+
+def test_gem_uncut_alone_is_not_empty_but_all_empty_is():
+    assert filter_gen.build_whitelist_section([], None, None, gem_uncut=[]) == ""
+    assert filter_gen.build_whitelist_section([], None, None, gem_uncut=[("Uncut Skill Gem", 1)]) != ""
+
+
+def test_gem_uncut_constants_poe2_three_types_poe1_none():
+    assert filter_gen.WHITELIST_GEM_UNCUT["poe2"] == [
+        "Uncut Skill Gem", "Uncut Support Gem", "Uncut Spirit Gem"]
+    assert filter_gen.WHITELIST_GEM_UNCUT["poe1"] == []
