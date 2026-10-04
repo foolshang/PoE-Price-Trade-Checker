@@ -25,10 +25,14 @@ _STRICTNESS_VALUES = [f"{i} - {lvl}" for i, lvl in enumerate(LEVELS)]
 
 class FilterGenWindow:
     def __init__(self, parent: tk.Misc, config: AppConfig, game_version: str,
-                 on_generate: Optional[Callable[[bool], None]] = None):
+                 on_generate: Optional[Callable[[bool], None]] = None,
+                 hub_loader: Optional[Callable[[], dict]] = None):
         self._config = config
         self._game_version = game_version
         self._on_generate = on_generate
+        self._hub_loader = hub_loader
+        self._cat_exclude: dict[str, list[str]] = {}
+        self._refine_win: Optional[tk.Toplevel] = None
         self._rules = filter_gen.load_rules(config.app_dir())
 
         self._win = tk.Toplevel(parent)
@@ -171,6 +175,8 @@ class FilterGenWindow:
         cat_frame.grid(row=row, column=0, columnspan=3, sticky="w", padx=6)
         for i, cat in enumerate(filter_gen.WHITELIST_CATEGORIES.get(self._game_version, [])):
             self._check(cat_frame, f"whitelist_cat_{cat}", cat, i // 3, i % 3, columnspan=1)
+        self._btn(cat_frame, "ปรับรายการในหมวด…", self._open_cat_refine,
+                  row=(len(filter_gen.WHITELIST_CATEGORIES.get(self._game_version, [])) + 2) // 3, column=0, columnspan=3, sticky="w", pady=(4, 0))
         row += 1
         min_frame = tk.Frame(f, bg=_BG)
         min_frame.grid(row=row, column=0, columnspan=3, sticky="w")
@@ -230,6 +236,122 @@ class FilterGenWindow:
         self._btn(btn_frame, "Refresh NeverSink Base", self._on_refresh_clicked, side=tk.LEFT)
         self._btn(btn_frame, "Save Settings", self._save, side=tk.LEFT)
         self._btn(btn_frame, "Close", self._win.destroy, side=tk.LEFT)
+
+    def _open_cat_refine(self) -> None:
+        """Popup: per-category checklist. Checked = shown (default), unchecked =
+        excluded; only the exclude lists are stored (self._cat_exclude)."""
+        if self._refine_win is not None:
+            try:
+                if self._refine_win.winfo_exists():
+                    self._refine_win.lift()
+                    return
+            except tk.TclError:
+                pass
+        cats = [c for c in filter_gen.WHITELIST_CATEGORIES.get(self._game_version, [])
+                if self._vars[f"whitelist_cat_{c}"].get()]
+        if not cats:
+            self.log("ติ๊กหมวดก่อน แล้วค่อยปรับรายการ", "warn")
+            return
+        if self._hub_loader is None:
+            self.log("ต้องต่อ hub เพื่อดูรายการ: ไม่มี hub loader", "warn")
+            return
+        try:
+            hub_data = self._hub_loader()
+        except Exception as e:
+            self.log(f"ต้องต่อ hub เพื่อดูรายการ: {e}", "warn")
+            return
+
+        top = tk.Toplevel(self._win)
+        self._refine_win = top
+        top.title("ปรับรายการในหมวด")
+        top.configure(bg=_BG)
+        top.attributes("-topmost", True)
+
+        sel = tk.StringVar(value=cats[0])
+        q = tk.StringVar()
+        top_row = tk.Frame(top, bg=_BG)
+        top_row.pack(fill=tk.X, padx=8, pady=6)
+        menu = tk.OptionMenu(top_row, sel, *cats)
+        menu.config(bg=_BUTTON_BG, fg=_FG, activebackground=_ACCENT, relief=tk.FLAT,
+                    highlightthickness=0, font=_PANEL_FONT)
+        menu.pack(side=tk.LEFT)
+        tk.Entry(top, textvariable=q, bg=_INPUT_BG, fg=_FG, insertbackground=_FG,
+                 relief=tk.FLAT, font=_PANEL_FONT).pack(fill=tk.X, padx=8)
+
+        wrap = tk.Frame(top, bg=_BG)
+        wrap.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
+        canvas = tk.Canvas(wrap, bg=_BG, highlightthickness=0, width=320, height=340)
+        scrollbar = tk.Scrollbar(wrap, orient=tk.VERTICAL, command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        body = tk.Frame(canvas, bg=_BG)
+        canvas.create_window((0, 0), window=body, anchor="nw")
+
+        def on_wheel(event) -> None:
+            canvas.yview_scroll(int(-event.delta / 120), "units")
+        canvas.bind("<MouseWheel>", on_wheel)
+        body.bind("<MouseWheel>", on_wheel)
+
+        item_vars: dict[str, tk.BooleanVar] = {}
+
+        def all_names(cat: str) -> list[str]:
+            return sorted(set(filter_gen.names_in_categories(hub_data, [cat])))
+
+        def toggle(nm: str) -> None:
+            cat = sel.get()
+            ex = set(self._cat_exclude.get(cat, []))
+            if item_vars[nm].get():
+                ex.discard(nm)
+            else:
+                ex.add(nm)
+            if ex:
+                self._cat_exclude[cat] = sorted(ex)
+            else:
+                self._cat_exclude.pop(cat, None)
+
+        def rebuild(*_a) -> None:
+            cat = sel.get()
+            excl = set(self._cat_exclude.get(cat, []))
+            kw = q.get().strip().lower()
+            for w in body.winfo_children():
+                w.destroy()
+            item_vars.clear()
+            for nm in all_names(cat):
+                if kw and kw not in nm.lower():
+                    continue
+                v = tk.BooleanVar(value=(nm not in excl))
+                item_vars[nm] = v
+                cb = tk.Checkbutton(body, text=nm, variable=v, bg=_BG, fg=_FG,
+                                    selectcolor="#2A2020", activebackground=_BG,
+                                    font=_PANEL_FONT, anchor="w",
+                                    command=lambda n=nm: toggle(n))
+                cb.pack(fill=tk.X, anchor="w")
+                cb.bind("<MouseWheel>", on_wheel)
+            body.update_idletasks()
+            canvas.configure(scrollregion=(0, 0, body.winfo_reqwidth(), body.winfo_reqheight()))
+            canvas.yview_moveto(0)
+
+        def select_all() -> None:
+            self._cat_exclude.pop(sel.get(), None)
+            rebuild()
+
+        def select_none() -> None:
+            self._cat_exclude[sel.get()] = all_names(sel.get())
+            rebuild()
+
+        btn_row = tk.Frame(top, bg=_BG)
+        btn_row.pack(pady=(0, 6))
+        self._btn(btn_row, "เลือกทั้งหมด", select_all, side=tk.LEFT)
+        self._btn(btn_row, "ไม่เลือกเลย", select_none, side=tk.LEFT)
+        self._btn(btn_row, "ปิด", top.destroy, side=tk.LEFT)
+
+        sel.trace_add("write", rebuild)
+        q.trace_add("write", rebuild)
+        rebuild()
+        # exposed for headless tests
+        top._refine = {"sel": sel, "q": q, "items": item_vars, "toggle": toggle,
+                       "select_all": select_all, "select_none": select_none}
 
     def _add_custom(self) -> None:
         text = self._custom_var.get().strip()
@@ -293,6 +415,9 @@ class FilterGenWindow:
         cats = set(fg.get(f"whitelist_cats_{self._game_version}", []))
         for cat in filter_gen.WHITELIST_CATEGORIES.get(self._game_version, []):
             self._vars[f"whitelist_cat_{cat}"].set(cat in cats)
+        self._cat_exclude = {
+            str(c): list(v) for c, v in
+            dict(fg.get(f"whitelist_cat_exclude_{self._game_version}", {}) or {}).items() if v}
         self._custom_list.delete(0, tk.END)
         for name in fg.get(f"whitelist_custom_{self._game_version}", []):
             self._custom_list.insert(tk.END, name)
@@ -336,6 +461,8 @@ class FilterGenWindow:
         fg["whitelist_min_unit"] = self._vars["whitelist_min_unit"].get() or "div"
         fg["whitelist_unique_enabled"] = bool(self._vars["whitelist_unique_enabled"].get())
         fg["whitelist_gold"] = bool(self._vars["whitelist_gold"].get())
+        fg[f"whitelist_cat_exclude_{self._game_version}"] = {
+            c: sorted(v) for c, v in self._cat_exclude.items() if v}
         fg[f"whitelist_cats_{self._game_version}"] = [
             cat for cat in filter_gen.WHITELIST_CATEGORIES.get(self._game_version, [])
             if self._vars[f"whitelist_cat_{cat}"].get()]

@@ -1891,3 +1891,20 @@ def test_whitelist_three_blocks_with_typed_contains():
     assert '    BaseType == "Divine Orb"' in out
     assert out.rstrip().splitlines()[-1] == "Hide"
     assert filter_gen.build_whitelist_section([], [], ["x"]) != ""
+
+
+def test_expand_categories_applies_exclude_per_category():
+    hub = {"currency": [
+        {"category": "Rune", "name": "Adept Rune"},
+        {"category": "Rune", "name": "Lesser Rune"},
+        {"category": "Omen", "name": "Omen of Chance"},
+    ]}
+    got = filter_gen.expand_categories(hub, ["Rune", "Omen"], {"Rune": ["Adept Rune"]})
+    assert sorted(got) == ["Lesser Rune", "Omen of Chance"]
+
+
+def test_expand_categories_without_exclude_shows_whole_category():
+    hub = {"currency": [{"category": "Rune", "name": "Adept Rune"},
+                        {"category": "Rune", "name": "Lesser Rune"}]}
+    assert sorted(filter_gen.expand_categories(hub, ["Rune"])) == ["Adept Rune", "Lesser Rune"]
+    assert sorted(filter_gen.expand_categories(hub, ["Rune"], {})) == ["Adept Rune", "Lesser Rune"]

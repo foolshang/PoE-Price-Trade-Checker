@@ -1124,6 +1124,17 @@ def names_in_categories(hub_data: dict, categories) -> list[str]:
     return out
 
 
+def expand_categories(hub_data: dict, categories, exclude: Optional[dict] = None) -> list[str]:
+    """names_in_categories per category minus that category's exclude list
+    (exclude = {"Rune": ["Adept Rune", ...]}; a category with no key is shown whole)."""
+    exclude = exclude or {}
+    out: list[str] = []
+    for cat in categories or []:
+        skip = set(exclude.get(cat, []))
+        out += [n for n in names_in_categories(hub_data, [cat]) if n not in skip]
+    return out
+
+
 def basetypes_worth_at_least(hub_data: dict, min_divine: float) -> list[str]:
     """Allowlisted-category entries worth >= min_divine (the threshold is
     always in divine; the caller converts ex -> div via _ex_per_div) ->

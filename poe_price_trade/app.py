@@ -714,8 +714,11 @@ class App:
     # ------------------------------------------------------------------
 
     def _open_filter_gen(self) -> None:
+        gv = self._gv_var.get()
+        path = self._league_paths.get(self._league_var.get()) or f"{gv}/prices/latest.json"
         self._filter_win = FilterGenWindow(
-            self._root, self._config, self._gv_var.get(), on_generate=self._generate_filter)
+            self._root, self._config, gv, on_generate=self._generate_filter,
+            hub_loader=lambda: hub_client.get_prices(path))
 
     def _win_log(self, msg: str, tag: str = "info") -> None:
         """Log to both the Filter Generator window (if still open) and the
@@ -768,7 +771,8 @@ class App:
                 try:
                     hub_data = hub_client.get_prices(path)
                     if cats:
-                        exact += filter_gen.names_in_categories(hub_data, cats)
+                        exact += filter_gen.expand_categories(
+                            hub_data, cats, fg_cfg.get(f"whitelist_cat_exclude_{gv}", {}))
                     if min_on:
                         try:
                             n = float(fg_cfg.get("whitelist_min_value") or 1)
