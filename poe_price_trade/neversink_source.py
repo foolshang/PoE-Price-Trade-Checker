@@ -14,19 +14,17 @@ from __future__ import annotations
 import json
 import logging
 import urllib.error
-import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from . import filter_core
+
 log = logging.getLogger(__name__)
 
-REPO = {
-    "poe1": "NeverSinkDev/NeverSink-Filter",
-    "poe2": "NeverSinkDev/NeverSink-Filter-for-PoE2",
-}
-LEVELS = ["SOFT", "REGULAR", "SEMI-STRICT", "STRICT", "VERY-STRICT", "UBER-STRICT", "UBER-PLUS-STRICT"]
+REPO = filter_core.NEVERSINK_REPO
+LEVELS = filter_core.NEVERSINK_LEVELS
 DEFAULT_STRICTNESS = 2  # Semi-Strict
 
 _HEADERS = {
@@ -40,17 +38,13 @@ _TIMEOUT = 15
 _CHECK_INTERVAL_HOURS = 24  # GitHub release check cadence — Refresh button (force=True) bypasses this
 
 
-def _filename(game: str, strictness: int) -> str:
-    level = LEVELS[strictness]
-    prefix = "NeverSink's filter 2" if game == "poe2" else "NeverSink's filter"
-    return f"{prefix} - {strictness}-{level}.filter"
+_filename = filter_core.neversink_filename
 
 
 def get_latest_tag(game: str) -> Optional[str]:
-    repo = REPO.get(game)
-    if not repo:
+    if game not in REPO:
         return None
-    url = f"https://api.github.com/repos/{repo}/releases/latest"
+    url = filter_core.neversink_latest_api_url(game)
     req = urllib.request.Request(url, headers={**_HEADERS, "Accept": "application/vnd.github+json"})
     try:
         with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
@@ -62,9 +56,7 @@ def get_latest_tag(game: str) -> Optional[str]:
 
 
 def _download_file(game: str, tag: str, strictness: int) -> str:
-    repo = REPO[game]
-    fn = _filename(game, strictness)
-    url = f"https://raw.githubusercontent.com/{repo}/{tag}/{urllib.parse.quote(fn)}"
+    url = filter_core.neversink_file_url(game, tag, strictness)
     req = urllib.request.Request(url, headers=_HEADERS)
     with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
         return resp.read().decode("utf-8", errors="replace")

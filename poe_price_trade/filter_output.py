@@ -9,6 +9,8 @@ import shutil
 from pathlib import Path
 from typing import Optional
 
+from . import filter_core
+
 log = logging.getLogger(__name__)
 
 _FILTER_NAME = "poe-checker.filter"
@@ -59,12 +61,8 @@ def write_filter(dir_: Path, generated_section: str, base_text: Optional[str]) -
     ("ทั้งคู่ไม่มี -> ไม่เขียนทับไฟล์เดิม"), the caller must not touch the
     existing file in that case, and this is the last line of defense against
     silently truncating it."""
-    if not generated_section.strip() and not base_text:
-        raise ValueError("nothing to write — both hub and base filter sources unavailable")
+    body = filter_core.compose_filter_body(generated_section, base_text)
     dir_.mkdir(parents=True, exist_ok=True)
-    body = generated_section
-    if base_text:
-        body += "\n# ===== base filter below =====\n" + base_text
     path = dir_ / _FILTER_NAME
     path.write_text(body, encoding="utf-8")
     return path
