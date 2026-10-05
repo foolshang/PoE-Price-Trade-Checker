@@ -1921,3 +1921,18 @@ def test_gold_min_stacksize_only_in_gold_block():
 def test_gold_alone_is_not_empty():
     assert filter_gen.build_whitelist_section([], gold=True, gold_min=0) != ""
     assert filter_gen.build_whitelist_section([], gold=False, gold_min=25) == ""
+
+
+def test_unique_all_block_before_hide_and_off_by_default():
+    out = filter_gen.build_whitelist_section([], unique_all=True)
+    assert "    Rarity Unique" in out and "BaseType" not in out
+    assert out.index("Rarity Unique") < out.rindex("Hide")
+    off = filter_gen.build_whitelist_section(["Divine Orb"])
+    assert off == filter_gen.build_whitelist_section(["Divine Orb"], unique_all=False)
+    assert "Rarity Unique" not in off
+    assert filter_gen.build_whitelist_section([], unique_all=False) == ""
+
+
+def test_unique_is_not_a_hub_category():
+    for cats in filter_gen.WHITELIST_CATEGORIES.values():
+        assert "Unique" not in cats

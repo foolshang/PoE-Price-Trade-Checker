@@ -110,3 +110,12 @@ def test_gold_min_reaches_filter_and_old_config_defaults_to_all_stacks(tmp_path)
     cfg = _cfg(tmp_path, {"whitelist_enabled": True, "whitelist_gold": True})
     res = filter_service.generate_filter(cfg, "poe2", "p")
     assert "StackSize" not in res["path"].read_text(encoding="utf-8")
+
+
+def test_unique_only_generates_without_calling_hub(tmp_path):
+    cfg = _cfg(tmp_path, {"whitelist_enabled": True, "whitelist_unique_all": True})
+    with mock.patch.object(filter_service.hub_client, "get_prices",
+                           side_effect=AssertionError("hub must not be used")):
+        res = filter_service.generate_filter(cfg, "poe2", "p")
+    assert res["count"] == 1
+    assert "Rarity Unique" in res["path"].read_text(encoding="utf-8")

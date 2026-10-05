@@ -182,8 +182,12 @@ class FilterGenWindow:
         cat_frame.grid(row=row, column=0, columnspan=3, sticky="w", padx=6)
         for i, cat in enumerate(filter_gen.WHITELIST_CATEGORIES.get(self._game_version, [])):
             self._check(cat_frame, f"whitelist_cat_{cat}", cat, i // 3, i % 3, columnspan=1)
+        n_cats = len(filter_gen.WHITELIST_CATEGORIES.get(self._game_version, []))
+        # not a hub category: own key, no refine list (offline "Rarity Unique" block)
+        self._check(cat_frame, "whitelist_unique_all", "Unique (ทุกตัว)",
+                    n_cats // 3, n_cats % 3, columnspan=1)
         self._btn(cat_frame, "ปรับรายการในหมวด…", self._open_cat_refine,
-                  row=(len(filter_gen.WHITELIST_CATEGORIES.get(self._game_version, [])) + 2) // 3, column=0, columnspan=3, sticky="w", pady=(4, 0))
+                  row=(n_cats + 3) // 3, column=0, columnspan=3, sticky="w", pady=(4, 0))
         row += 1
         tk.Label(f, text="ชื่อที่พิมพ์เอง (contains) + เลือก rarity:", bg=_BG, fg=_FG,
                  font=_SMALL_FONT).grid(row=row, column=0, columnspan=3, sticky="w", padx=6, pady=(4, 0))
@@ -562,6 +566,7 @@ class FilterGenWindow:
         self._vars["whitelist_enabled"].set(bool(fg.get("whitelist_enabled", False)))
         self._vars["whitelist_gold"].set(bool(fg.get("whitelist_gold", False)))
         self._vars["whitelist_gold_min"].set(str(fg.get("whitelist_gold_min", 0)))
+        self._vars["whitelist_unique_all"].set(bool(fg.get("whitelist_unique_all", False)))
         cats = set(fg.get(f"whitelist_cats_{self._game_version}", []))
         for cat in filter_gen.WHITELIST_CATEGORIES.get(self._game_version, []):
             self._vars[f"whitelist_cat_{cat}"].set(cat in cats)
@@ -621,6 +626,7 @@ class FilterGenWindow:
         fg["auto_regen"] = bool(self._vars["auto_regen"].get())
         fg["whitelist_enabled"] = bool(self._vars["whitelist_enabled"].get())
         fg["whitelist_gold"] = bool(self._vars["whitelist_gold"].get())
+        fg["whitelist_unique_all"] = bool(self._vars["whitelist_unique_all"].get())
         try:
             fg["whitelist_gold_min"] = max(0, int(self._vars["whitelist_gold_min"].get() or 0))
         except ValueError:
