@@ -62,8 +62,11 @@ def generate_filter(config, game_version: str, league_path: str,
 
     if fg_cfg.get("whitelist_enabled"):
         exact = []
-        if fg_cfg.get("whitelist_gold"):
-            exact += filter_gen.GOLD_BASETYPES
+        gold_on = bool(fg_cfg.get("whitelist_gold"))
+        try:
+            gold_min = max(0, int(fg_cfg.get("whitelist_gold_min", 0) or 0))
+        except (TypeError, ValueError):
+            gold_min = 0
         contains = list(fg_cfg.get(f"whitelist_custom_{gv}", []))
         # poe2: uncut gem + level per type | poe1: gem names -> contains
         gem_uncut = [(b, int(lv)) for b, lv in
@@ -80,11 +83,12 @@ def generate_filter(config, game_version: str, league_path: str,
             except Exception as e:
                 log(f"⚠ ดึง hub ไม่ได้ ใช้เฉพาะ currency/ชื่อที่ติ๊ก: {e}", "warn")
 
-        if not exact and not uniq_bases and not contains and not gem_uncut:
+        if not exact and not uniq_bases and not contains and not gem_uncut and not gold_on:
             log("⚠ โหมดโชว์เฉพาะ: ยังไม่ได้เลือกอะไร — ไม่ generate", "warn")
             return None
         section = filter_gen.build_whitelist_section(exact, uniq_bases, contains,
-                                                     gem_uncut=gem_uncut)
+                                                     gem_uncut=gem_uncut,
+                                                     gold=gold_on, gold_min=gold_min)
         try:
             out_path = filter_output.write_filter(out_dir, section, base_text=None)
         except OSError as e:
@@ -95,7 +99,7 @@ def generate_filter(config, game_version: str, league_path: str,
             log_.exception("whitelist filter write error")
             log(f"✗ generate ล้มเหลว: {e}", "err")
             return None
-        count = len(set(exact)) + len(set(uniq_bases)) + len(contains) + len(gem_uncut)
+        count = len(set(exact)) + len(set(uniq_bases)) + len(contains) + len(gem_uncut) + int(gold_on)
         debug.event(f"whitelist filter generated gv={gv} items={count} path={out_path}")
         log(f"✓ filter โหมดโชว์เฉพาะ ({count} รายการ) → {out_path}", "ok")
         log("Filter updated — reload in game (Options → Game)", "ok")

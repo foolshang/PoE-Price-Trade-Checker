@@ -100,3 +100,13 @@ def test_tier_write_blocked_logs_friendly_message_and_returns_none(tmp_path):
         res = filter_service.generate_filter(cfg, "poe2", "p", log=lambda m, t="info": logs.append((t, m)))
     assert res is None
     assert logs[-1][0] == "err" and "Controlled Folder Access" in logs[-1][1]
+
+
+def test_gold_min_reaches_filter_and_old_config_defaults_to_all_stacks(tmp_path):
+    cfg = _cfg(tmp_path, {"whitelist_enabled": True, "whitelist_gold": True, "whitelist_gold_min": 25})
+    res = filter_service.generate_filter(cfg, "poe2", "p")
+    assert res["count"] == 1
+    assert "StackSize >= 25" in res["path"].read_text(encoding="utf-8")
+    cfg = _cfg(tmp_path, {"whitelist_enabled": True, "whitelist_gold": True})
+    res = filter_service.generate_filter(cfg, "poe2", "p")
+    assert "StackSize" not in res["path"].read_text(encoding="utf-8")

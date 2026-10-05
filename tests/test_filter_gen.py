@@ -1902,3 +1902,22 @@ def test_gem_uncut_constants_poe2_three_types_poe1_none():
     assert filter_gen.WHITELIST_GEM_UNCUT["poe2"] == [
         "Uncut Skill Gem", "Uncut Support Gem", "Uncut Spirit Gem"]
     assert filter_gen.WHITELIST_GEM_UNCUT["poe1"] == []
+
+
+def test_gold_block_without_min_has_no_stacksize():
+    out = filter_gen.build_whitelist_section([], gold=True)
+    assert 'BaseType == "Gold"' in out and "StackSize" not in out
+    assert out.rstrip().splitlines()[-1] == "Hide"
+
+
+def test_gold_min_stacksize_only_in_gold_block():
+    out = filter_gen.build_whitelist_section(["Divine Orb"], gold=True, gold_min=25)
+    assert out.count("StackSize >= 25") == 1
+    gold_block = out.split("# gold")[1].split("\n\n")[0]
+    assert "StackSize >= 25" in gold_block and "Divine Orb" not in gold_block
+    assert out.count("Show") == 2
+
+
+def test_gold_alone_is_not_empty():
+    assert filter_gen.build_whitelist_section([], gold=True, gold_min=0) != ""
+    assert filter_gen.build_whitelist_section([], gold=False, gold_min=25) == ""

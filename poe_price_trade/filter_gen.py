@@ -1102,7 +1102,7 @@ def _normalize_custom(contains_names):
 
 
 def build_whitelist_section(exact_basetypes, unique_bases=None, contains_names=None,
-                            gem_uncut=None) -> str:
+                            gem_uncut=None, gold=False, gold_min=0) -> str:
     """Show exact BaseTypes + Show typed names (BaseType without `==` =
     substring match, any rarity) + Show unique bases (+ Rarity Unique) + Hide
     catch-all. Standalone. "" when all inputs are empty - the caller must
@@ -1111,9 +1111,27 @@ def build_whitelist_section(exact_basetypes, unique_bases=None, contains_names=N
     uniq = sorted({b for b in (unique_bases or []) if b})
     cont = _normalize_custom(contains_names)
     gems = [(str(b), int(lv)) for b, lv in (gem_uncut or []) if b]
-    if not exact and not uniq and not cont and not gems:
+    if not exact and not uniq and not cont and not gems and not gold:
         return ""
     lines = ["# === PoE Checker - Whitelist (show only) ==="]
+    if gold:
+        # own block: StackSize must not constrain the other exact BaseTypes
+        gold_min = max(0, int(gold_min or 0))
+        lines += ["# gold" + (f" (stack >= {gold_min})" if gold_min > 0 else ""),
+                  "Show",
+                  f'    BaseType == "{GOLD_BASETYPES[0]}"']
+        if gold_min > 0:
+            lines.append(f"    StackSize >= {gold_min}")
+        lines += [
+            "    SetFontSize 45",
+            "    SetTextColor 255 255 255 255",
+            "    SetBorderColor 255 200 0 255",
+            "    SetBackgroundColor 75 50 0 255",
+            "    PlayAlertSound 6 300",
+            "    MinimapIcon 0 Yellow Star",
+            "    PlayEffect Yellow",
+            "",
+        ]
     if exact:
         names = " ".join(f'"{b}"' for b in exact)
         lines += [

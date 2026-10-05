@@ -169,7 +169,11 @@ class FilterGenWindow:
         self._check(f, "whitelist_enabled",
                     "โหมดโชว์เฉพาะ (whitelist) — ซ่อนที่เหลือ", row, 0, columnspan=3)
         row += 1
-        self._check(f, "whitelist_gold", "Gold", row, 0, columnspan=3)
+        self._check(f, "whitelist_gold", "Gold", row, 0, columnspan=1)
+        gold_row = tk.Frame(f, bg=_BG)
+        gold_row.grid(row=row, column=1, columnspan=2, sticky="w")
+        tk.Label(gold_row, text="จำนวน ≥", bg=_BG, fg=_FG, font=_PANEL_FONT).grid(row=0, column=0)
+        self._entry(gold_row, "whitelist_gold_min", 0, 1, width=6)
         row += 1
         tk.Label(f, text="หมวด (โชว์ทั้งหมวด):", bg=_BG, fg=_FG, font=_SMALL_FONT).grid(
             row=row, column=0, columnspan=3, sticky="w", padx=6)
@@ -557,6 +561,7 @@ class FilterGenWindow:
         self._vars["auto_regen"].set(bool(fg.get("auto_regen", True)))
         self._vars["whitelist_enabled"].set(bool(fg.get("whitelist_enabled", False)))
         self._vars["whitelist_gold"].set(bool(fg.get("whitelist_gold", False)))
+        self._vars["whitelist_gold_min"].set(str(fg.get("whitelist_gold_min", 0)))
         cats = set(fg.get(f"whitelist_cats_{self._game_version}", []))
         for cat in filter_gen.WHITELIST_CATEGORIES.get(self._game_version, []):
             self._vars[f"whitelist_cat_{cat}"].set(cat in cats)
@@ -616,6 +621,10 @@ class FilterGenWindow:
         fg["auto_regen"] = bool(self._vars["auto_regen"].get())
         fg["whitelist_enabled"] = bool(self._vars["whitelist_enabled"].get())
         fg["whitelist_gold"] = bool(self._vars["whitelist_gold"].get())
+        try:
+            fg["whitelist_gold_min"] = max(0, int(self._vars["whitelist_gold_min"].get() or 0))
+        except ValueError:
+            fg["whitelist_gold_min"] = 0
         if filter_gen.WHITELIST_GEM_UNCUT.get(self._game_version):   # poe2
             gem_out = {}
             for base, ev in self._gem_enable_vars.items():
