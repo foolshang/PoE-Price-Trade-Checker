@@ -14,7 +14,7 @@ def _cfg(tmp_path, fg):
 
 def test_whitelist_writes_file_returns_result_and_logs(tmp_path):
     logs = []
-    cfg = _cfg(tmp_path, {"whitelist_enabled": True, "whitelist_selected_poe2": ["Divine Orb"],
+    cfg = _cfg(tmp_path, {"whitelist_enabled": True, "whitelist_custom_poe2": ["Divine Orb"],
                           "whitelist_gold": True})
     with mock.patch.object(filter_service.hub_client, "get_prices",
                            side_effect=AssertionError("hub must not be used")):
@@ -38,7 +38,7 @@ def test_whitelist_nothing_selected_returns_none_and_writes_nothing(tmp_path):
 
 def test_whitelist_category_needs_hub_and_degrades_when_it_is_down(tmp_path):
     logs = []
-    cfg = _cfg(tmp_path, {"whitelist_enabled": True, "whitelist_selected_poe2": ["Divine Orb"],
+    cfg = _cfg(tmp_path, {"whitelist_enabled": True, "whitelist_custom_poe2": ["Divine Orb"],
                           "whitelist_cats_poe2": ["Rune"]})
     with mock.patch.object(filter_service.hub_client, "get_prices", side_effect=RuntimeError("down")):
         res = filter_service.generate_filter(cfg, "poe2", "p", log=lambda m, t="info": logs.append((t, m)))

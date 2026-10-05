@@ -169,11 +169,6 @@ class FilterGenWindow:
         self._check(f, "whitelist_enabled",
                     "โหมดโชว์เฉพาะ (whitelist) — ซ่อนที่เหลือ", row, 0, columnspan=3)
         row += 1
-        cur_frame = tk.Frame(f, bg=_BG)
-        cur_frame.grid(row=row, column=0, columnspan=3, sticky="w", padx=6)
-        for i, (label, _bts) in enumerate(filter_gen.WHITELIST_CURRENCIES.get(self._game_version, [])):
-            self._check(cur_frame, f"whitelist_cur_{label}", label, i // 3, i % 3, columnspan=1)
-        row += 1
         self._check(f, "whitelist_gold", "Gold", row, 0, columnspan=3)
         row += 1
         tk.Label(f, text="หมวด (โชว์ทั้งหมวด):", bg=_BG, fg=_FG, font=_SMALL_FONT).grid(
@@ -561,9 +556,7 @@ class FilterGenWindow:
         self._vars["regen_cooldown_min"].set(str(fg.get("regen_cooldown_min", 60)))
         self._vars["auto_regen"].set(bool(fg.get("auto_regen", True)))
         self._vars["whitelist_enabled"].set(bool(fg.get("whitelist_enabled", False)))
-        selected = set(fg.get(f"whitelist_selected_{self._game_version}", []))
-        # pre-0.8.0 configs stored Gold as a currency label
-        self._vars["whitelist_gold"].set(bool(fg.get("whitelist_gold", "Gold" in selected)))
+        self._vars["whitelist_gold"].set(bool(fg.get("whitelist_gold", False)))
         cats = set(fg.get(f"whitelist_cats_{self._game_version}", []))
         for cat in filter_gen.WHITELIST_CATEGORIES.get(self._game_version, []):
             self._vars[f"whitelist_cat_{cat}"].set(cat in cats)
@@ -589,8 +582,6 @@ class FilterGenWindow:
             self._gem_list.delete(0, tk.END)
             for nm in fg.get(f"whitelist_gem_names_{self._game_version}", []):
                 self._gem_list.insert(tk.END, nm)
-        for label, _bts in filter_gen.WHITELIST_CURRENCIES.get(self._game_version, []):
-            self._vars[f"whitelist_cur_{label}"].set(label in selected)
 
     def _save(self) -> dict:
         """Persist all fields (config.json's filter_gen dict + the
@@ -644,9 +635,6 @@ class FilterGenWindow:
         fg[f"whitelist_custom_{self._game_version}"] = [
             {"name": e["name"], "rarities": list(e["rarities"])}
             for e in self._custom_entries]
-        fg[f"whitelist_selected_{self._game_version}"] = [
-            label for label, _bts in filter_gen.WHITELIST_CURRENCIES.get(self._game_version, [])
-            if self._vars[f"whitelist_cur_{label}"].get()]
 
         self._config.set("filter_gen", fg)
         self._config.save()

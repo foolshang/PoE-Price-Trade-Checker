@@ -1818,11 +1818,7 @@ def test_whitelist_section_empty_selection_returns_empty():
     assert filter_gen.build_whitelist_section([]) == ""
 
 
-def test_whitelist_currencies_cover_both_games():
-    assert set(filter_gen.WHITELIST_CURRENCIES) == {"poe1", "poe2"}
-    for entries in filter_gen.WHITELIST_CURRENCIES.values():
-        for label, bts in entries:
-            assert label != "Gold" and bts
+def test_gold_basetypes():
     assert filter_gen.GOLD_BASETYPES == ["Gold"]
 
 

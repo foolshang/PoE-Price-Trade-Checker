@@ -8,6 +8,7 @@ from unittest import mock
 
 import pytest
 
+from poe_price_trade import __version__
 from poe_price_trade.config import AppConfig
 from poe_price_trade.filter_window import FilterGenWindow
 
@@ -114,4 +115,4 @@ def test_standalone_generate_writes_filter_and_logs(root, cfg, monkeypatch, tmp_
         root.mainloop()
     log_text = app._fgw._log_text.get("1.0", tk.END)
     assert '"Gold"' in (out / "poe-checker.filter").read_text(encoding="utf-8")
-    assert "PoE Filter Generator v0.8.6" in log_text and "Filter updated" in log_text
+    assert f"PoE Filter Generator v{__version__}" in log_text and "Filter updated" in log_text

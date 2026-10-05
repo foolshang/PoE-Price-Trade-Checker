@@ -61,9 +61,7 @@ def generate_filter(config, game_version: str, league_path: str,
     out_dir = filter_output.game_filter_dir(gv, fg_cfg.get(f"game_dir_{gv}", ""))
 
     if fg_cfg.get("whitelist_enabled"):
-        cur_map = dict(filter_gen.WHITELIST_CURRENCIES.get(gv, []))
-        exact = [bt for lb in fg_cfg.get(f"whitelist_selected_{gv}", [])
-                 for bt in cur_map.get(lb, [])]
+        exact = []
         if fg_cfg.get("whitelist_gold"):
             exact += filter_gen.GOLD_BASETYPES
         contains = list(fg_cfg.get(f"whitelist_custom_{gv}", []))

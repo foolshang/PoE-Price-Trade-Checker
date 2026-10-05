@@ -1021,31 +1021,7 @@ def diff_mapping_count(old: dict[str, str], new: dict[str, str]) -> int:
 
 # ---------------------------------------------------------------------------
 # Whitelist ("show only") mode — standalone filter, no NeverSink involved.
-# label shown in UI -> every real BaseType variant of that group. Names were
-# verified against the cached NeverSink poe2 base filter (Greater/Perfect
-# Exalted/Chaos/Regal exist; Vaal Orb, Divine, Annulment, Mirror have no
-# variants; "Gold" is BaseType == "Gold" in both games).
-WHITELIST_CURRENCIES = {
-    "poe2": [
-        ("Divine Orb",   ["Divine Orb"]),
-        ("Mirror",       ["Mirror of Kalandra"]),
-        ("Exalted Orb",  ["Exalted Orb", "Greater Exalted Orb", "Perfect Exalted Orb"]),
-        ("Chaos Orb",    ["Chaos Orb", "Greater Chaos Orb", "Perfect Chaos Orb"]),
-        ("Regal Orb",    ["Regal Orb", "Greater Regal Orb", "Perfect Regal Orb"]),
-        ("Vaal Orb",     ["Vaal Orb"]),
-        ("Orb of Annulment", ["Orb of Annulment"]),
-    ],
-    "poe1": [
-        ("Divine Orb",   ["Divine Orb"]),
-        ("Mirror",       ["Mirror of Kalandra"]),
-        ("Exalted Orb",  ["Exalted Orb"]),
-        ("Chaos Orb",    ["Chaos Orb"]),
-        ("Regal Orb",    ["Regal Orb"]),
-        ("Vaal Orb",     ["Vaal Orb"]),
-        ("Orb of Annulment", ["Orb of Annulment"]),
-    ],
-}
-
+# Currency comes from the "Currency" category; only Gold needs its own checkbox.
 GOLD_BASETYPES = ["Gold"]   # BaseType == "Gold" (verified in NeverSink poe2 + poe1)
 
 # Uncut gems (poe2 only) - BaseType as in the game; level gated by GemLevel >= N.
