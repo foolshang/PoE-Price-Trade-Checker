@@ -442,7 +442,7 @@
    [
     "write_filter",
     "game",
-    "f6f5982bc68a",
+    "7874a7925d0c",
     "c33de70e5044"
    ]
   ],
@@ -450,8 +450,8 @@
    "filter generated gv=poe2 league= base_tag=tagX hub=ok path=<T>/game/poe-checker.filter"
   ],
   "file": null,
-  "file_len": 253027,
-  "file_sha256": "cd4f2ede2152a614e3e059514923df8087da7b7dbe80a1ac6d22e2546c9f356a",
+  "file_len": 253060,
+  "file_sha256": "80e3d76a3ce357565c42daf226170e7e78016f4e626bca752d9665b87ea89e1d",
   "logs": [
    [
     "info",

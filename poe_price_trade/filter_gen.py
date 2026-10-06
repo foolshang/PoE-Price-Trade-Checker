@@ -216,7 +216,7 @@ def save_rules(config_dir: Path, rules: dict) -> None:
 
 _BASETYPE_LINE = re.compile(r'^\s*BaseType\s*(?:==)?\s*((?:"[^"]*"\s*)+)$')
 _PLAY_ALERT_LINE = re.compile(r'^\s*PlayAlertSound\s+(.+?)\s*$')
-_CUSTOM_ALERT_LINE = re.compile(r'^\s*CustomAlertSound\s+(.+?)\s*$')
+_CUSTOM_ALERT_LINE = re.compile(r'^\s*(CustomAlertSound(?:Optional)?)\s+(.+?)\s*$')
 _STACKSIZE_LINE = re.compile(r'^\s*StackSize\s*(>=|<=|==|>|<)?\s*(\d+)\s*$')
 
 # Style/action keywords — everything else non-blank/non-comment in a block is
@@ -404,7 +404,7 @@ def _block_sound_directive(lines: list) -> Optional[tuple]:
             return "PlayAlertSound", m.group(1)
         m = _CUSTOM_ALERT_LINE.match(line)
         if m:
-            return "CustomAlertSound", m.group(1)
+            return m.group(1), m.group(2)       # kind: CustomAlertSound | CustomAlertSoundOptional
     return None
 
 
@@ -774,7 +774,8 @@ def bucket_uniques(data: dict, rules: dict) -> dict:
 
 _STYLE_KEYWORDS = (
     "SetBorderColor", "SetTextColor", "SetBackgroundColor", "SetFontSize",
-    "PlayAlertSound", "CustomAlertSound", "PlayEffect", "MinimapIcon",
+    "PlayAlertSound", "CustomAlertSound", "CustomAlertSoundOptional", "PlayEffect",
+    "MinimapIcon",
 )
 
 
@@ -843,7 +844,7 @@ def _style_lines(tier_cfg: dict, sound_map: Optional[dict]) -> list:
     custom = (sound_map or {}).get(name) if name in ("S", "A", "B") else None
     if custom:
         volume = tier_cfg.get("sound_volume") or _DEFAULT_RULES["sound_volume"]
-        lines.append(f'    CustomAlertSound "{custom}" {volume}')
+        lines.append(f'    CustomAlertSoundOptional "{custom}" {volume}')
     else:
         default_sound = tier_cfg.get("sound")
         if isinstance(default_sound, dict):
@@ -860,18 +861,23 @@ def _style_lines(tier_cfg: dict, sound_map: Optional[dict]) -> list:
 
 def _override_sound(style_lines: list, tier_name: str, sound_map: Optional[dict],
                      rules: dict) -> list:
-    """Swaps in the user's own CustomAlertSound (Filter Generator UI,
-    S/A/B only) over whatever sound line came with `style_lines` — same
-    override precedence as the old _style_lines, now applied uniformly
-    whether the style came from a real ripped block or the hardcoded
-    fallback."""
+    """Adds the user's own sound (Filter Generator UI, S/A/B only) to
+    `style_lines`, uniformly whether the style came from a real ripped block or
+    the hardcoded fallback.
+
+    Written as CustomAlertSoundOptional, not CustomAlertSound: with a missing
+    file the game refuses to load the whole filter for the plain form ("Invalid
+    sound filepath", verified in PoE1 + PoE2), while the Optional form is
+    skipped. The block's own PlayAlertSound stays as the fallback sound — it
+    plays when the custom file is absent and is overridden when it is present.
+    Any CustomAlertSound[Optional] line already in the style is replaced."""
     custom = (sound_map or {}).get(tier_name) if tier_name in ("S", "A", "B") else None
     if not custom:
         return style_lines
     volume = rules.get("sound_volume", _DEFAULT_RULES["sound_volume"])
     filtered = [l for l in style_lines
-                if not l.strip().split(None, 1)[0] in ("PlayAlertSound", "CustomAlertSound")]
-    filtered.append(f'    CustomAlertSound "{custom}" {volume}')
+                if not l.strip().split(None, 1)[0] in ("CustomAlertSound", "CustomAlertSoundOptional")]
+    filtered.append(f'    CustomAlertSoundOptional "{custom}" {volume}')
     return filtered
 
 

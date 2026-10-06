@@ -365,8 +365,8 @@ def test_emit_unique_section_sound_map_overrides_real_style_sound():
     lines = filter_gen.emit_unique_section(tiers, _rules(), real_styles,
                                            sound_map={"S": "poe-checker-S.mp3"})
     text = "\n".join(lines)
-    assert 'CustomAlertSound "poe-checker-S.mp3" 300' in text
-    assert "PlayAlertSound 6 300" not in text
+    assert 'CustomAlertSoundOptional "poe-checker-S.mp3" 300' in text
+    assert "PlayAlertSound 6 300" in text      # the block's own sound stays as the fallback
     assert "SetBorderColor 0 0 0 255" in text  # rest of the real style is untouched
 
 
@@ -1936,3 +1936,54 @@ def test_unique_all_block_before_hide_and_off_by_default():
 def test_unique_is_not_a_hub_category():
     for cats in filter_gen.WHITELIST_CATEGORIES.values():
         assert "Unique" not in cats
+
+
+def test_override_sound_keeps_play_alert_sound_and_appends_optional_after_it():
+    style = ["    SetBorderColor 0 0 0 255", "    PlayAlertSound 6 300", "    PlayEffect Red"]
+    out = filter_gen._override_sound(style, "S", {"S": "poe-checker-S.mp3"}, _rules())
+    assert out[:3] == style
+    assert out[3] == '    CustomAlertSoundOptional "poe-checker-S.mp3" 300'
+    assert len(out) == 4
+
+
+def test_override_sound_adds_nothing_extra_when_block_has_no_sound_line():
+    style = ["    SetBorderColor 0 0 0 255"]
+    out = filter_gen._override_sound(style, "A", {"A": "a.mp3"}, _rules())
+    assert out == style + ['    CustomAlertSoundOptional "a.mp3" 300']
+    assert not any(l.strip().startswith("PlayAlertSound") for l in out)
+
+
+def test_override_sound_replaces_existing_custom_lines_and_ignores_tier_c():
+    style = ['    CustomAlertSound "old.mp3" 100', '    CustomAlertSoundOptional "older.mp3"', "    PlayAlertSound 1 100"]
+    out = filter_gen._override_sound(style, "B", {"B": "new.mp3"}, _rules())
+    assert out == ["    PlayAlertSound 1 100", '    CustomAlertSoundOptional "new.mp3" 300']
+    assert filter_gen._override_sound(style, "C", {"C": "c.mp3"}, _rules()) == style
+
+
+def test_parse_reads_optional_form_and_keeps_plain_form_unchanged():
+    base = """Show
+	BaseType == "Divine Orb"
+	CustomAlertSoundOptional "opt.mp3" 120
+
+Show
+	BaseType == "Chaos Orb"
+	CustomAlertSound "plain.mp3" 250
+"""
+    d = filter_gen._block_sound_directive(["	CustomAlertSoundOptional \"opt.mp3\" 120"])
+    assert d == ("CustomAlertSoundOptional", '"opt.mp3" 120')
+    d = filter_gen._block_sound_directive(["	CustomAlertSound \"plain.mp3\" 250"])
+    assert d == ("CustomAlertSound", '"plain.mp3" 250')
+    rules = filter_gen.apply_base_filter_sounds(_rules(), base, anchors={"S": "Divine Orb", "B": "Chaos Orb"})
+    sound = {t["name"]: t["sound"] for t in rules["tiers"]}
+    assert sound["S"] == {"kind": "CustomAlertSoundOptional", "raw": '"opt.mp3" 120'}
+    assert sound["B"] == {"kind": "CustomAlertSound", "raw": '"plain.mp3" 250'}
+
+
+def test_block_style_lines_keeps_custom_alert_sound_optional():
+    lines = ["Show", '\tBaseType == "Divine Orb"', "\tPlayAlertSound 6 300",
+             '\tCustomAlertSoundOptional "x.mp3" 300', "\tSetFontSize 45"]
+    block = filter_gen._Block.__new__(filter_gen._Block)
+    block.start, block.end = 0, len(lines)
+    out = filter_gen._block_style_lines(lines, block)
+    assert '    CustomAlertSoundOptional "x.mp3" 300' in out and "    PlayAlertSound 6 300" in out
+    assert all("BaseType" not in l for l in out)
