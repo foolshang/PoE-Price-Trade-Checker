@@ -6,7 +6,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from typing import Callable, Optional
 
-from . import __version__, filter_core, filter_gen, filter_style, hub_client
+from . import __version__, filter_core, filter_gen, filter_style, hub_client, ui_theme
 from .filter_style_editor import open_style_dialog
 from .config import AppConfig
 from .neversink_source import LEVELS
@@ -49,6 +49,7 @@ class FilterGenWindow:
             self._win.protocol("WM_DELETE_WINDOW", self._win.destroy)
         else:
             self._win = parent          # build into the frame/root handed in
+        ui_theme.apply(self._win)
 
         self._vars: dict[str, tk.Variable] = {}
         self._build()
@@ -100,6 +101,7 @@ class FilterGenWindow:
         var = tk.StringVar()
         self._vars[key] = var
         tk.Entry(parent, textvariable=var, bg=_INPUT_BG, fg=_FG, insertbackground=_FG,
+                 readonlybackground=_INPUT_BG, disabledforeground=_FG,
                  relief=tk.FLAT, font=_PANEL_FONT, width=28, state="readonly").grid(
             row=row, column=1, sticky="w", padx=6, pady=3)
         btn_frame = tk.Frame(parent, bg=_BG)
@@ -136,7 +138,6 @@ class FilterGenWindow:
 
         style = ttk.Style()
         try:
-            style.configure("TNotebook", background=_BG, borderwidth=0)
             style.configure("TNotebook.Tab", padding=(14, 4), font=_PANEL_FONT)
         except tk.TclError:
             pass

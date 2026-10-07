@@ -77,10 +77,10 @@ def test_generate_reports_sound_destinations_only_for_tiers_that_have_a_file():
     assert twin["sounds"] == {"S": "x.mp3", "A": "x-2.mp3"}                                    # different files, one name
 
 
-def test_no_sounds_for_whitelist_or_missing_base():
+def test_whitelist_shares_tier_sound_and_missing_base_errors():
     cfg = {"whitelist_enabled": True, "whitelist_gold": True, "sound_s": "a.mp3"}
     wl = json.loads(glue.generate(json.dumps(cfg), "poe2", None, None, None, _LOG))
-    assert wl["sounds"] == {}
+    assert wl["sounds"] == {"S": "a.mp3"}      # the S sound is shared with the NeverSink tab
     nobase = json.loads(glue.generate(json.dumps({"sound_s": "a.mp3"}), "poe2", None, None, None, _LOG))
     assert nobase["status"] == "error"
 

@@ -122,3 +122,20 @@ def default_quest_style() -> dict:
     s = normalize_style({})
     s["text"] = [74, 230, 58, 255]
     return s
+
+
+def _preset(**kw) -> dict:
+    s = normalize_style({})
+    s.update(kw)
+    return s
+
+
+# What the whitelist tab starts from for the things NeverSink has no matching block for
+# (S / A / B start as copies of NeverSink's own tier 1 / 2 / 3 look, taken from its base filter).
+DEFAULT_STYLES = {
+    "G": _preset(text=[255, 215, 0, 255], border=[255, 215, 0, 255], bg=[40, 30, 0, 255], size=40),
+    "Tablet": _preset(text=[0, 230, 230, 255], border=[0, 230, 230, 255], bg=[0, 30, 40, 255], size=40,
+                      icon={"size": 1, "color": "Cyan", "shape": "Square"}),
+    "Map": _preset(text=[255, 255, 255, 255], border=[200, 200, 200, 255], bg=[30, 30, 30, 255], size=40,
+                   icon={"size": 1, "color": "White", "shape": "Diamond"}),
+}

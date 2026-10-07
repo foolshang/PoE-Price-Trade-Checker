@@ -5,7 +5,7 @@ import tkinter as tk
 from tkinter import colorchooser, filedialog, ttk
 from typing import Callable, Optional
 
-from . import filter_style
+from . import filter_style, ui_theme
 
 _BG = "#1C1C1C"
 _FG = "#E8D5A0"
@@ -26,6 +26,7 @@ class StyleEditor(tk.Frame):
     def __init__(self, parent, style=None, on_change: Optional[Callable[[], None]] = None,
                  allow_file_sound: bool = True, sample_text: str = "Quest Item"):
         super().__init__(parent, bg=_BG)
+        ui_theme.apply(self)
         self._on_change = on_change
         self._allow_file = allow_file_sound
         self._sample = sample_text
@@ -114,6 +115,7 @@ class StyleEditor(tk.Frame):
         if self._allow_file:
             rb("ไฟล์เสียง", "file").grid(row=2, column=0, sticky="w")
             tk.Entry(box, textvariable=self._snd_file, width=26, state="readonly", bg=_INPUT_BG, fg=_FG,
+                     readonlybackground=_INPUT_BG, disabledforeground=_FG,
                      relief=tk.FLAT, font=_FONT).grid(row=2, column=1, columnspan=2, padx=4, sticky="w")
             tk.Button(box, text="Browse…", command=self._browse, bg=_BUTTON_BG, fg=_FG, relief=tk.FLAT, font=_FONT,
                       cursor="hand2").grid(row=2, column=3)

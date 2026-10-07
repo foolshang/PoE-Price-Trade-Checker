@@ -169,7 +169,7 @@ WHITELIST_GEM_UNCUT = {
 WHITELIST_CATEGORIES = {
     "poe2": ["Currency", "Fragment", "Rune", "Essence", "SoulCore", "Omen",
              "Catalyst", "Delirium", "Verisium", "AbyssalBone", "Artifact",
-             "LineageGem", "Idol"],
+             "LineageGem", "Idol", "Expedition"],
     "poe1": ["Currency", "Fragment", "Essence", "Fossil", "Resonator", "Oil",
              "Scarab", "Artifact", "DeliriumOrb", "DivinationCard"],
 }

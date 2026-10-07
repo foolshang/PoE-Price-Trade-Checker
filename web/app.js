@@ -566,6 +566,7 @@ async function boot() {
   py.FS.writeFile("/home/pyodide/poe_price_trade/filter_gen.py", await get("py/filter_gen.py"));
   py.FS.writeFile("/home/pyodide/poe_price_trade/filter_core.py", await get("py/filter_core.py"));
   py.FS.writeFile("/home/pyodide/poe_price_trade/filter_style.py", await get("py/filter_style.py"));
+  py.FS.writeFile("/home/pyodide/poe_price_trade/filter_whitelist.py", await get("py/filter_whitelist.py"));
   py.FS.writeFile("/home/pyodide/glue.py", await get("glue.py"));
   py.runPython("import sys; sys.path.insert(0, '/home/pyodide')");
   glue = py.pyimport("glue");

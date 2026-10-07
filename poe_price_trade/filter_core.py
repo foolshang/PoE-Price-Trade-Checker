@@ -10,9 +10,10 @@ Imports are limited to the stdlib and filter_gen - never urllib, ctypes,
 shutil, config, filter_output, hub_client, neversink_source or tkinter.
 """
 from __future__ import annotations
+import re
 from typing import Callable, Optional
 
-from . import filter_gen, filter_style
+from . import filter_gen, filter_style, filter_whitelist
 
 
 def _noop(msg: str, tag: str = "info") -> None:
@@ -240,6 +241,8 @@ def tier_sound_requests(fg_cfg: dict) -> dict:
 
 def plan_fetch(fg_cfg: dict, game: str) -> dict:
     """What the caller has to fetch before build_filter_text."""
+    if fg_cfg.get("whitelist_enabled") and fg_cfg.get("wl_v2"):
+        return {"mode": "whitelist", "hub": True, "neversink": True}
     if fg_cfg.get("whitelist_enabled"):
         return {"mode": "whitelist", "hub": bool(fg_cfg.get(f"whitelist_cats_{game}", [])),
                 "neversink": False}
@@ -254,6 +257,7 @@ def build_filter_text(fg_cfg: dict, game: str, *,
                       base_text: Optional[str] = None,
                       base_tag: Optional[str] = None,
                       copy_sounds_fn: Optional[Callable[[dict], dict]] = None,
+                      extra_names: Optional[set] = None,
                       log: Callable[[str, str], None] = _noop) -> Optional[dict]:
     """Returns:
       whitelist : {"mode": "whitelist", "generated_section", "base_text": None, "count"}
@@ -266,12 +270,32 @@ def build_filter_text(fg_cfg: dict, game: str, *,
     user gave a sound - CustomAlertSoundOptional next to NeverSink's own sound numbers
     (filter_gen.apply_ladder_sounds). No base filter -> nothing to write."""
     gv = game
+    if fg_cfg.get("whitelist_enabled") and fg_cfg.get("wl_v2"):
+        return _build_whitelist_v2(fg_cfg, gv, hub_data, base_text, copy_sounds_fn, extra_names, log)
     if fg_cfg.get("whitelist_enabled"):
-        return _build_whitelist(fg_cfg, gv, hub_data, log)
+        return _build_whitelist(fg_cfg, gv, hub_data, log, copy_sounds_fn)
     return _build_tier(fg_cfg, gv, base_text, base_tag, copy_sounds_fn, log)
 
 
-def _build_whitelist(fg_cfg: dict, gv: str, hub_data: Optional[dict], log) -> Optional[dict]:
+_PLAY_ALERT = re.compile(r"^(\s*)PlayAlertSound\s+(\d+)")
+_SOUND_LABEL = {"6": "S", "1": "A", "2": "B"}      # NeverSink's sound numbers: top / second / middle
+
+
+def add_shared_tier_sounds(section: str, copied: dict) -> str:
+    """The user's S / A / B sound (shared with the NeverSink tab) next to the PlayAlertSound 6 / 1 / 2 of
+    the old whitelist's blocks, as filter_gen does for NeverSink's own blocks: the custom file plays when
+    it is there, the built-in sound is the fallback."""
+    out = []
+    for line in section.splitlines():
+        out.append(line)
+        m = _PLAY_ALERT.match(line)
+        f = copied.get(_SOUND_LABEL.get(m.group(2))) if m else None
+        if f:
+            out.append(f'{m.group(1)}CustomAlertSoundOptional "{f}" {filter_gen.SOUND_VOLUME}')
+    return "\n".join(out) + ("\n" if section.endswith("\n") else "")
+
+
+def _build_whitelist(fg_cfg: dict, gv: str, hub_data: Optional[dict], log, copy_sounds_fn=None) -> Optional[dict]:
     exact = []
     gold_on = bool(fg_cfg.get("whitelist_gold"))
     unique_all = bool(fg_cfg.get("whitelist_unique_all"))
@@ -303,7 +327,37 @@ def _build_whitelist(fg_cfg: dict, gv: str, hub_data: Optional[dict], log) -> Op
                                                  unique_all=unique_all)
     count = (len(set(exact)) + len(set(uniq_bases)) + len(contains) + len(gem_uncut)
              + int(gold_on) + int(unique_all))
+    wanted = {k: v for k, v in tier_sound_requests(fg_cfg).items() if v}        # S / A / B / Q files
+    copied = copy_sounds_fn(wanted) if wanted and copy_sounds_fn else {}
+    if copied:
+        section = add_shared_tier_sounds(section, copied)
+    quest = build_quest_blocks(gv, fg_cfg.get("style_q"), copied.get("Q")) if fg_cfg.get("style_q") else ""
+    if quest:           # quest items are never hidden by the game, but they still get their own look / sound
+        head, _, rest = section.partition("\n")
+        section = head + "\n" + quest + rest
     return {"mode": "whitelist", "generated_section": section, "base_text": None, "count": count}
+
+
+def _build_whitelist_v2(fg_cfg, gv, hub_data, base_text, copy_sounds_fn, extra_names, log) -> Optional[dict]:
+    """The new whitelist: our own tiers, starting tiers from NeverSink strictness 2 (filter_whitelist).
+    Needs the base filter for the starting tiers; without it nothing is written."""
+    if not base_text:
+        log("⚠ ไม่มี NeverSink base filter — whitelist ไม่มี tier เริ่มต้น ไม่ generate", "warn")
+        return None
+    sound_map = filter_whitelist.sound_requests(fg_cfg, gv)
+    sound_map["Q"] = filter_style.uses_sound_file(fg_cfg.get("style_q")) if fg_cfg.get("style_q") else None
+    copied = copy_sounds_fn(sound_map) if copy_sounds_fn else {}
+    quest = build_quest_blocks(gv, fg_cfg.get("style_q"), copied.get("Q")) if fg_cfg.get("style_q") else ""
+    res = filter_whitelist.build_whitelist_filter(gv, fg_cfg, base_text, hub_data, quest, copied, extra_names)
+    for base, tiers in res["unique_conflicts"]:
+        log(f"⚠ unique หลายตัวบน base {base} มี tier ไม่เท่ากัน — ใช้ tier สูงสุด: "
+            + ", ".join(f"{n}={t}" for n, t in sorted(tiers.items())), "warn")
+    if res["skipped"]:
+        shown = ", ".join(f"{n} ({where})" for n, where in res["skipped"][:8])
+        more = f" … +{len(res['skipped']) - 8}" if len(res["skipped"]) > 8 else ""
+        log(f"⚠ ข้าม {len(res['skipped'])} ชื่อที่ไม่ยืนยันว่าเป็นชื่อจริงของเกม (ไม่เขียนลงไฟล์): {shown}{more}", "warn")
+    return {"mode": "whitelist", "generated_section": res["text"], "base_text": None,
+            "count": res["count"], "report": res["report"], "skipped": res["skipped"]}
 
 
 def _build_tier(fg_cfg, gv, base_text, base_tag, copy_sounds_fn, log) -> dict:

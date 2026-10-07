@@ -5,6 +5,7 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Callable, Optional
 
+from . import ui_theme
 from .config import AppConfig
 
 log = logging.getLogger(__name__)
@@ -30,6 +31,7 @@ class SettingsWindow:
         self._win = tk.Toplevel(parent)
         self._win.title("PoE Price & Trade Checker — Settings")
         self._win.configure(bg=_BG)
+        ui_theme.apply(self._win)
         self._win.resizable(False, False)
         self._win.grab_set()
         self._win.protocol("WM_DELETE_WINDOW", self._win.destroy)

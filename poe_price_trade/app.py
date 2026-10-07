@@ -27,7 +27,7 @@ from . import mod_badge
 from .mod_badge import ModBadgeDB
 from .skill_ref import SkillRefDB
 from .skill_ref_window import SkillRefWindow
-from . import filter_service
+from . import filter_service, ui_theme
 from .filter_window import FilterGenWindow
 from .tray import TrayIcon
 
@@ -66,6 +66,7 @@ class App:
         self._root.report_callback_exception = self._on_tk_callback_exception
         self._root.title(f"PoE Price & Trade Checker  v{__version__}")
         self._root.configure(bg="#1C1C1C")
+        ui_theme.apply(self._root)
         self._root.resizable(False, False)
         self._root.protocol("WM_DELETE_WINDOW", self._on_close_button)
         self._root.bind("<Unmap>", self._on_unmap)

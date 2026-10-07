@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from typing import Callable, Optional
 
-from . import debug, filter_core, filter_gen, filter_output, hub_client, neversink_source
+from . import debug, filter_core, filter_gen, filter_output, hub_client, neversink_source, trade_names
 
 log_ = logging.getLogger(__name__)
 
@@ -125,7 +125,17 @@ def generate_filter(config, game_version: str, league_path: str,
                 hub_data = hub_client.get_prices(path)
             except Exception as e:
                 log(f"⚠ ดึง hub ไม่ได้ ใช้เฉพาะ currency/ชื่อที่ติ๊ก: {e}", "warn")
-        res = filter_core.build_filter_text(fg_cfg, gv, hub_data=hub_data, log=log)
+        wl_base = None
+        if plan["neversink"]:       # starting tiers come from NeverSink strictness 2, whatever the tier tab uses
+            wl_base, _tag = neversink_source.fetch_base_filter(gv, 2, cache_dir, force=force_base)
+            if wl_base is None:
+                log("⚠ ไม่มี NeverSink base filter ให้ใช้ (GitHub ล่ม + ไม่มี cache)", "warn")
+        res = filter_core.build_filter_text(
+            fg_cfg, gv, hub_data=hub_data, base_text=wl_base,
+            extra_names=trade_names.get_names(gv, cache_dir) if plan["neversink"] else None,
+            copy_sounds_fn=lambda sound_map: filter_output.copy_sounds(
+                out_dir, sound_map, decide=ask_sound, notify=lambda text: log(text, "info")),
+            log=log)
         if res is None:
             return None
         try:

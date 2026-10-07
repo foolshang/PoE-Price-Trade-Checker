@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from . import __version__, filter_service, hub_client
+from . import __version__, filter_service, hub_client, ui_theme
 from .config import AppConfig
 from .filter_window import FilterGenWindow, _BG, _FG, _PANEL_FONT
 
@@ -40,6 +40,7 @@ class FilterGenStandaloneApp:
         self._root = tk.Tk()
         self._root.title(f"PoE1 & PoE2 Filter Generator v{__version__}")
         self._root.configure(bg=_BG)
+        ui_theme.apply(self._root)
         self._root.resizable(False, False)
         self._config = AppConfig(_APP_DIR_NAME)      # separate from the checker
         icon = _icon_path()
