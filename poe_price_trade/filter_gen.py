@@ -24,7 +24,6 @@ SOUND_VOLUME = 300
 
 _BASETYPE_LINE = re.compile(r'^\s*BaseType\s*(?:==)?\s*((?:"[^"]*"\s*)+)$')
 _PLAY_ALERT_LINE = re.compile(r'^\s*PlayAlertSound\s+(.+?)\s*$')
-_CUSTOM_ALERT_LINE = re.compile(r'^\s*(CustomAlertSound(?:Optional)?)\s+(.+?)\s*$')
 
 
 class _Block:
@@ -70,18 +69,6 @@ def _parse_blocks(lines: list) -> list:
     if block_type is not None:
         blocks.append(_Block(block_type, start, len(lines), basetype_line, basetype_names))
     return blocks
-
-
-def _block_sound_directive(lines: list) -> Optional[tuple]:
-    """(kind, raw text) of the first PlayAlertSound / CustomAlertSound[Optional] line."""
-    for line in lines:
-        m = _PLAY_ALERT_LINE.match(line)
-        if m:
-            return "PlayAlertSound", m.group(1)
-        m = _CUSTOM_ALERT_LINE.match(line)
-        if m:
-            return m.group(1), m.group(2)
-    return None
 
 
 # ---------------------------------------------------------------------------
