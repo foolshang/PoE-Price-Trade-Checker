@@ -39,3 +39,6 @@ debug_logs/
 .idea/
 *.suo
 *.user
+
+# web build: copies of poe_price_trade/filter_gen.py + filter_core.py (tools/sync_web_py.py)
+web/py/

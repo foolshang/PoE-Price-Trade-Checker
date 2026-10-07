@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PoE Filter Generator</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <h1>PoE1 &amp; PoE2 Filter Generator</h1>
+  <p class="muted">สร้าง loot filter ในเบราว์เซอร์ — ตั้งค่าเสร็จกด Generate แล้วดาวน์โหลดไปวางในโฟลเดอร์เกม</p>
+
+  <div id="loading" class="loading">กำลังโหลด… (ครั้งแรกอาจใช้เวลาสักครู่ — ดาวน์โหลด Python runtime ~10MB, ครั้งต่อไปเร็วขึ้น)</div>
+  <div id="fatal" class="fatal" hidden></div>
+
+  <div id="app" hidden>
+    <div class="game-toggle" role="radiogroup" aria-label="เกม">
+      <button type="button" id="game-poe1" data-game="poe1">PoE1</button>
+      <button type="button" id="game-poe2" data-game="poe2">PoE2</button>
+    </div>
+
+    <form id="form" autocomplete="off" onsubmit="return false"></form>
+
+    <div class="actions">
+      <button type="button" id="btn-generate" disabled>Generate</button>
+      <button type="button" id="btn-refresh" disabled>Refresh NeverSink Base</button>
+      <button type="button" id="btn-reset" class="secondary">ล้างค่า</button>
+    </div>
+
+    <label class="section">Status</label>
+    <div id="log" class="log" aria-live="polite"></div>
+
+    <div id="result" class="result" hidden>
+      <div class="actions">
+        <button type="button" id="btn-download">ดาวน์โหลด poe-checker.filter</button>
+        <button type="button" id="btn-copy" class="secondary">Copy</button>
+      </div>
+      <p class="muted" id="result-info"></p>
+      <ol class="muted" id="result-steps"></ol>
+    </div>
+  </div>
+</main>
+
+<dialog id="refine">
+  <div class="dlg-head">
+    <select id="refine-cat"></select>
+    <input id="refine-q" type="search" placeholder="ค้นหา…">
+  </div>
+  <div id="refine-list" class="refine-list"></div>
+  <div class="actions">
+    <button type="button" id="refine-all" class="secondary">เลือกทั้งหมด</button>
+    <button type="button" id="refine-none" class="secondary">ไม่เลือกเลย</button>
+    <button type="button" id="refine-close">ปิด</button>
+  </div>
+</dialog>
+
+<script src="https://cdn.jsdelivr.net/pyodide/v0.27.7/full/pyodide.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
