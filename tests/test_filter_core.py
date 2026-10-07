@@ -26,7 +26,7 @@ def test_core_imports_only_stdlib_and_filter_gen():
             mods.add(("." * n.level) + (n.module or ""))
             if n.level:
                 mods |= {"." + a.name for a in n.names}
-    assert mods <= {"__future__", "typing", ".", ".filter_gen"}, mods
+    assert mods <= {"__future__", "typing", ".", ".filter_gen", ".filter_style"}, mods
 
 
 def test_core_imports_with_io_modules_blocked():
@@ -65,12 +65,12 @@ def test_compose_filter_body():
     assert filter_core.compose_filter_body("SEC", None) == "SEC"
     assert filter_core.compose_filter_body("SEC", "BASE") == "SEC\n# ===== base filter below =====\nBASE"
     assert filter_core.compose_filter_body("", "BASE") == "\n# ===== base filter below =====\nBASE"
-    with pytest.raises(ValueError, match="nothing to write — both hub and base filter sources unavailable"):
+    with pytest.raises(ValueError, match="nothing to write — no NeverSink base filter available"):
         filter_core.compose_filter_body("  \n", None)
 
 
 def test_plan_fetch():
-    assert filter_core.plan_fetch({}, "poe2") == {"mode": "tier", "hub": True, "neversink": True}
+    assert filter_core.plan_fetch({}, "poe2") == {"mode": "tier", "hub": False, "neversink": True}
     wl = {"whitelist_enabled": True}
     assert filter_core.plan_fetch(wl, "poe2") == {"mode": "whitelist", "hub": False, "neversink": False}
     assert filter_core.plan_fetch(dict(wl, whitelist_cats_poe2=["Rune"]), "poe2")["hub"] is True
@@ -111,37 +111,41 @@ def test_whitelist_nothing_selected_returns_none_and_warns():
     assert [t for t, _ in logs] == ["warn"]
 
 
-def test_tier_build_merges_into_base_and_reports_state():
-    logs, sounds = [], []
+def test_tier_mode_is_neversinks_base_plus_header_and_never_looks_at_prices():
+    for hub in (None, _hub(), _hub(hours_old=500)):                       # whatever the hub holds is irrelevant
+        res = filter_core.build_filter_text({}, "poe2", hub_data=hub, base_text=_BASE, base_tag="t1")
+        assert res == {"mode": "tier", "generated_section": filter_core.TIER_HEADER, "base_text": _BASE,
+                       "base_tag": "t1"}
+    body = filter_core.compose_filter_body(filter_core.TIER_HEADER, _BASE)
+    assert body == filter_core.TIER_HEADER + "\n# ===== base filter below =====\n" + _BASE
+
+
+def test_tier_mode_without_a_base_filter_has_nothing_to_write():
+    res = filter_core.build_filter_text({}, "poe2", hub_data=_hub(), base_text=None, base_tag=None)
+    assert res["generated_section"] == "" and res["base_text"] is None
+    with pytest.raises(ValueError):
+        filter_core.compose_filter_body(res["generated_section"], res["base_text"])
+
+
+def test_tier_mode_adds_custom_sounds_only_through_the_copied_names():
+    logs, asked = [], []
+    base = ('Show # $type->currency $tier->t1\n\tBaseType == "Divine Orb"\n\tPlayAlertSound 6 300\n\n'
+            'Show # $type->6l $tier->x\n\tLinkedSockets 6\n\tPlayAlertSound 6 300\n')
     res = filter_core.build_filter_text(
-        {}, "poe2", hub_data=_hub(), base_text=_BASE, base_tag="t1",
-        copy_sounds_fn=lambda m: sounds.append(m) or {},
+        {"sound_s": "My Ping.MP3"}, "poe2", base_text=base, base_tag="t",
+        copy_sounds_fn=lambda m: asked.append(m) or {"S": "poe-checker-S.MP3"},
         log=lambda m, t="info": logs.append((t, m)))
-    assert res["mode"] == "tier" and res["base_tag"] == "t1"
-    assert res["signature"] and res["mapping"]
-    assert sounds == [{"S": None, "A": None, "B": None}]
-    assert filter_core.compose_filter_body(res["generated_section"], res["base_text"])
-    assert len(logs) == 1 and logs[0][0] in ("ok", "warn")
+    assert asked == [{"S": "My Ping.MP3", "A": None, "B": None, "Q": None}]
+    assert res["base_text"].count('CustomAlertSoundOptional "poe-checker-S.MP3" 300') == 1    # not on the 6-link block
+    assert "My Ping" not in res["base_text"] and len(logs) == 1 and logs[0][0] == "ok"
+    none = filter_core.build_filter_text({}, "poe2", base_text=base, base_tag="t", copy_sounds_fn=lambda m: {})
+    assert none["base_text"] == base
 
 
-def test_tier_stale_or_missing_hub_leaves_base_alone():
-    logs = []
-    res = filter_core.build_filter_text({}, "poe2", hub_data=_hub(hours_old=100), base_text=_BASE,
-                                        base_tag="t", log=lambda m, t="info": logs.append(t))
-    assert res["generated_section"] == "" and res["base_text"] == _BASE and res["signature"] is None
-    assert logs == ["warn"]
-    res = filter_core.build_filter_text({}, "poe2", hub_data=None, base_text=_BASE, base_tag="t")
-    assert res["generated_section"] == "" and res["mapping"] is None
-
-
-def test_tier_rules_loader_only_called_for_fresh_hub():
-    calls = []
-
-    def loader():
-        calls.append(1)
-        return filter_core.filter_gen.load_rules(None)
-    filter_core.build_filter_text({}, "poe2", hub_data=_hub(hours_old=100), base_text=_BASE, rules_loader=loader)
-    filter_core.build_filter_text({}, "poe2", hub_data=None, base_text=_BASE, rules_loader=loader)
-    assert calls == []
-    filter_core.build_filter_text({}, "poe2", hub_data=_hub(), base_text=_BASE, rules_loader=loader)
-    assert calls == [1]
+def test_real_base_files_no_sounds_output_is_header_plus_base_byte_for_byte():
+    from pathlib import Path
+    for game, name in (("poe1", "neversink_poe1_base.filter"), ("poe2", "neversink_poe2_base.filter")):
+        base = (Path(__file__).parent / "sample_data" / name).read_text(encoding="utf-8")
+        res = filter_core.build_filter_text({"strictness_" + game: 2}, game, base_text=base, base_tag="t")
+        assert filter_core.compose_filter_body(res["generated_section"], res["base_text"]) == (
+            filter_core.TIER_HEADER + "\n# ===== base filter below =====\n" + base)

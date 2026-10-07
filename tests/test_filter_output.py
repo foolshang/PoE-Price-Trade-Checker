@@ -43,18 +43,83 @@ def test_write_filter_overwrites_existing(tmp_path):
     assert path.read_text(encoding="utf-8").strip() == "SECOND"
 
 
-def test_copy_sounds_uses_tier_prefixed_fixed_names(tmp_path):
-    src = tmp_path / "src"
-    src.mkdir()
-    sound_file = src / "airhorn.mp3"
-    sound_file.write_bytes(b"fake mp3 data")
+def _src(tmp_path, name, data):
+    d = tmp_path / "src"
+    d.mkdir(exist_ok=True)
+    p = d / name
+    p.write_bytes(data)
+    return str(p)
+
+
+def test_copy_sounds_keeps_the_original_file_name(tmp_path):
     out_dir = tmp_path / "out"
+    msgs = []
+    written = filter_output.copy_sounds(out_dir, {"S": _src(tmp_path, "airhorn.mp3", b"fake mp3 data"), "A": None},
+                                        notify=msgs.append)
+    assert written == {"S": "airhorn.mp3"} and msgs == []
+    assert (out_dir / "airhorn.mp3").read_bytes() == b"fake mp3 data"
+    assert not list(out_dir.glob("poe-checker-*"))
 
-    written = filter_output.copy_sounds(out_dir, {"S": str(sound_file), "A": None})
 
-    assert written == {"S": "poe-checker-S.mp3"}
-    assert (out_dir / "poe-checker-S.mp3").read_bytes() == b"fake mp3 data"
-    assert not (out_dir / "poe-checker-A.mp3").exists()
+def test_copy_sounds_same_content_is_reused_not_copied_again(tmp_path):
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    (out_dir / "ping.mp3").write_bytes(b"same")
+    before = (out_dir / "ping.mp3").stat().st_mtime_ns
+    msgs = []
+    written = filter_output.copy_sounds(out_dir, {"S": _src(tmp_path, "ping.mp3", b"same")}, notify=msgs.append)
+    assert written == {"S": "ping.mp3"} and (out_dir / "ping.mp3").stat().st_mtime_ns == before
+    assert any("ใช้ไฟล์เดิม" in m for m in msgs)
+
+
+def test_copy_sounds_different_content_asks_and_obeys(tmp_path):
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    (out_dir / "ping.mp3").write_bytes(b"old")
+    src = _src(tmp_path, "ping.mp3", b"new")
+    asked = []
+    keep = filter_output.copy_sounds(out_dir, {"S": src}, decide=lambda n, alt: asked.append((n, alt)) or "keep")
+    assert asked == [("ping.mp3", "ping-2.mp3")] and keep == {"S": "ping-2.mp3"}
+    assert (out_dir / "ping.mp3").read_bytes() == b"old" and (out_dir / "ping-2.mp3").read_bytes() == b"new"
+    over = filter_output.copy_sounds(out_dir, {"S": src}, decide=lambda n, alt: "overwrite")
+    assert over == {"S": "ping.mp3"} and (out_dir / "ping.mp3").read_bytes() == b"new"
+    # no decide callback = keep the old file; the free name skips ones already taken
+    again = filter_output.copy_sounds(out_dir, {"S": _src(tmp_path, "ping.mp3", b"third")})
+    assert again == {"S": "ping-3.mp3"}
+
+
+def test_copy_sounds_one_file_for_several_slots_is_copied_once_and_bad_names_are_fixed(tmp_path):
+    out_dir = tmp_path / "out"
+    a = _src(tmp_path, "a#b;c.mp3", b"x")
+    msgs = []
+    written = filter_output.copy_sounds(out_dir, {"S": a, "A": a, "Q": a}, notify=msgs.append)
+    assert written == {"S": "a_b_c.mp3", "A": "a_b_c.mp3", "Q": "a_b_c.mp3"}
+    assert [p.name for p in out_dir.iterdir()] == ["a_b_c.mp3"]
+    assert len(msgs) == 1 and "#" in msgs[0] and ";" in msgs[0]
+
+
+def test_copy_sounds_two_different_files_with_one_name_are_told_apart_without_asking(tmp_path):
+    out_dir = tmp_path / "out"
+    d1 = tmp_path / "d1"
+    d2 = tmp_path / "d2"
+    d1.mkdir()
+    d2.mkdir()
+    (d1 / "x.mp3").write_bytes(b"1")
+    (d2 / "x.mp3").write_bytes(b"2")
+    asked = []
+    written = filter_output.copy_sounds(out_dir, {"S": str(d1 / "x.mp3"), "A": str(d2 / "x.mp3")},
+                                        decide=lambda *a: asked.append(a) or "overwrite")
+    assert asked == [] and written == {"S": "x.mp3", "A": "x-2.mp3"}
+    assert (out_dir / "x.mp3").read_bytes() == b"1" and (out_dir / "x-2.mp3").read_bytes() == b"2"
+
+
+def test_write_filter_uses_the_given_name_and_rejects_bad_ones(tmp_path):
+    p = filter_output.write_filter(tmp_path, "G", "B", name="my filter")
+    assert p.name == "my filter.filter" and p.read_text(encoding="utf-8").endswith("B")
+    assert filter_output.write_filter(tmp_path, "G", None).name == "poe-checker.filter"
+    for bad in ("a/b", "CON", "x.", "", "q?"):
+        with pytest.raises(ValueError):
+            filter_output.write_filter(tmp_path, "G", "B", name=bad)
 
 
 def test_copy_sounds_missing_source_is_skipped_not_raised(tmp_path):
@@ -65,36 +130,3 @@ def test_copy_sounds_missing_source_is_skipped_not_raised(tmp_path):
 
 def test_copy_sounds_empty_map_returns_empty(tmp_path):
     assert filter_output.copy_sounds(tmp_path, {}) == {}
-
-
-def test_state_round_trip(tmp_path):
-    filter_output.save_state(tmp_path, "poe2", last_signature="abc123", base_tag="1.0.0")
-    state = filter_output.load_state(tmp_path, "poe2")
-    assert state["last_signature"] == "abc123"
-    assert state["base_tag"] == "1.0.0"
-
-
-def test_state_missing_file_returns_empty_dict(tmp_path):
-    assert filter_output.load_state(tmp_path, "poe1") == {}
-
-
-def test_state_save_merges_not_replaces(tmp_path):
-    filter_output.save_state(tmp_path, "poe2", last_signature="abc")
-    filter_output.save_state(tmp_path, "poe2", base_tag="1.0.0")
-    state = filter_output.load_state(tmp_path, "poe2")
-    assert state["last_signature"] == "abc"
-    assert state["base_tag"] == "1.0.0"
-
-
-def test_state_isolated_per_game(tmp_path):
-    filter_output.save_state(tmp_path, "poe1", last_signature="one")
-    filter_output.save_state(tmp_path, "poe2", last_signature="two")
-    assert filter_output.load_state(tmp_path, "poe1")["last_signature"] == "one"
-    assert filter_output.load_state(tmp_path, "poe2")["last_signature"] == "two"
-
-
-def test_state_round_trip_last_mapping(tmp_path):
-    mapping = {"c:Divine Orb": "S", "u:Headhunter": "S"}
-    filter_output.save_state(tmp_path, "poe2", last_signature="abc123", last_mapping=mapping)
-    state = filter_output.load_state(tmp_path, "poe2")
-    assert state["last_mapping"] == mapping

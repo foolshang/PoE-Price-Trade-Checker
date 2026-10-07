@@ -69,6 +69,7 @@ class FilterGenStandaloneApp:
         # version marker (visible proof of which build is running) + where config lives
         self._fgw.log(f"PoE Filter Generator v{__version__} — config: {self._config.app_dir()}", "info")
         self._write_run_marker(icon)
+        self._root.after(1500, self._check_neversink_update)
 
     def _write_run_marker(self, icon: Optional[Path]) -> None:
         try:
@@ -87,7 +88,7 @@ class FilterGenStandaloneApp:
             self._body, self._config, gv,
             on_generate=self._on_generate,
             hub_loader=lambda: hub_client.get_prices(self._league_path(gv)),
-            as_toplevel=False, show_auto_regen=False)
+            as_toplevel=False)
 
     def _remember_game(self) -> None:
         fg = dict(self._config.get("filter_gen", {}) or {})
@@ -115,7 +116,7 @@ class FilterGenStandaloneApp:
         self._remember_game()
         self._root.destroy()
 
-    def _on_generate(self, refresh: bool) -> None:
+    def _on_generate(self, refresh: bool, mode: Optional[str] = None, after=None) -> None:
         # FilterGenWindow._on_generate_clicked already called _save() -> config is fresh
         gv = self._game.get()
         cfg = self._config
@@ -127,12 +128,40 @@ class FilterGenStandaloneApp:
 
         def worker():
             try:
-                filter_service.generate_filter(cfg, gv, path, force_base=refresh,
-                                               league="", log=log)
+                res = filter_service.generate_filter(cfg, gv, path, force_base=refresh, league="", log=log,
+                                                     mode=mode, ask_sound=fgw.ask_sound_conflict)
+                filter_service.remember_result(cfg, gv, res)
+                if after:
+                    after(res)
             except Exception as e:
                 self._root.after_idle(lambda err=e: fgw.log(f"✗ generate ล้มเหลว: {err}", "err"))
 
         threading.Thread(target=worker, daemon=True, name="StandaloneGen").start()
+
+    def _check_neversink_update(self) -> None:
+        """At start: a newer NeverSink release than the one the tier filter was built from?
+        Regenerates the NeverSink tab when the user asked for it, else just says so."""
+        gv = self._game.get()
+        fgw = self._fgw
+
+        def say(msg, tag="info"):
+            self._root.after_idle(lambda: fgw.log(msg, tag))
+
+        def worker():
+            try:
+                info = filter_service.check_neversink_update(self._config, gv)
+            except Exception:
+                return
+            if not info:
+                return
+            if info["auto"]:
+                self._root.after_idle(lambda: self._on_generate(
+                    True, "tier", after=lambda res: say(
+                        filter_service.neversink_update_message(info, True), "ok") if res else None))
+            else:
+                say(filter_service.neversink_update_message(info, False), "warn")
+
+        threading.Thread(target=worker, daemon=True, name="NeverSinkCheck").start()
 
     def run(self) -> None:
         self._root.mainloop()

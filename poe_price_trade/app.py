@@ -5,7 +5,6 @@ import logging
 import threading
 import time
 import tkinter as tk
-from datetime import datetime
 from tkinter import messagebox, ttk
 from typing import Optional
 
@@ -28,7 +27,7 @@ from . import mod_badge
 from .mod_badge import ModBadgeDB
 from .skill_ref import SkillRefDB
 from .skill_ref_window import SkillRefWindow
-from . import filter_gen, filter_output, filter_service
+from . import filter_service
 from .filter_window import FilterGenWindow
 from .tray import TrayIcon
 
@@ -98,12 +97,12 @@ class App:
         self._filter_win: Optional[FilterGenWindow] = None
 
         # F4 scan state
+        self._notif_token = 0  # guards the NeverSink-update overlay notification's auto-hide timer
         self._scan_results: list[ScanResult] = []
         self._scan_active = False
         self._hover_shown_key = ""
         self._safety_timer = None
         self._motion = None  # MotionWatcher
-        self._notif_token = 0  # guards the auto-regen overlay notification's auto-hide timer
 
         self._build_ui()
         self._build_overlay()
@@ -119,7 +118,7 @@ class App:
         self._log("F4 Scan+Hover  |  F5 Trade browser  |  F8 Settings", "dim")
 
         self._fetch_leagues_for_current_gv(auto_pick=self._config.get("auto_league", True))
-        self._root.after(60000, self._poll_filter_regen)
+        self._root.after(45000, self._poll_neversink_update)
 
         self._tray = TrayIcon(
             on_show=lambda: self._root.after_idle(self._show_from_tray),
@@ -723,7 +722,7 @@ class App:
     def _win_log(self, msg: str, tag: str = "info") -> None:
         """Log to both the Filter Generator window (if still open) and the
         main status log — the window may get closed by the user while a
-        generate/auto-regen run is still in flight on a background thread."""
+        generate run is still in flight on a background thread."""
         w = self._filter_win
         if w is not None:
             try:
@@ -733,21 +732,15 @@ class App:
                 pass
         self._log(msg, tag)
 
-    def _generate_filter(self, force_base: bool) -> None:
+    def _generate_filter(self, force_base: bool, mode: Optional[str] = None) -> None:
         """Entry point for the Tk thread (button click) — offloads the actual
         fetch/tier/write work to a daemon thread, same pattern as _on_f4_scan/
         _load_prices_async, since it involves several network calls."""
-        threading.Thread(target=self._do_generate_filter, args=(force_base,),
+        threading.Thread(target=self._do_generate_filter, args=(force_base, mode),
                          daemon=True, name="FilterGen").start()
 
-    def _do_generate_filter(self, force_base: bool, notify_change_count: Optional[int] = None) -> None:
-        """Runs off the Tk thread — safe to call directly from another
-        background thread (auto-regen) without an extra thread hop.
-
-        notify_change_count: only set by the automatic timer path
-        (_filter_regen_check) — manual generates (button, tray "Generate
-        Now") leave it None and never fire the auto-regen notification, per
-        spec ("balloon...เมื่อ auto-regen สำเร็จ", not manual generates)."""
+    def _do_generate_filter(self, force_base: bool, mode: Optional[str] = None):
+        """Runs off the Tk thread (see _generate_filter). Returns the generate result."""
         gv = self._gv_var.get()
         league = self._league_var.get()
         path = self._league_paths.get(league) or f"{gv}/prices/latest.json"
@@ -755,73 +748,57 @@ class App:
         def _log(msg: str, tag: str = "info") -> None:
             self._root.after_idle(lambda m=msg, t=tag: self._win_log(m, t))
 
-        res = filter_service.generate_filter(self._config, gv, path,
-                                             force_base=force_base, league=league, log=_log)
+        w = self._filter_win
+        ask = w.ask_sound_conflict if w is not None else None
+        res = filter_service.generate_filter(self._config, gv, path, force_base=force_base, league=league,
+                                             log=_log, mode=mode, ask_sound=ask)
+        filter_service.remember_result(self._config, gv, res)
+        return res
 
-        if res and res.get("mode") == "tier" and res.get("path"):
-            filter_output.save_state(
-                self._config.app_dir(), gv,
-                last_generated_at=datetime.now().isoformat(),
-                last_signature=res.get("signature"),
-                last_mapping=res.get("mapping"),
-                base_tag=res.get("base_tag"))
-            if notify_change_count is not None:
-                self._root.after_idle(
-                    lambda c=notify_change_count: self._on_auto_regen_notify(c))
+    # ------------------------------------------------------------------
+    # NeverSink update check (at start, then every 6 hours)
+    # ------------------------------------------------------------------
 
-    def _poll_filter_regen(self) -> None:
-        """15-minute Tk timer tick — must never do network I/O inline (that
-        would freeze the whole UI every 15 minutes). Only starts a daemon
-        thread; the thread reschedules the next tick itself via after_idle
-        once it's done, so a slow/hung fetch can't stack overlapping polls."""
-        threading.Thread(target=self._filter_regen_check, daemon=True, name="FilterAutoRegen").start()
+    def _poll_neversink_update(self) -> None:
+        threading.Thread(target=self._neversink_update_check, daemon=True, name="NeverSinkCheck").start()
 
-    def _filter_regen_check(self) -> None:
+    def _neversink_update_check(self) -> None:
         try:
-            fg_cfg = dict(self._config.get("filter_gen", {}) or {})
-            if not fg_cfg.get("auto_regen", True) or fg_cfg.get("whitelist_enabled"):
-                return
             gv = self._gv_var.get()
-            league = self._league_var.get()
-            if not league:
-                return
-            path = self._league_paths.get(league) or f"{gv}/prices/latest.json"
-            app_dir = self._config.app_dir()
-            state = filter_output.load_state(app_dir, gv)
-
-            last_at = state.get("last_generated_at")
-            if last_at:
-                try:
-                    last_dt = datetime.fromisoformat(last_at)
-                    cooldown_min = float(fg_cfg.get("regen_cooldown_min", 60))
-                    if (datetime.now() - last_dt).total_seconds() / 60.0 < cooldown_min:
-                        return
-                except Exception:
-                    pass
-
-            try:
-                hub_data = hub_client.get_prices(path)
-            except Exception:
-                return
-            staleness_hours = float(fg_cfg.get("staleness_hours", 24))
-            if filter_gen.is_stale(hub_data, staleness_hours):
-                return
-
-            rules = filter_gen.load_rules(app_dir)
-            sig = filter_gen.signature(hub_data, rules)
-            if sig == state.get("last_signature"):
-                return
-
-            new_mapping = filter_gen.tier_mapping(hub_data, rules)
-            old_mapping = state.get("last_mapping")
-            changed = None if old_mapping is None else filter_gen.diff_mapping_count(old_mapping, new_mapping)
-
-            debug.event(f"filter auto-regen: signature changed gv={gv} league={league} changed={changed}")
-            self._do_generate_filter(False, notify_change_count=changed)
+            info = filter_service.check_neversink_update(self._config, gv)
+            if info:
+                regenerated = False
+                if info["auto"]:
+                    regenerated = bool(self._do_generate_filter(True, "tier"))
+                msg = filter_service.neversink_update_message(info, regenerated)
+                debug.event(f"neversink update gv={gv} {info['old']} -> {info['new']} regenerated={regenerated}")
+                self._root.after_idle(lambda m=msg, ok=regenerated: self._notify_neversink(m, ok))
         except Exception:
-            log.exception("filter auto-regen check failed")
+            log.exception("NeverSink update check failed")
         finally:
-            self._root.after_idle(lambda: self._root.after(900000, self._poll_filter_regen))
+            self._root.after_idle(lambda: self._root.after(6 * 3600 * 1000, self._poll_neversink_update))
+
+    def _notify_neversink(self, msg: str, regenerated: bool) -> None:
+        """Window log + tray balloon + (outside a live F4 scan) an in-game overlay line: a live test
+        showed Windows suppresses the tray balloon over a fullscreen game, the overlay is the
+        channel that renders on top of it."""
+        self._win_log(msg, "ok" if regenerated else "warn")
+        try:
+            self._tray.notify("PoE Price & Trade Checker", msg)
+            self._tray.set_pending(True)
+        except Exception:
+            pass
+        if self._scan_active:
+            return
+        self._notif_token += 1
+        token = self._notif_token
+        sw, sh = get_screen_size()
+        self._overlay.show_message(msg, max(0, sw - 640), sh - 80, color="#88DD88" if regenerated else "#DDCC66")
+        self._root.after(8000, lambda t=token: self._hide_notif_if_current(t))
+
+    def _hide_notif_if_current(self, token: int) -> None:
+        if token == self._notif_token:
+            self._overlay.hide()
 
     # ------------------------------------------------------------------
 
@@ -894,29 +871,3 @@ class App:
     def _open_settings_from_tray(self) -> None:
         self._show_from_tray()
         self._open_settings()
-
-    # ------------------------------------------------------------------
-    # Auto-regen notification (tray balloon = secondary, in-game overlay =
-    # primary — a live test confirmed Windows suppresses the tray balloon
-    # while a fullscreen game has Focus Assist active, so it can't be relied
-    # on as the only channel; PriceOverlay is already proven to render on
-    # top of a fullscreen PoE via the F4 hover feature)
-    # ------------------------------------------------------------------
-
-    def _on_auto_regen_notify(self, count: int) -> None:
-        msg = f"Filter updated ({count} items changed tier) — reload in game"
-        self._tray.notify("PoE Price & Trade Checker", msg)
-        self._tray.set_pending(True)
-
-        if self._scan_active:
-            return  # don't steal the shared overlay out from under a live F4 hover
-
-        self._notif_token += 1
-        token = self._notif_token
-        sw, sh = get_screen_size()
-        self._overlay.show_message(msg, sw - 480, sh - 80, color="#88DD88")
-        self._root.after(6000, lambda t=token: self._hide_notif_if_current(t))
-
-    def _hide_notif_if_current(self, token: int) -> None:
-        if token == self._notif_token:
-            self._overlay.hide()

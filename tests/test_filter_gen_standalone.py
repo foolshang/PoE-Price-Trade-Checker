@@ -47,28 +47,34 @@ def test_app_config_dir_is_separate_per_name(tmp_path, monkeypatch):
     assert AppConfig("PoeFilterGen").app_dir() == tmp_path / "PoeFilterGen"
 
 
-def test_checker_defaults_keep_every_row_and_close_button(root, cfg):
-    w = FilterGenWindow(root, cfg, "poe2")                               # no flags = old behaviour
+def test_no_price_threshold_or_auto_regen_rows_any_more(root, cfg):
+    w = FilterGenWindow(root, cfg, "poe2")
     texts = _texts(w._win)
-    assert any("Staleness limit" in t for t in texts)
-    assert any("Regen cooldown" in t for t in texts)
-    assert any("Auto-regenerate" in t for t in texts)
-    assert "Close" in texts
-    assert isinstance(w._win, tk.Toplevel)
+    assert not any("threshold" in t.lower() or "Staleness" in t or "Regen" in t or "Auto-regenerate" in t
+                   or "Divine" in t for t in texts)
+    assert [w._nb.tab(i, "text") for i in (0, 1)] == ["NeverSink", "Whitelist"]       # the two tabs
+    assert texts.count("ชื่อ filter:") == 2
+    assert any("tier สูงสุด/รอง/กลาง ของ NeverSink" in t for t in texts)
+    assert "Close" in texts and isinstance(w._win, tk.Toplevel)
+    fg = w._save()
+    assert not any(k.startswith("tier_") for k in w._vars)
+    assert not any(k in w._vars for k in ("staleness_hours", "regen_cooldown_min", "auto_regen"))
 
 
-def test_embedded_flags_hide_rows_and_close_but_keep_vars(root, cfg):
+def test_embedded_window_has_no_close_button(root, cfg):
     frame = tk.Frame(root)
     frame.pack()
-    w = FilterGenWindow(frame, cfg, "poe2", as_toplevel=False, show_auto_regen=False)
+    w = FilterGenWindow(frame, cfg, "poe2", as_toplevel=False)
     texts = _texts(frame)
-    assert not any("Staleness" in t or "Regen" in t or "Auto-regenerate" in t for t in texts)
     assert "Close" not in texts and "Generate Now" in texts
-    for k in ("staleness_hours", "regen_cooldown_min", "auto_regen"):
-        assert k in w._vars
-    fg = w._save()                                                       # no KeyError
-    assert fg["staleness_hours"] == 24.0 and fg["regen_cooldown_min"] == 60.0
-    assert isinstance(fg["auto_regen"], bool)      # hidden: value comes from config, nothing reads it here
+    w._save()                                                            # no KeyError
+
+
+def test_old_threshold_and_regen_keys_in_config_are_ignored_and_kept(root, cfg):
+    cfg.set("filter_gen", {"auto_regen": True, "staleness_hours": 12.0, "sound_s": ""})
+    w = FilterGenWindow(root, cfg, "poe2")
+    fg = w._save()
+    assert fg["staleness_hours"] == 12.0 and fg["auto_regen"] is True    # not touched, just unused
 
 
 def test_standalone_toggle_keeps_per_game_values_and_swaps_gem_ui(root, cfg, monkeypatch, tmp_path):
@@ -98,11 +104,10 @@ def test_standalone_generate_writes_filter_and_logs(root, cfg, monkeypatch, tmp_
     app = sa.FilterGenStandaloneApp()
     out = tmp_path / "game"
     app._fgw._vars["game_dir"].set(str(out))
-    app._fgw._vars["whitelist_enabled"].set(True)
     app._fgw._vars["whitelist_gold"].set(True)
     with mock.patch.object(sa.filter_service.hub_client, "get_prices",
                            side_effect=AssertionError("whitelist must not need the hub")):
-        app._fgw._on_generate_clicked()
+        app._fgw._on_generate_clicked(False, "whitelist")
         # worker threads reach Tk through after_idle, which needs the real mainloop (as in the app)
         deadline = time.time() + 8
 
@@ -114,5 +119,5 @@ def test_standalone_generate_writes_filter_and_logs(root, cfg, monkeypatch, tmp_
         root.after(50, poll)
         root.mainloop()
     log_text = app._fgw._log_text.get("1.0", tk.END)
-    assert '"Gold"' in (out / "poe-checker.filter").read_text(encoding="utf-8")
+    assert '"Gold"' in (out / "poe-checker-whitelist.filter").read_text(encoding="utf-8")
     assert f"PoE Filter Generator v{__version__}" in log_text and "Filter updated" in log_text

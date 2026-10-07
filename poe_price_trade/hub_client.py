@@ -24,6 +24,19 @@ _HEADERS = {
 _TIMEOUT = 15
 
 
+def hub_chaos_value(entry: dict) -> float:
+    """An entry's price in chaos from a hub prices payload (SPEC 8.1). The hub's
+    `chaos_value` is an additive field: PoE2 entries carry it (their `value` is
+    in exalted), PoE1 entries don't (their `value` already IS chaos,
+    value_currency == "chaos"). Absent and not chaos -> 0.0, never a guess."""
+    chaos = entry.get("chaos_value")
+    if chaos is not None:
+        return float(chaos)
+    if entry.get("value_currency") == "chaos":
+        return float(entry.get("value") or 0.0)
+    return 0.0
+
+
 def _get(path: str) -> dict:
     url = f"{HUB_BASE_URL}/{path}"
     req = urllib.request.Request(url, headers=_HEADERS)

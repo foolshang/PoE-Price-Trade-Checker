@@ -68,11 +68,12 @@ S = {  # name: (fg overrides, game, hub mode, base mode, extra)
                          {"sound": True}),
     "tier_poe2_force": ({}, "poe2", "ok", "ok", {"force": True, "league": "LeagueX"}),
     "tier_poe1": ({}, "poe1", "ok", "ok", {}),
-    "tier_stale": ({"staleness_hours": 24}, "poe2", "stale", "ok", {}),
     "tier_hubfail": ({}, "poe2", "boom", "ok", {}),
     "tier_nobase_hubok": ({}, "poe2", "ok", "none", {}),
     "tier_nobase_hubfail": ({}, "poe2", "boom", "none", {}),
-    "tier_rules_file": ({}, "poe2", "ok", "ok", {"rules": {"tiers": [{"name": "S", "min_chaos": 5000}]}}),
+    "tier_poe1_sounds": ({"sound_s": "SOUND", "sound_a": "SOUND", "sound_b": "SOUND"}, "poe1", "ok", "ok",
+                         {"sound": True}),
+    "tier_poe2_hub_would_fail": ({}, "poe2", "boom", "ok", {}),     # tier mode must not even ask the hub
     "tier_write_oserr": ({}, "poe2", "ok", "ok", {"write": OSError(13, "denied")}),
     "tier_write_valueerr": ({}, "poe2", "ok", "ok", {"write": ValueError("nothing")}),
 }
@@ -88,11 +89,9 @@ def run(name, tmp):
     if extra.get("sound"):
         snd = tmp / "snd.mp3"
         snd.write_bytes(b"ID3x")
-        for k in ("sound_s", "sound_a"):
+        for k in ("sound_s", "sound_a", "sound_b"):
             if k in fg:
                 fg[k] = str(snd)
-    if "rules" in extra:
-        (app / "filter_gen_rules.json").write_text(json.dumps(extra["rules"]), encoding="utf-8")
     cfg = types.SimpleNamespace(get=lambda k, d=None: fg if k == "filter_gen" else d, app_dir=lambda: app)
     calls, logs, events = [], [], []
 
@@ -106,27 +105,22 @@ def run(name, tmp):
         calls.append(("fetch_base_filter", g, s, cache_dir.relative_to(tmp).as_posix(), force))
         return (None, None) if basemode == "none" else (BASE[g], "tagX")
 
-    real_load, real_copy, real_write = filter_gen.load_rules, filter_output.copy_sounds, filter_output.write_filter
+    real_copy, real_write = filter_output.copy_sounds, filter_output.write_filter
 
-    def load_rules(d):
-        calls.append(("load_rules", None if d is None else d.relative_to(tmp).as_posix()))
-        return real_load(d)
-
-    def copy_sounds(d, m):
+    def copy_sounds(d, m, **kw):
         calls.append(("copy_sounds", d.relative_to(tmp).as_posix(), dict(sorted((k, bool(v)) for k, v in m.items()))))
-        return real_copy(d, m)
+        return real_copy(d, m, **kw)
 
-    def write_filter(d, sec, base_text):
+    def write_filter(d, sec, base_text, name="poe-checker"):
         base = base_text
         calls.append(("write_filter", d.relative_to(tmp).as_posix(), hashlib.sha256(sec.encode()).hexdigest()[:12],
                       None if base is None else hashlib.sha256(base.encode()).hexdigest()[:12]))
         if "write" in extra:
             raise extra["write"]
-        return real_write(d, sec, base)
+        return real_write(d, sec, base, name)
 
     with mock.patch.object(hub_client, "get_prices", get_prices), \
          mock.patch.object(neversink_source, "fetch_base_filter", fetch), \
-         mock.patch.object(filter_gen, "load_rules", load_rules), \
          mock.patch.object(filter_output, "copy_sounds", copy_sounds), \
          mock.patch.object(filter_output, "write_filter", write_filter), \
          mock.patch.object(debug, "event", lambda m: events.append(m.replace(str(tmp), "<T>"))):
@@ -135,10 +129,10 @@ def run(name, tmp):
             force_base=bool(extra.get("force")), league=extra.get("league", ""),
             log=lambda m, t="info": logs.append((t, m.replace(str(tmp), "<T>"))))
     out = None
-    f = game / "poe-checker.filter"
+    f = next(iter(sorted(game.glob("*.filter"))), game / "poe-checker.filter")
     if f.exists():
         out = f.read_text(encoding="utf-8")
-    sounds = sorted(p.name for p in game.glob("poe-checker-*")) if game.exists() else []
+    sounds = sorted(p.name for p in game.iterdir() if p.suffix != ".filter") if game.exists() else []
 
     def norm(v):
         if isinstance(v, Path):

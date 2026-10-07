@@ -83,3 +83,24 @@ def test_get_prices_fetches_exact_path():
         data = hub_client.get_prices("poe1/prices/hardcore/latest.json")
     m.assert_called_once_with("poe1/prices/hardcore/latest.json")
     assert data["league"] == "Mirage"
+
+
+def test_hub_chaos_value_rule():
+    f = hub_client.hub_chaos_value
+    assert f({"value": 5.0, "value_currency": "chaos"}) == 5.0                          # poe1: value is chaos
+    assert f({"value": 5.0, "value_currency": "exalted", "chaos_value": 2.5}) == 2.5      # poe2: the additive field
+    assert f({"value": 5.0, "value_currency": "chaos", "chaos_value": 7.0}) == 7.0        # additive field wins
+    assert f({"value": 5.0, "value_currency": "exalted"}) == 0.0                          # no conversion is guessed
+    assert f({}) == 0.0 and f({"chaos_value": None, "value": None, "value_currency": "chaos"}) == 0.0
+
+
+def test_repository_prices_poe1_payloads_in_chaos(tmp_path):
+    from poe_price_trade.profiles import POE1_PROFILE
+    from poe_price_trade.repository import PriceRepository
+    payload = {"currency": [{"category": "Currency", "name": "Divine Orb", "value": 371.8,
+                             "value_currency": "chaos", "divine_value": 1.0}],
+               "items": [{"category": "UniqueWeapon", "name": "Widowmaker", "base": "Royal Axe", "value": 300.0,
+                          "value_currency": "chaos", "divine_value": 0.8}]}
+    repo = PriceRepository(POE1_PROFILE, cache_dir=tmp_path)
+    by = {e.item_name: e.chaos_value for e in repo._entries_from_hub_payload(payload)}
+    assert by == {"Divine Orb": 371.8, "Widowmaker": 300.0}

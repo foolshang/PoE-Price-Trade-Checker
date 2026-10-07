@@ -1,11 +1,13 @@
 """Filter Generator window — same visual style/helpers as settings.py."""
 from __future__ import annotations
 import logging
+import threading
 import tkinter as tk
-from tkinter import filedialog, ttk
+from tkinter import filedialog, messagebox, ttk
 from typing import Callable, Optional
 
-from . import filter_gen, hub_client
+from . import __version__, filter_core, filter_gen, filter_style, hub_client
+from .filter_style_editor import open_style_dialog
 from .config import AppConfig
 from .neversink_source import LEVELS
 
@@ -26,23 +28,22 @@ _STRICTNESS_VALUES = [f"{i} - {lvl}" for i, lvl in enumerate(LEVELS)]
 
 class FilterGenWindow:
     def __init__(self, parent: tk.Misc, config: AppConfig, game_version: str,
-                 on_generate: Optional[Callable[[bool], None]] = None,
+                 on_generate: Optional[Callable[[bool, str], None]] = None,
                  hub_loader: Optional[Callable[[], dict]] = None,
-                 *, as_toplevel: bool = True, show_auto_regen: bool = True):
+                 *, as_toplevel: bool = True):
         self._config = config
         self._game_version = game_version
         self._on_generate = on_generate
         self._as_toplevel = as_toplevel
-        self._show_auto_regen = show_auto_regen
         self._hub_loader = hub_loader
         self._cat_exclude: dict[str, list[str]] = {}
         self._custom_entries: list[dict] = []   # {"name", "rarities"} = source of truth
         self._refine_win: Optional[tk.Toplevel] = None
-        self._rules = filter_gen.load_rules(config.app_dir())
+        self._style_q: Optional[dict] = None        # None = keep NeverSink's own quest blocks
 
         if as_toplevel:
             self._win = tk.Toplevel(parent)
-            self._win.title("PoE Price & Trade Checker — Filter Generator")
+            self._win.title(f"PoE Price & Trade Checker — Filter Generator v{__version__}")
             self._win.configure(bg=_BG)
             self._win.resizable(False, False)
             self._win.protocol("WM_DELETE_WINDOW", self._win.destroy)
@@ -120,54 +121,108 @@ class FilterGenWindow:
         f.pack(fill=tk.BOTH, expand=True)
 
         tk.Label(f, text=f"Filter Generator — {self._game_version.upper()}", bg=_BG, fg=_ACCENT,
-                 font=("Segoe UI", 11, "bold")).grid(row=0, column=0, columnspan=3, pady=(0, 8))
+                 font=("Segoe UI", 11, "bold")).pack(pady=(0, 6))
 
-        row = 1
+        top = tk.Frame(f, bg=_BG)
+        top.pack(fill=tk.X)
+        self._lbl(top, "Game folder override:", 0, 0)
+        var = tk.StringVar()
+        self._vars["game_dir"] = var
+        tk.Entry(top, textvariable=var, bg=_INPUT_BG, fg=_FG, insertbackground=_FG,
+                 relief=tk.FLAT, font=_PANEL_FONT, width=28).grid(row=0, column=1, sticky="w", padx=6, pady=3)
+        self._btn(top, "Browse…", self._browse_game_dir, row=0, column=2)
+        tk.Label(top, text="(leave blank to auto-detect Documents\\My Games\\...)", bg=_BG, fg="#666",
+                 font=_SMALL_FONT).grid(row=1, column=0, columnspan=3, sticky="w", padx=6)
+
+        style = ttk.Style()
+        try:
+            style.configure("TNotebook", background=_BG, borderwidth=0)
+            style.configure("TNotebook.Tab", padding=(14, 4), font=_PANEL_FONT)
+        except tk.TclError:
+            pass
+        self._nb = ttk.Notebook(f)
+        self._nb.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+        t1 = tk.Frame(self._nb, bg=_BG, padx=6, pady=6)
+        t2 = tk.Frame(self._nb, bg=_BG, padx=6, pady=6)
+        self._nb.add(t1, text="NeverSink")
+        self._nb.add(t2, text="Whitelist")
+        self._build_tier_tab(t1)
+        self._build_whitelist_tab(t2)
+
+        tk.Label(f, text="Status:", bg=_BG, fg=_FG, font=_PANEL_FONT).pack(anchor="w", pady=(8, 2))
+        log_frame = tk.Frame(f, bg="#111")
+        log_frame.pack(fill=tk.X)
+        self._log_text = tk.Text(log_frame, bg="#111", fg="#AADDAA", font=_MONO_FONT,
+                                 width=40, height=6, relief=tk.FLAT, state=tk.DISABLED, wrap=tk.WORD)
+        self._log_text.pack(fill=tk.BOTH)
+        self._log_text.tag_config("ok", foreground="#88DD88")
+        self._log_text.tag_config("err", foreground="#DD6666")
+        self._log_text.tag_config("warn", foreground="#DDCC66")
+        self._log_text.tag_config("info", foreground="#AACCFF")
+
+        btn_frame = tk.Frame(f, bg=_BG)
+        btn_frame.pack(pady=(8, 0))
+        self._btn(btn_frame, "Save Settings", self._save, side=tk.LEFT)
+        if self._as_toplevel:
+            self._btn(btn_frame, "Close", self._win.destroy, side=tk.LEFT)
+
+    # ---- tab 1: NeverSink -------------------------------------------------
+
+    def _name_row(self, f, key: str, row: int) -> int:
+        self._lbl(f, "ชื่อ filter:", row, 0)
+        box = tk.Frame(f, bg=_BG)
+        box.grid(row=row, column=1, columnspan=2, sticky="w")
+        e = tk.Entry(box, textvariable=self._name_var(key), bg=_INPUT_BG, fg=_FG, insertbackground=_FG,
+                     relief=tk.FLAT, font=_PANEL_FONT, width=30)
+        e.pack(side=tk.LEFT, padx=6)
+        tk.Label(box, text=".filter", bg=_BG, fg="#666", font=_SMALL_FONT).pack(side=tk.LEFT)
+        return row + 1
+
+    def _name_var(self, key: str) -> tk.StringVar:
+        var = tk.StringVar()
+        self._vars[key] = var
+        return var
+
+    def _build_tier_tab(self, f: tk.Frame) -> None:
+        row = 0
+        row = self._name_row(f, "filter_name_tier", row)
         self._lbl(f, "NeverSink Strictness:", row, 0)
         self._combo(f, "strictness", _STRICTNESS_VALUES, row, 1, width=18)
         row += 1
 
-        self._lbl(f, "Tier thresholds (chaos, fallback):", row, 0)
-        row += 1
-        tier_frame = tk.Frame(f, bg=_BG)
-        tier_frame.grid(row=row, column=0, columnspan=3, sticky="w", padx=6)
-        for i, name in enumerate(("S", "A", "B", "C")):
-            tk.Label(tier_frame, text=f"{name}:", bg=_BG, fg=_FG, font=_PANEL_FONT).grid(
-                row=0, column=i * 2, sticky="w", padx=(0 if i == 0 else 8, 2))
-            var = tk.StringVar()
-            self._vars[f"tier_{name.lower()}"] = var
-            tk.Entry(tier_frame, textvariable=var, bg=_INPUT_BG, fg=_FG, insertbackground=_FG,
-                     relief=tk.FLAT, font=_PANEL_FONT, width=8).grid(row=0, column=i * 2 + 1)
-        row += 1
-        tk.Label(f, text="(used only when Divine Orb's own price is unavailable — normal tiering "
-                          "is a % of Divine, edit min_divine_pct in filter_gen_rules.json)",
-                 bg=_BG, fg="#666", font=_SMALL_FONT, wraplength=420, justify=tk.LEFT).grid(
-            row=row, column=0, columnspan=3, sticky="w", padx=6)
+        self._lbl(f, "ของเควส (Q):", row, 0)
+        qbox = tk.Frame(f, bg=_BG)
+        qbox.grid(row=row, column=1, columnspan=2, sticky="w")
+        self._btn(qbox, "ตั้งสไตล์…", self._open_quest_style, side=tk.LEFT)
+        self._quest_lbl = tk.Label(qbox, text="", bg=_BG, fg="#888", font=_SMALL_FONT)
+        self._quest_lbl.pack(side=tk.LEFT, padx=6)
         row += 1
 
         tk.Label(f, text="Alert sounds (S/A/B — C is always silent):", bg=_BG, fg=_FG,
                  font=_PANEL_FONT).grid(row=row, column=0, columnspan=3, sticky="w", padx=6, pady=(8, 2))
         row += 1
+        tk.Label(f, text="(เสียง S/A/B = tier สูงสุด/รอง/กลาง ของ NeverSink · ไฟล์ mp3/wav/ogg ใช้ชื่อเดิมของไฟล์)",
+                 bg=_BG, fg="#666", font=_SMALL_FONT).grid(row=row, column=0, columnspan=3, sticky="w", padx=6)
+        row += 1
         self._sound_row(f, "sound_s", "Tier S sound:", row); row += 1
         self._sound_row(f, "sound_a", "Tier A sound:", row); row += 1
         self._sound_row(f, "sound_b", "Tier B sound:", row); row += 1
 
-        self._lbl(f, "Game folder override:", row, 0)
-        var = tk.StringVar()
-        self._vars["game_dir"] = var
-        tk.Entry(f, textvariable=var, bg=_INPUT_BG, fg=_FG, insertbackground=_FG,
-                 relief=tk.FLAT, font=_PANEL_FONT, width=28).grid(row=row, column=1, sticky="w", padx=6, pady=3)
-        self._btn(f, "Browse…", self._browse_game_dir, row=row, column=2)
+        self._check(f, "auto_regen_neversink", "regenerate อัตโนมัติเมื่อ NeverSink ออกเวอร์ชันใหม่",
+                    row, 0, columnspan=3)
         row += 1
-        tk.Label(f, text="(leave blank to auto-detect Documents\\My Games\\...)", bg=_BG, fg="#666",
-                 font=_SMALL_FONT).grid(row=row, column=0, columnspan=3, sticky="w", padx=6)
-        row += 1
+        btns = tk.Frame(f, bg=_BG)
+        btns.grid(row=row, column=0, columnspan=3, pady=(8, 0))
+        self._btn(btns, "Generate Now", lambda: self._on_generate_clicked(False, "tier"), side=tk.LEFT)
+        self._btn(btns, "Refresh NeverSink Base", lambda: self._on_generate_clicked(True, "tier"), side=tk.LEFT)
 
-        tk.Label(f, text="Whitelist mode (show only):", bg=_BG, fg=_FG,
-                 font=_PANEL_FONT).grid(row=row, column=0, columnspan=3, sticky="w", padx=6, pady=(8, 2))
-        row += 1
-        self._check(f, "whitelist_enabled",
-                    "โหมดโชว์เฉพาะ (whitelist) — ซ่อนที่เหลือ", row, 0, columnspan=3)
+    # ---- tab 2: Whitelist ---------------------------------------------------
+
+    def _build_whitelist_tab(self, f: tk.Frame) -> None:
+        row = 0
+        row = self._name_row(f, "filter_name_whitelist", row)
+        tk.Label(f, text="โชว์เฉพาะที่เลือก — ซ่อนที่เหลือทั้งหมด", bg=_BG, fg=_FG,
+                 font=_PANEL_FONT).grid(row=row, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 2))
         row += 1
         self._check(f, "whitelist_gold", "Gold", row, 0, columnspan=1)
         gold_row = tk.Frame(f, bg=_BG)
@@ -218,7 +273,7 @@ class FilterGenWindow:
         self._custom_list.grid(row=2, column=0, columnspan=3, sticky="w", pady=(3, 0))
         self._custom_list.bind("<<ListboxSelect>>", self._on_custom_select)
         row += 1
-        tk.Label(f, text="(เปิดโหมดนี้ = ข้าม filter ปกติ, generate เฉพาะที่เลือก)", bg=_BG, fg="#666",
+        tk.Label(f, text="(แท็บนี้เขียน filter เองทั้งไฟล์ — ไม่ใช้ NeverSink, generate เฉพาะที่เลือก)", bg=_BG, fg="#666",
                  font=_SMALL_FONT).grid(row=row, column=0, columnspan=3, sticky="w", padx=6)
         row += 1
 
@@ -270,41 +325,53 @@ class FilterGenWindow:
             self._gem_list.grid(row=2, column=0, columnspan=3, sticky="w", pady=(3, 0))
         row += 1
 
-        if self._show_auto_regen:
-            self._lbl(f, "Staleness limit (hours):", row, 0)
-            self._entry(f, "staleness_hours", row, 1, width=8)
-            row += 1
-            self._lbl(f, "Regen cooldown (min):", row, 0)
-            self._entry(f, "regen_cooldown_min", row, 1, width=8)
-            row += 1
-            self._check(f, "auto_regen", "Auto-regenerate when hub prices move tiers", row, 0, columnspan=3)
-            row += 1
+        btns = tk.Frame(f, bg=_BG)
+        btns.grid(row=row, column=0, columnspan=3, pady=(8, 0))
+        self._btn(btns, "Generate Now", lambda: self._on_generate_clicked(False, "whitelist"), side=tk.LEFT)
+
+    # ---- Q style ------------------------------------------------------------
+
+    def _open_quest_style(self) -> None:
+        def _save_q(style) -> None:
+            self._style_q = None if style is None else style
+            self._refresh_quest_label()
+        start = self._style_q or filter_style.default_quest_style()
+        open_style_dialog(self._win, "สไตล์ของเควส (Q)", start, _save_q, sample_text="Quest Item",
+                          clear_text="ล้าง (ใช้ของ NeverSink)")
+
+    def _refresh_quest_label(self) -> None:
+        if self._style_q and not filter_style.is_empty(self._style_q):
+            self._quest_lbl.configure(text="ตั้งสไตล์เองแล้ว", fg=_ACCENT)
         else:
-            # hidden, but load/save/generate still read these vars -> keep defaults
-            self._vars["staleness_hours"] = tk.StringVar(value="24")
-            self._vars["regen_cooldown_min"] = tk.StringVar(value="60")
-            self._vars["auto_regen"] = tk.BooleanVar(value=False)
+            self._style_q = None
+            self._quest_lbl.configure(text="ใช้ของ NeverSink", fg="#888")
 
-        tk.Label(f, text="Status:", bg=_BG, fg=_FG, font=_PANEL_FONT).grid(
-            row=row, column=0, sticky="nw", pady=(8, 2))
-        log_frame = tk.Frame(f, bg="#111")
-        log_frame.grid(row=row, column=1, columnspan=2, sticky="ew", pady=(8, 2))
-        self._log_text = tk.Text(log_frame, bg="#111", fg="#AADDAA", font=_MONO_FONT,
-                                 width=40, height=6, relief=tk.FLAT, state=tk.DISABLED, wrap=tk.WORD)
-        self._log_text.pack(fill=tk.BOTH)
-        self._log_text.tag_config("ok", foreground="#88DD88")
-        self._log_text.tag_config("err", foreground="#DD6666")
-        self._log_text.tag_config("warn", foreground="#DDCC66")
-        self._log_text.tag_config("info", foreground="#AACCFF")
-        row += 1
+    # ---- sound file conflict (asked from the generate thread) ---------------------
 
-        btn_frame = tk.Frame(f, bg=_BG)
-        btn_frame.grid(row=row, column=0, columnspan=3, pady=(8, 0))
-        self._btn(btn_frame, "Generate Now", self._on_generate_clicked, side=tk.LEFT)
-        self._btn(btn_frame, "Refresh NeverSink Base", self._on_refresh_clicked, side=tk.LEFT)
-        self._btn(btn_frame, "Save Settings", self._save, side=tk.LEFT)
-        if self._as_toplevel:
-            self._btn(btn_frame, "Close", self._win.destroy, side=tk.LEFT)
+    def ask_sound_conflict(self, name: str, new_name: str) -> str:
+        """"overwrite" | "keep". Safe to call from a worker thread: the question is shown on the
+        Tk thread and the caller waits (no answer in 5 minutes = keep the old file)."""
+        answer: dict = {}
+        done = threading.Event()
+
+        def _ask() -> None:
+            try:
+                yes = messagebox.askyesno(
+                    "ไฟล์เสียงชื่อซ้ำ",
+                    f'ในโฟลเดอร์ filter มีไฟล์ "{name}" อยู่แล้ว แต่เป็นคนละไฟล์กับที่เลือก\n\n'
+                    f'ใช่ = ทับไฟล์เดิม\nไม่ = เก็บไฟล์เดิมไว้ แล้วใช้ชื่อ "{new_name}" สำหรับไฟล์ใหม่',
+                    parent=self._win)
+                answer["v"] = "overwrite" if yes else "keep"
+            except Exception:
+                answer["v"] = "keep"
+            finally:
+                done.set()
+        try:
+            self._win.after(0, _ask)
+        except Exception:
+            return "keep"
+        done.wait(300)
+        return answer.get("v", "keep")
 
     def _open_cat_refine(self) -> None:
         """Popup: per-category checklist. Checked = shown (default), unchecked =
@@ -550,20 +617,19 @@ class FilterGenWindow:
         strictness = strictness if 0 <= strictness < len(_STRICTNESS_VALUES) else 2
         self._vars["strictness"].set(_STRICTNESS_VALUES[strictness])
 
-        tiers_cfg = self._rules.get("tiers", [])
-        for t in tiers_cfg:
-            key = f"tier_{t['name'].lower()}"
-            if key in self._vars:
-                self._vars[key].set(str(t.get("min_chaos", "")))
-
         self._vars["sound_s"].set(fg.get("sound_s", ""))
         self._vars["sound_a"].set(fg.get("sound_a", ""))
         self._vars["sound_b"].set(fg.get("sound_b", ""))
         self._vars["game_dir"].set(fg.get(f"game_dir_{self._game_version}", ""))
-        self._vars["staleness_hours"].set(str(fg.get("staleness_hours", 24)))
-        self._vars["regen_cooldown_min"].set(str(fg.get("regen_cooldown_min", 60)))
-        self._vars["auto_regen"].set(bool(fg.get("auto_regen", True)))
-        self._vars["whitelist_enabled"].set(bool(fg.get("whitelist_enabled", False)))
+        self._vars["filter_name_tier"].set(fg.get("filter_name_tier") or filter_core.DEFAULT_TIER_NAME)
+        self._vars["filter_name_whitelist"].set(fg.get("filter_name_whitelist") or filter_core.DEFAULT_WHITELIST_NAME)
+        self._vars["auto_regen_neversink"].set(bool(fg.get("auto_regen_neversink", False)))
+        self._style_q = filter_style.normalize_style(fg["style_q"]) if fg.get("style_q") else None
+        self._refresh_quest_label()
+        try:
+            self._nb.select(1 if fg.get("last_tab") == "whitelist" else 0)
+        except tk.TclError:
+            pass
         self._vars["whitelist_gold"].set(bool(fg.get("whitelist_gold", False)))
         self._vars["whitelist_gold_min"].set(str(fg.get("whitelist_gold_min", 0)))
         self._vars["whitelist_unique_all"].set(bool(fg.get("whitelist_unique_all", False)))
@@ -593,9 +659,15 @@ class FilterGenWindow:
             for nm in fg.get(f"whitelist_gem_names_{self._game_version}", []):
                 self._gem_list.insert(tk.END, nm)
 
-    def _save(self) -> dict:
-        """Persist all fields (config.json's filter_gen dict + the
-        filter_gen_rules.json tier-threshold override) and return the
+    def _mode(self) -> str:
+        """"tier" | "whitelist" - the tab that is open."""
+        try:
+            return "whitelist" if self._nb.index(self._nb.select()) == 1 else "tier"
+        except tk.TclError:
+            return "tier"
+
+    def _save(self, mode: Optional[str] = None) -> dict:
+        """Persist all fields (config.json's filter_gen dict) and return the
         resolved settings dict the caller needs to actually generate."""
         fg = dict(self._config.get("filter_gen", {}) or {})
 
@@ -603,28 +675,18 @@ class FilterGenWindow:
         strictness = int(strictness_str.split(" - ")[0]) if strictness_str else 2
         fg[f"strictness_{self._game_version}"] = strictness
 
-        for t in self._rules.get("tiers", []):
-            key = f"tier_{t['name'].lower()}"
-            try:
-                t["min_chaos"] = float(self._vars[key].get())
-            except (ValueError, KeyError):
-                pass
-        filter_gen.save_rules(self._config.app_dir(), self._rules)
-
         fg["sound_s"] = self._vars["sound_s"].get()
         fg["sound_a"] = self._vars["sound_a"].get()
         fg["sound_b"] = self._vars["sound_b"].get()
         fg[f"game_dir_{self._game_version}"] = self._vars["game_dir"].get()
-        try:
-            fg["staleness_hours"] = float(self._vars["staleness_hours"].get())
-        except ValueError:
-            pass
-        try:
-            fg["regen_cooldown_min"] = float(self._vars["regen_cooldown_min"].get())
-        except ValueError:
-            pass
-        fg["auto_regen"] = bool(self._vars["auto_regen"].get())
-        fg["whitelist_enabled"] = bool(self._vars["whitelist_enabled"].get())
+        mode = mode or self._mode()
+        fg["whitelist_enabled"] = (mode == "whitelist")
+        fg["last_tab"] = mode
+        fg["filter_name_tier"] = self._vars["filter_name_tier"].get().strip() or filter_core.DEFAULT_TIER_NAME
+        fg["filter_name_whitelist"] = (self._vars["filter_name_whitelist"].get().strip()
+                                       or filter_core.DEFAULT_WHITELIST_NAME)
+        fg["auto_regen_neversink"] = bool(self._vars["auto_regen_neversink"].get())
+        fg["style_q"] = self._style_q if (self._style_q and not filter_style.is_empty(self._style_q)) else None
         fg["whitelist_gold"] = bool(self._vars["whitelist_gold"].get())
         fg["whitelist_unique_all"] = bool(self._vars["whitelist_unique_all"].get())
         try:
@@ -655,12 +717,13 @@ class FilterGenWindow:
         self._config.save()
         return fg
 
-    def _on_generate_clicked(self) -> None:
-        self._save()
+    def _on_generate_clicked(self, force_base: bool = False, mode: Optional[str] = None) -> None:
+        mode = mode or self._mode()
+        fg = self._save(mode)
+        key = "filter_name_whitelist" if mode == "whitelist" else "filter_name_tier"
+        _n, err = filter_core.validate_filter_name(fg[key])
+        if err:
+            self.log(f"✗ ชื่อ filter ใช้ไม่ได้: {err}", "err")
+            return
         if self._on_generate:
-            self._on_generate(False)
-
-    def _on_refresh_clicked(self) -> None:
-        self._save()
-        if self._on_generate:
-            self._on_generate(True)
+            self._on_generate(force_base, mode)

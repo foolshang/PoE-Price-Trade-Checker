@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 from . import debug, hub_client
+from .hub_client import hub_chaos_value
 from .matcher import ItemMatcher
 from .models import PriceEntry, PriceSnapshot
 from .normalizer import normalize
@@ -153,8 +154,7 @@ class PriceRepository:
                 value = float(it.get("value") or 0)
                 vc = it.get("value_currency", "")
 
-                chaos = it.get("chaos_value")
-                chaos_value = float(chaos) if chaos is not None else (value if vc == "chaos" else 0.0)
+                chaos_value = hub_chaos_value(it)
 
                 exalted = it.get("exalted_value")
                 exalted_value = float(exalted) if exalted is not None else (value if vc == "exalted" else 0.0)

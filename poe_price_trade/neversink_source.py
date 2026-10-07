@@ -24,7 +24,7 @@ from . import filter_core
 log = logging.getLogger(__name__)
 
 REPO = filter_core.NEVERSINK_REPO
-LEVELS = filter_core.NEVERSINK_LEVELS
+LEVELS = filter_core.LEVELS
 DEFAULT_STRICTNESS = 2  # Semi-Strict
 
 _HEADERS = {

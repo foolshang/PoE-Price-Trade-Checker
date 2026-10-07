@@ -21,9 +21,9 @@ def test_whitelist_writes_file_returns_result_and_logs(tmp_path):
         res = filter_service.generate_filter(cfg, "poe2", "poe2/prices/latest.json",
                                              log=lambda m, t="info": logs.append((t, m)))
     assert res["mode"] == "whitelist" and res["count"] == 2
-    text = (tmp_path / "game" / "poe-checker.filter").read_text(encoding="utf-8")
+    text = (tmp_path / "game" / "poe-checker-whitelist.filter").read_text(encoding="utf-8")
     assert '"Divine Orb"' in text and '"Gold"' in text and text.rstrip().endswith("Hide")
-    assert res["path"] == tmp_path / "game" / "poe-checker.filter"
+    assert res["path"] == tmp_path / "game" / "poe-checker-whitelist.filter"
     assert [t for t, _ in logs] == ["ok", "ok"] and "Filter updated" in logs[-1][1]
 
 
@@ -51,15 +51,18 @@ def test_default_log_is_a_noop(tmp_path):
     assert filter_service.generate_filter(cfg, "poe2", "p")["mode"] == "whitelist"
 
 
-def test_tier_mode_returns_state_for_the_caller_and_does_not_save_it(tmp_path):
+def test_tier_mode_is_base_plus_header_and_never_calls_the_hub(tmp_path):
     cfg = _cfg(tmp_path, {})
-    hub = {"currency": [], "items": [], "generated_at": "2000-01-01T00:00:00Z"}
     with mock.patch.object(filter_service.neversink_source, "fetch_base_filter",
                            return_value=("Show\n\tBaseType \"X\"\n", "tag1")), \
-         mock.patch.object(filter_service.hub_client, "get_prices", return_value=hub):
+         mock.patch.object(filter_service.hub_client, "get_prices",
+                           side_effect=AssertionError("tier mode must not use the hub")):
         res = filter_service.generate_filter(cfg, "poe2", "p")
-    assert res["mode"] == "tier" and res["base_tag"] == "tag1" and res["path"].exists()
-    assert not list((tmp_path / "app").glob("filter_state_*.json"))   # caller persists state
+    assert res["mode"] == "tier" and res["base_tag"] == "tag1" and set(res) == {"mode", "path", "base_tag", "filter_name"}
+    text = res["path"].read_text(encoding="utf-8")
+    assert text == filter_service.filter_core.compose_filter_body(
+        filter_service.filter_core.TIER_HEADER, "Show\n\tBaseType \"X\"\n")
+    assert not list((tmp_path / "app").glob("filter_state_*.json"))
 
 
 def _raise(errno_, winerror=None):
@@ -93,9 +96,7 @@ def test_whitelist_write_blocked_logs_friendly_message_and_returns_none(tmp_path
 def test_tier_write_blocked_logs_friendly_message_and_returns_none(tmp_path):
     logs = []
     cfg = _cfg(tmp_path, {})
-    hub = {"currency": [], "items": [], "generated_at": "2000-01-01T00:00:00Z"}
     with mock.patch.object(filter_service.neversink_source, "fetch_base_filter", return_value=("Show\n", "t")), \
-         mock.patch.object(filter_service.hub_client, "get_prices", return_value=hub), \
          mock.patch.object(filter_service.filter_output, "write_filter", side_effect=_raise(9)):
         res = filter_service.generate_filter(cfg, "poe2", "p", log=lambda m, t="info": logs.append((t, m)))
     assert res is None
