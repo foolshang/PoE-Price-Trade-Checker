@@ -62,7 +62,7 @@ jobs:
       - name: Check release files use LF line endings
         shell: bash
         run: |
-          if grep -q $'' release/update_public_readme.sh release/README_public.md; then
+          if ! python -c "import sys; sys.exit(any(chr(13).encode() in open(f, 'rb').read() for f in sys.argv[1:]))" release/update_public_readme.sh release/README_public.md; then
             echo "::error::release/ files have CRLF line endings - check .gitattributes"
             exit 1
           fi
