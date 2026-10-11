@@ -31,6 +31,10 @@ def apply(widget) -> None:
         style.configure("TNotebook.Tab", background=BUTTON_BG, foreground=FG, padding=(14, 4), borderwidth=0)
         style.map("TNotebook.Tab", background=[("selected", ACCENT), ("active", INPUT_BG)],
                   foreground=[("selected", "#000")])
+        for orient in ("Vertical", "Horizontal"):
+            style.configure(f"{orient}.TScrollbar", background=BUTTON_BG, troughcolor=INPUT_BG, bordercolor=BG,
+                            arrowcolor=FG, lightcolor=BUTTON_BG, darkcolor=BUTTON_BG)
+            style.map(f"{orient}.TScrollbar", background=[("active", ACCENT)])
         widget.option_add("*TCombobox*Listbox.background", INPUT_BG)
         widget.option_add("*TCombobox*Listbox.foreground", FG)
         widget.option_add("*TCombobox*Listbox.selectBackground", ACCENT)

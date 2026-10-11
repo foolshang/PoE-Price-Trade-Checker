@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from typing import Callable, Optional
 
-from . import filter_gen, filter_style, filter_whitelist
+from . import filter_gen, filter_style, filter_whitelist, wl_embed
 
 
 def _noop(msg: str, tag: str = "info") -> None:
@@ -356,8 +356,9 @@ def _build_whitelist_v2(fg_cfg, gv, hub_data, base_text, copy_sounds_fn, extra_n
         shown = ", ".join(f"{n} ({where})" for n, where in res["skipped"][:8])
         more = f" … +{len(res['skipped']) - 8}" if len(res["skipped"]) > 8 else ""
         log(f"⚠ ข้าม {len(res['skipped'])} ชื่อที่ไม่ยืนยันว่าเป็นชื่อจริงของเกม (ไม่เขียนลงไฟล์): {shown}{more}", "warn")
-    return {"mode": "whitelist", "generated_section": res["text"], "base_text": None,
-            "count": res["count"], "report": res["report"], "skipped": res["skipped"]}
+    # the settings go into the file too (comment lines), so the Whitelist tab can open and edit it again
+    return {"mode": "whitelist", "generated_section": wl_embed.embed(res["text"], fg_cfg, gv),
+            "base_text": None, "count": res["count"], "report": res["report"], "skipped": res["skipped"]}
 
 
 def _build_tier(fg_cfg, gv, base_text, base_tag, copy_sounds_fn, log) -> dict:

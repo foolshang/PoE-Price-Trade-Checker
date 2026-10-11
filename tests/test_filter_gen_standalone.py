@@ -81,17 +81,20 @@ def test_standalone_toggle_keeps_per_game_values_and_swaps_gem_ui(root, cfg, mon
     from poe_price_trade import filter_gen_standalone as sa
     monkeypatch.setattr(sa.tk, "Tk", lambda: root)                       # reuse the test root
     app = sa.FilterGenStandaloneApp()
-    assert app._game.get() == "poe2" and "Uncut Skill Gem" in app._fgw._gem_enable_vars
-    app._fgw._gem_enable_vars["Uncut Skill Gem"].set(True)
-    app._fgw._gem_level_vars["Uncut Skill Gem"].set("16")
+    panel = app._fgw._panel
+    assert app._game.get() == "poe2" and "Uncut Skill Gem" in panel.v_gem_on
+    panel.v_gem_on["Uncut Skill Gem"].set(True)
+    panel.v_gem_lv["Uncut Skill Gem"].set("16")
     app._game.set("poe1"); app._switch_game()
-    assert hasattr(app._fgw, "_gem_name_var") and not app._fgw._gem_enable_vars
-    app._fgw._gem_name_var.set("Empower Support"); app._fgw._gem_add()
+    panel = app._fgw._panel
+    assert hasattr(panel, "v_gem_name") and not panel.v_gem_on
+    panel.v_gem_name.set("Empower Support"); panel._gem_add()
     app._game.set("poe2"); app._switch_game()
-    assert app._fgw._gem_enable_vars["Uncut Skill Gem"].get()
-    assert app._fgw._gem_level_vars["Uncut Skill Gem"].get() == "16"
+    panel = app._fgw._panel
+    assert panel.v_gem_on["Uncut Skill Gem"].get()
+    assert panel.v_gem_lv["Uncut Skill Gem"].get() == "16"
     app._game.set("poe1"); app._switch_game()
-    assert list(app._fgw._gem_list.get(0, tk.END)) == ["Empower Support"]
+    assert list(app._fgw._panel._gem_list.get(0, tk.END)) == ["Empower Support"]
     saved = json.loads((tmp_path / "PoeFilterGen" / "config.json").read_text(encoding="utf-8"))
     assert saved["filter_gen"]["whitelist_gem_uncut_poe2"] == {"Uncut Skill Gem": 16}
     assert saved["filter_gen"]["standalone_game"] == "poe1"
@@ -104,9 +107,10 @@ def test_standalone_generate_writes_filter_and_logs(root, cfg, monkeypatch, tmp_
     app = sa.FilterGenStandaloneApp()
     out = tmp_path / "game"
     app._fgw._vars["game_dir"].set(str(out))
-    app._fgw._vars["whitelist_gold"].set(True)
-    with mock.patch.object(sa.filter_service.hub_client, "get_prices",
-                           side_effect=AssertionError("whitelist must not need the hub")):
+    app._fgw._panel.v_gold.set(True)
+    base = "\n".join(['Show # $type->currency $tier->t1', '\tBaseType == "Divine Orb"', '\tSetFontSize 45', ''])
+    hub = {"currency": [], "items": [{"name": "Divine Orb", "category": "Currency"}]}
+    with mock.patch.object(sa.filter_service.hub_client, "get_prices", return_value=hub),          mock.patch.object(sa.filter_service.neversink_source, "fetch_base_filter", return_value=(base, "t")),          mock.patch.object(sa.filter_service.trade_names, "get_names", return_value=set()):
         app._fgw._on_generate_clicked(False, "whitelist")
         # worker threads reach Tk through after_idle, which needs the real mainloop (as in the app)
         deadline = time.time() + 8
@@ -119,5 +123,6 @@ def test_standalone_generate_writes_filter_and_logs(root, cfg, monkeypatch, tmp_
         root.after(50, poll)
         root.mainloop()
     log_text = app._fgw._log_text.get("1.0", tk.END)
-    assert '"Gold"' in (out / "poe-checker-whitelist.filter").read_text(encoding="utf-8")
+    text = (out / "poe-checker-whitelist.filter").read_text(encoding="utf-8")
+    assert '"Gold"' in text and '"Divine Orb"' in text
     assert f"PoE Filter Generator v{__version__}" in log_text and "Filter updated" in log_text

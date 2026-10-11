@@ -8,9 +8,11 @@ style (quest items today; gold / tablet / map / S / A / B in the whitelist tab).
      "size": 18..45 | None,
      "icon": {"size": 0..2, "color": "Red", "shape": "Star"} | None,
      "effect": {"color": "Red", "temp": False} | None,
-     "sound": {"kind": "none" | "game" | "file", "id": 1..16, "file": "x.mp3", "volume": 0..300}}
+     "sound": {"kind": "none" | "game" | "file", "id": 1..16, "file": "x.mp3", "volume": 0..300},
+     "off": ["text", "sound", ...]}       (whitelist tiers only, see merge_styles)
 
-Everything missing / None is simply not written (the game's own look stays).
+Everything missing / None is simply not written (the game's own look stays). "off" lists the parts the
+player switched OFF on top of a base look (NeverSink's): they are removed from it instead of following it.
 """
 from __future__ import annotations
 from typing import Optional
@@ -23,6 +25,11 @@ FONT_MIN, FONT_MAX = 18, 45
 VOLUME_MAX = 300
 DEFAULT_VOLUME = 300
 AUDIO_EXTENSIONS = (".mp3", ".wav", ".ogg")
+PARTS = ("text", "border", "bg", "size", "icon", "effect", "sound")
+# filter keywords each part writes (what "off" removes from a base look)
+PART_KEYWORDS = {"text": ("SetTextColor",), "border": ("SetBorderColor",), "bg": ("SetBackgroundColor",),
+                 "size": ("SetFontSize",), "icon": ("MinimapIcon",), "effect": ("PlayEffect",),
+                 "sound": ("PlayAlertSound", "CustomAlertSound", "CustomAlertSoundOptional")}
 
 # rough sRGB values of the filter's colour names, for the editor preview only
 COLOR_RGB = {
@@ -77,6 +84,11 @@ def normalize_style(raw) -> dict:
     except (TypeError, ValueError):
         sid = 1
     out["sound"] = {"kind": kind, "id": sid, "file": str(snd.get("file") or ""), "volume": volume}
+    off = raw.get("off")
+    if isinstance(off, (list, tuple)):
+        parts = sorted({p for p in off if p in PARTS})
+        if parts:
+            out["off"] = parts
     return out
 
 
@@ -84,7 +96,7 @@ def is_empty(style) -> bool:
     """True when the style would write nothing at all (= keep NeverSink's / the game's own)."""
     s = normalize_style(style)
     return (not any(s[k] for k in ("text", "border", "bg", "icon", "effect")) and s["size"] is None
-            and s["sound"]["kind"] == "none")
+            and s["sound"]["kind"] == "none" and not s.get("off"))
 
 
 def uses_sound_file(style) -> Optional[str]:
@@ -114,6 +126,54 @@ def style_lines(style, sound_file: Optional[str] = None, indent: str = "    ") -
         out.append(f"{indent}PlayEffect {s['effect']['color']}" + (" Temp" if s["effect"]["temp"] else ""))
     if s["icon"]:
         out.append(f"{indent}MinimapIcon {s['icon']['size']} {s['icon']['color']} {s['icon']['shape']}")
+    return out
+
+
+def lines_to_style(lines) -> dict:
+    """The style dict of filter style lines (SetFontSize / Set*Color / PlayAlertSound / PlayEffect /
+    MinimapIcon) - e.g. NeverSink's own look of a tier, so an editor can start from it. Unknown lines are
+    ignored; never raises."""
+    raw: dict = {"sound": {"kind": "none"}}
+    for line in lines or []:
+        toks = str(line).split()
+        if not toks:
+            continue
+        kw, vals = toks[0], toks[1:]
+        try:
+            if kw == "SetFontSize":
+                raw["size"] = int(vals[0])
+            elif kw == "SetTextColor":
+                raw["text"] = [int(x) for x in vals]
+            elif kw == "SetBorderColor":
+                raw["border"] = [int(x) for x in vals]
+            elif kw == "SetBackgroundColor":
+                raw["bg"] = [int(x) for x in vals]
+            elif kw == "PlayAlertSound":
+                raw["sound"] = {"kind": "game", "id": int(vals[0]),
+                                "volume": int(vals[1]) if len(vals) > 1 else DEFAULT_VOLUME}
+            elif kw == "PlayEffect":
+                raw["effect"] = {"color": vals[0], "temp": "Temp" in vals[1:]}
+            elif kw == "MinimapIcon":
+                raw["icon"] = {"size": int(vals[0]), "color": vals[1], "shape": vals[2]}
+        except (ValueError, IndexError):
+            continue
+    return normalize_style(raw)
+
+
+def merge_styles(base, over) -> dict:
+    """`over` on top of `base`: every part `over` sets replaces the one of `base` (an unset part keeps
+    base's); the sound of `over` wins only when it plays something; a part listed in over's "off" is
+    removed from the result. Mirrors how the whitelist engine lays a player's style over NeverSink's own look."""
+    b, o = normalize_style(base), normalize_style(over)
+    out = dict(b)
+    out.pop("off", None)
+    for k in ("text", "border", "bg", "size", "icon", "effect"):
+        if o[k] is not None and o[k] != []:
+            out[k] = o[k]
+    if o["sound"]["kind"] != "none":
+        out["sound"] = o["sound"]
+    for part in o.get("off") or ():
+        out[part] = normalize_style({})["sound"] if part == "sound" else None
     return out
 
 

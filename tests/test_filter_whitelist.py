@@ -130,11 +130,13 @@ def test_file_ends_with_hide_and_shows_only_selection():
         for l in b["lines"]:
             if l.startswith("BaseType =="):
                 shown |= set(re.findall(r'"([^"]*)"', l))
-    # Scroll of Wisdom (C) and Transmutation are not shown; others are
-    assert "Scroll of Wisdom" not in shown and "Orb of Transmutation" not in shown
+    # Transmutation (Hide) is not shown; Scroll of Wisdom only as a stack of 20 (NeverSink's own rule); others are
+    assert "Orb of Transmutation" not in shown
     assert {"Divine Orb", "Chaos Orb", "Orb of Alchemy", "Brand New Orb", "Essence of Hatred"} <= shown
     assert shown <= {"Divine Orb", "Chaos Orb", "Orb of Alchemy", "Brand New Orb", "Essence of Hatred",
-                     "Mirror of Kalandra", "Vaal Regalia", "Sapphire Ring", "Gold"}
+                     "Mirror of Kalandra", "Vaal Regalia", "Sapphire Ring", "Gold", "Scroll of Wisdom"}
+    wisdom = [b for b in blocks if b["type"] == "Show" and any('"Scroll of Wisdom"' in l for l in b["lines"])]
+    assert len(wisdom) == 1 and "StackSize >= 20" in wisdom[0]["lines"]
 
 
 def test_one_block_per_tier_in_order():

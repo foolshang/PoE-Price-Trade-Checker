@@ -3,10 +3,14 @@ from __future__ import annotations
 import logging
 import threading
 import tkinter as tk
+from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Callable, Optional
 
-from . import __version__, filter_core, filter_gen, filter_style, hub_client, ui_theme
+from . import (__version__, filter_core, filter_gen, filter_output, filter_service, filter_style, hub_client,
+               ui_theme, wl_embed, wl_import)
+from .wl_model import WlModel
+from .wl_panel import WhitelistPanel
 from .filter_style_editor import open_style_dialog
 from .config import AppConfig
 from .neversink_source import LEVELS
@@ -36,9 +40,13 @@ class FilterGenWindow:
         self._on_generate = on_generate
         self._as_toplevel = as_toplevel
         self._hub_loader = hub_loader
-        self._cat_exclude: dict[str, list[str]] = {}
-        self._custom_entries: list[dict] = []   # {"name", "rarities"} = source of truth
-        self._refine_win: Optional[tk.Toplevel] = None
+        self._model = WlModel(game_version)          # the whitelist tab's state (see wl_model)
+        self._panel: Optional[WhitelistPanel] = None
+        self._wl_tab: Optional[tk.Frame] = None
+        self._wl_panel_row = 1
+        self._wl_data: Optional[tuple] = None        # (hub, base_text, extra_names) once loaded
+        self._opened_path: Optional[Path] = None     # a filter file opened for editing (Generate overwrites it)
+        self._wl_loading = False
         self._style_q: Optional[dict] = None        # None = keep NeverSink's own quest blocks
 
         if as_toplevel:
@@ -52,8 +60,24 @@ class FilterGenWindow:
         ui_theme.apply(self._win)
 
         self._vars: dict[str, tk.Variable] = {}
+        self._pending_notes = self._init_model()
         self._build()
         self._load_from_config()
+        for n in self._pending_notes:
+            self.log("ℹ " + n, "warn")
+        if self._on_generate is not None or self._hub_loader is not None:
+            self._win.after(200, self._load_wl_data)      # lists fill in the background
+
+    def _init_model(self) -> list:
+        """The whitelist model from config; an old-style whitelist config is converted once (old keys stay)."""
+        fg = dict(self._config.get("filter_gen", {}) or {})
+        updates, notes = WlModel.convert_legacy(fg, self._game_version)
+        if updates:
+            fg.update(updates)
+            self._config.set("filter_gen", fg)
+            self._config.save()
+        self._model = WlModel.from_config(fg, self._game_version)
+        return notes
 
     # ------------------------------------------------------------------
 
@@ -169,7 +193,7 @@ class FilterGenWindow:
 
     # ---- tab 1: NeverSink -------------------------------------------------
 
-    def _name_row(self, f, key: str, row: int) -> int:
+    def _name_row(self, f, key: str, row: int, extra: Optional[Callable[[tk.Frame], None]] = None) -> int:
         self._lbl(f, "ชื่อ filter:", row, 0)
         box = tk.Frame(f, bg=_BG)
         box.grid(row=row, column=1, columnspan=2, sticky="w")
@@ -177,6 +201,8 @@ class FilterGenWindow:
                      relief=tk.FLAT, font=_PANEL_FONT, width=30)
         e.pack(side=tk.LEFT, padx=6)
         tk.Label(box, text=".filter", bg=_BG, fg="#666", font=_SMALL_FONT).pack(side=tk.LEFT)
+        if extra is not None:
+            extra(box)
         return row + 1
 
     def _name_var(self, key: str) -> tk.StringVar:
@@ -219,116 +245,169 @@ class FilterGenWindow:
 
     # ---- tab 2: Whitelist ---------------------------------------------------
 
+    def _new_panel(self) -> WhitelistPanel:
+        return WhitelistPanel(self._wl_tab, self._model, on_changed=None,
+                              goto_sound_tab=lambda: self._nb.select(0), get_sounds=self._shared_sounds)
+
     def _build_whitelist_tab(self, f: tk.Frame) -> None:
-        row = 0
-        row = self._name_row(f, "filter_name_whitelist", row)
-        tk.Label(f, text="โชว์เฉพาะที่เลือก — ซ่อนที่เหลือทั้งหมด", bg=_BG, fg=_FG,
-                 font=_PANEL_FONT).grid(row=row, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 2))
-        row += 1
-        self._check(f, "whitelist_gold", "Gold", row, 0, columnspan=1)
-        gold_row = tk.Frame(f, bg=_BG)
-        gold_row.grid(row=row, column=1, columnspan=2, sticky="w")
-        tk.Label(gold_row, text="จำนวน ≥", bg=_BG, fg=_FG, font=_PANEL_FONT).grid(row=0, column=0)
-        self._entry(gold_row, "whitelist_gold_min", 0, 1, width=6)
-        row += 1
-        tk.Label(f, text="หมวด (โชว์ทั้งหมวด):", bg=_BG, fg=_FG, font=_SMALL_FONT).grid(
-            row=row, column=0, columnspan=3, sticky="w", padx=6)
-        row += 1
-        cat_frame = tk.Frame(f, bg=_BG)
-        cat_frame.grid(row=row, column=0, columnspan=3, sticky="w", padx=6)
-        for i, cat in enumerate(filter_gen.WHITELIST_CATEGORIES.get(self._game_version, [])):
-            self._check(cat_frame, f"whitelist_cat_{cat}", cat, i // 3, i % 3, columnspan=1)
-        n_cats = len(filter_gen.WHITELIST_CATEGORIES.get(self._game_version, []))
-        # not a hub category: own key, no refine list (offline "Rarity Unique" block)
-        self._check(cat_frame, "whitelist_unique_all", "Unique (ทุกตัว)",
-                    n_cats // 3, n_cats % 3, columnspan=1)
-        self._btn(cat_frame, "ปรับรายการในหมวด…", self._open_cat_refine,
-                  row=(n_cats + 3) // 3, column=0, columnspan=3, sticky="w", pady=(4, 0))
-        row += 1
-        tk.Label(f, text="ชื่อที่พิมพ์เอง (contains) + เลือก rarity:", bg=_BG, fg=_FG,
-                 font=_SMALL_FONT).grid(row=row, column=0, columnspan=3, sticky="w", padx=6, pady=(4, 0))
-        row += 1
-        custom_frame = tk.Frame(f, bg=_BG)
-        custom_frame.grid(row=row, column=0, columnspan=3, sticky="w", padx=6)
-        self._custom_var = tk.StringVar()
-        entry = tk.Entry(custom_frame, textvariable=self._custom_var, bg=_INPUT_BG, fg=_FG,
-                         insertbackground=_FG, relief=tk.FLAT, font=_PANEL_FONT, width=24)
-        entry.grid(row=0, column=0, padx=(0, 4))
-        entry.bind("<Return>", lambda _e: self._add_custom())
-        self._btn(custom_frame, "เพิ่ม", self._add_custom, row=0, column=1)
-        self._btn(custom_frame, "ลบที่เลือก", self._remove_custom, row=0, column=2)
-        # rarity picker: used by "เพิ่ม" and "ตั้ง rarity ที่เลือก"
-        rar_frame = tk.Frame(custom_frame, bg=_BG)
-        rar_frame.grid(row=1, column=0, columnspan=3, sticky="w", pady=(3, 0))
-        self._cust_rar = {}
-        for r in _RARITIES:
-            v = tk.BooleanVar(value=(r == "Normal"))   # default = Normal
-            self._cust_rar[r] = v
-            tk.Checkbutton(rar_frame, text=r, variable=v, bg=_BG, fg=_FG,
-                           selectcolor="#2A2020", activebackground=_BG,
-                           font=_SMALL_FONT).pack(side=tk.LEFT)
-        self._btn(rar_frame, "ตั้ง rarity ที่เลือก", self._set_custom_rarity, side=tk.LEFT)
-        self._custom_list = tk.Listbox(custom_frame, bg=_INPUT_BG, fg=_FG, font=_PANEL_FONT,
-                                       height=4, width=44, relief=tk.FLAT, selectmode=tk.EXTENDED,
-                                       exportselection=False)
-        self._custom_list.grid(row=2, column=0, columnspan=3, sticky="w", pady=(3, 0))
-        self._custom_list.bind("<<ListboxSelect>>", self._on_custom_select)
-        row += 1
-        tk.Label(f, text="(แท็บนี้เขียน filter เองทั้งไฟล์ — ไม่ใช้ NeverSink, generate เฉพาะที่เลือก)", bg=_BG, fg="#666",
-                 font=_SMALL_FONT).grid(row=row, column=0, columnspan=3, sticky="w", padx=6)
-        row += 1
-
-        # ---- Gem filter ----
-        tk.Label(f, text="Gem:", bg=_BG, fg=_FG, font=_SMALL_FONT).grid(
-            row=row, column=0, columnspan=3, sticky="w", padx=6, pady=(4, 0))
-        row += 1
-        gem_frame = tk.Frame(f, bg=_BG)
-        gem_frame.grid(row=row, column=0, columnspan=3, sticky="w", padx=6)
-        self._gem_level_vars = {}        # base_type -> StringVar(level)
-        self._gem_enable_vars = {}       # base_type -> BooleanVar
-        self._gem_all_names: list[str] = []     # lazy-loaded from hub (poe1 autocomplete)
-        uncut = filter_gen.WHITELIST_GEM_UNCUT.get(self._game_version, [])
-        if uncut:
-            # poe2: one checkbox + minimum level per uncut type
-            for i, base in enumerate(uncut):
-                ev = tk.BooleanVar()
-                self._gem_enable_vars[base] = ev
-                tk.Checkbutton(gem_frame, text=base, variable=ev, bg=_BG, fg=_FG,
-                               selectcolor="#2A2020", activebackground=_BG,
-                               font=_SMALL_FONT).grid(row=i, column=0, sticky="w")
-                tk.Label(gem_frame, text="level ≥", bg=_BG, fg=_FG,
-                         font=_SMALL_FONT).grid(row=i, column=1, sticky="w", padx=(6, 2))
-                lv = tk.StringVar(value="1")
-                self._gem_level_vars[base] = lv
-                tk.Entry(gem_frame, textvariable=lv, bg=_INPUT_BG, fg=_FG, width=4,
-                         insertbackground=_FG, relief=tk.FLAT,
-                         font=_PANEL_FONT).grid(row=i, column=2, sticky="w")
-        else:
-            # poe1: type a gem name + autocomplete + add several
-            self._gem_name_var = tk.StringVar()
-            ge = tk.Entry(gem_frame, textvariable=self._gem_name_var, bg=_INPUT_BG, fg=_FG,
-                          insertbackground=_FG, relief=tk.FLAT, font=_PANEL_FONT, width=24)
-            ge.grid(row=0, column=0, padx=(0, 4))
-            ge.bind("<KeyRelease>", self._gem_suggest)
-            ge.bind("<Return>", lambda _e: self._gem_add())
-            self._btn(gem_frame, "เพิ่ม", self._gem_add, row=0, column=1)
-            self._btn(gem_frame, "ลบที่เลือก", self._gem_remove, row=0, column=2)
-            # suggestions — click = put the name into the entry, double-click = add it to the list
-            self._gem_sugg = tk.Listbox(gem_frame, bg=_INPUT_BG, fg=_FG, font=_PANEL_FONT,
-                                        height=5, width=36, relief=tk.FLAT, exportselection=False)
-            self._gem_sugg.grid(row=1, column=0, columnspan=3, sticky="w", pady=(3, 0))
-            self._gem_sugg.bind("<ButtonRelease-1>", self._gem_pick_sugg)        # click once = fill the entry
-            self._gem_sugg.bind("<Double-Button-1>", lambda _e: self._gem_add())  # double-click = add to list
-            # chosen names
-            self._gem_list = tk.Listbox(gem_frame, bg=_INPUT_BG, fg=_FG, font=_PANEL_FONT,
-                                        height=4, width=36, relief=tk.FLAT,
-                                        selectmode=tk.EXTENDED, exportselection=False)
-            self._gem_list.grid(row=2, column=0, columnspan=3, sticky="w", pady=(3, 0))
-        row += 1
-
+        self._wl_tab = f
+        row = self._name_row(f, "filter_name_whitelist", 0,
+                             extra=lambda box: self._btn(box, "เปิด filter…", self._open_filter_clicked, side=tk.LEFT))
+        self._panel = self._new_panel()
+        self._wl_panel_row = row
+        self._panel.grid(row=row, column=0, columnspan=3, sticky="nsew")
+        f.rowconfigure(row, weight=1)
         btns = tk.Frame(f, bg=_BG)
-        btns.grid(row=row, column=0, columnspan=3, pady=(8, 0))
+        btns.grid(row=row + 1, column=0, columnspan=3, pady=(6, 0))
         self._btn(btns, "Generate Now", lambda: self._on_generate_clicked(False, "whitelist"), side=tk.LEFT)
+        self._btn(btns, "โหลดรายการใหม่", self._load_wl_data, side=tk.LEFT)
+
+    def _shared_sounds(self) -> dict:
+        """S / A / B / Q sounds as set on the NeverSink tab (shown read-only on the whitelist tab)."""
+        out = {k: self._vars[f"sound_{k.lower()}"].get() for k in ("S", "A", "B")}
+        if self._style_q:
+            out["Q"] = filter_style.uses_sound_file(self._style_q) or ""
+        return out
+
+    def _load_wl_data(self) -> None:
+        """Fetch hub + NeverSink + real names in a worker thread, then fill the lists on the Tk thread."""
+        if self._wl_loading:
+            return
+        self._wl_loading = True
+        self.log("⟳ โหลดรายการ whitelist (hub + NeverSink)…", "info")
+
+        def work() -> None:
+            try:
+                data = filter_service.load_whitelist_inputs(
+                    self._config, self._game_version, self._hub_loader,
+                    log=lambda m, t="info": self._win.after(0, lambda: self.log(m, t)))
+            except Exception as e:
+                data = None
+                err = str(e)
+            try:
+                self._win.after(0, lambda: self._wl_data_ready(data, None if data else err))
+            except Exception:
+                self._wl_loading = False
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _wl_data_ready(self, data, err) -> None:
+        self._wl_loading = False
+        if not data:
+            self.log(f"✗ โหลดรายการไม่สำเร็จ: {err}", "err")
+            return
+        self.set_wl_data(*data)
+
+    # ---- open an old filter -----------------------------------------------------
+
+    def _out_dir(self) -> Path:
+        return filter_output.game_filter_dir(self._game_version, self._vars["game_dir"].get().strip())
+
+    def _open_filter_clicked(self) -> None:
+        d = self._out_dir()
+        path = filedialog.askopenfilename(
+            parent=self._win, title="เปิด filter ที่สร้างจากโปรแกรมนี้", initialdir=str(d) if d.is_dir() else None,
+            filetypes=[("Path of Exile filter", "*.filter"), ("All files", "*.*")])
+        if path:
+            self.open_filter(Path(path))
+
+    def open_filter(self, path: Path) -> bool:
+        """Load the settings embedded in a whitelist filter file into the tab (and its name into the name
+        box); the next Generate overwrites that file after asking. False (and a message) when the file is
+        not one this tab can edit."""
+        try:
+            text = Path(path).read_text(encoding="utf-8", errors="replace")
+        except OSError as e:
+            self.log(f"✗ เปิดไฟล์ไม่ได้: {e}", "err")
+            return False
+        kind = wl_embed.classify(text)
+        name = Path(path).stem
+        _n, err = filter_core.validate_filter_name(name)
+        if kind in ("ok", "no_config") and err:
+            self.log(f"✗ ชื่อไฟล์ใช้เป็นชื่อ filter ไม่ได้: {err}", "err")
+            return False
+        if kind == "no_config":
+            return self._open_old_filter(Path(path), text)
+        if kind != "ok":
+            self.log("✗ เปิดแก้ไม่ได้: ไฟล์นี้ไม่ได้สร้างจากแท็บ Whitelist ของโปรแกรมนี้"
+                     if kind == "foreign" else
+                     "✗ เปิดแก้ไม่ได้: ไฟล์นี้สร้างจากแท็บ NeverSink ไม่ใช่ Whitelist", "warn")
+            return False
+        data = wl_embed.extract(text)
+        if data["game"] != self._game_version:
+            self.log(f"✗ ไฟล์นี้เป็นของ {data['game'].upper()} แต่หน้าต่างนี้เป็น {self._game_version.upper()}", "warn")
+            return False
+        model = WlModel.from_config(data["cfg"], self._game_version)
+        self._adopt(Path(path), model)
+        self.log(f"✓ เปิด {Path(path).name} แล้ว — แก้แล้วกด Generate Now เพื่อเขียนทับไฟล์นี้", "ok")
+        return True
+
+    def _open_old_filter(self, path: Path, text: str) -> bool:
+        """A whitelist file of this program from before settings were embedded (v1 / v2 engine): read its blocks
+        back into settings (wl_import); what a block cannot say keeps the remembered value and is named in the log."""
+        if wl_import.version_of(text) is None:
+            self.log("✗ เปิดแก้ไม่ได้: ไฟล์นี้ไม่ได้สร้างจากแท็บ Whitelist ของโปรแกรมนี้", "warn")
+            return False
+        guess = wl_import.guess_game(text)
+        if guess and guess != self._game_version:
+            self.log(f"✗ ไฟล์นี้ดูเป็นของ {guess.upper()} แต่หน้าต่างนี้เป็น {self._game_version.upper()}", "warn")
+            return False
+        if self._wl_data is None:
+            self.log("✗ ยังโหลดรายการ whitelist ไม่เสร็จ — รอให้โหลดเสร็จแล้วเปิดไฟล์อีกครั้ง "
+                     "(ใช้ชื่อไอเท็มจริงอ่านไฟล์เก่ากลับ)", "warn")
+            return False
+        res = wl_import.read(text, self._game_version, self._model, folder=path.parent)
+        if res is None or res["overlap"] < 0.2:
+            self.log("✗ เปิดแก้ไม่ได้: ชื่อในไฟล์ไม่ตรงกับรายการของเกมนี้ — ไฟล์น่าจะเป็นของอีกเกมหรืออีกลีก", "warn")
+            return False
+        self._adopt(path, res["model"])
+        ver = "v1 (โชว์เฉพาะแบบเก่า)" if res["version"] == "v1" else "v2 (ก่อนฝังค่าที่ตั้ง)"
+        self.log(f"✓ เปิด {path.name} แล้ว — ไฟล์รุ่น {ver} ไม่มีค่าที่ฝังไว้ จึงอ่านกลับจาก block "
+                 f"(แก้แล้วกด Generate Now เพื่อเขียนทับไฟล์นี้ แล้วไฟล์จะมีค่าฝังตามปกติ)", "ok")
+        for note in res["notes"]:
+            self.log("⚠ เดา/ปรับ: " + note, "warn")
+        for label, fname in res["sounds"].items():
+            self._adopt_sound(label, fname, path.parent)
+        return True
+
+    def _adopt_sound(self, label: str, fname: str, folder: Path) -> None:
+        """Tier S / A / B sound = the file the old filter played (found next to it); Q is left to the NeverSink tab."""
+        if label not in ("S", "A", "B"):
+            return
+        var = self._vars[f"sound_{label.lower()}"]
+        found = folder / fname
+        if Path(var.get() or "").name == fname:
+            return
+        if found.is_file():
+            var.set(str(found))
+            self.log(f"⚠ เสียง tier {label} ตั้งเป็น {fname} ตามไฟล์ที่เปิด (ใช้ร่วมกับแท็บ NeverSink)", "warn")
+        else:
+            self.log(f'⚠ เสียง tier {label} ในไฟล์คือ "{fname}" แต่ไม่พบไฟล์นี้ข้างๆ filter — ไม่ได้ตั้งเสียง', "warn")
+
+    def _adopt(self, path: Path, model: WlModel) -> None:
+        """Make `model` the tab's settings, the file's name the filter name, and Generate write back to this file."""
+        self._model = model
+        if self._wl_data is not None:
+            self._model.set_data(*self._wl_data)
+        old = self._panel
+        if old is not None:
+            old.destroy()
+        self._panel = self._new_panel()
+        self._panel.grid(row=self._wl_panel_row, column=0, columnspan=3, sticky="nsew")
+        self._vars["filter_name_whitelist"].set(path.stem)
+        parent = str(path.resolve().parent)
+        if Path(parent) != self._out_dir().resolve():
+            self._vars["game_dir"].set(parent)          # Generate writes back next to the opened file
+        self._opened_path = path
+
+    def set_wl_data(self, hub, base_text, extra_names) -> None:
+        """Give the whitelist tab its data (also used by tests / callers that already have it)."""
+        self._wl_data = (hub, base_text, extra_names)
+        self._model.set_data(hub, base_text, extra_names)
+        if self._panel is not None:
+            self._panel.data_loaded()
+        self.log("✓ โหลดรายการ whitelist แล้ว" if base_text else
+                 "⚠ ไม่มี NeverSink base filter — ไม่มี tier เริ่มต้น", "ok" if base_text else "warn")
 
     # ---- Q style ------------------------------------------------------------
 
@@ -344,7 +423,6 @@ class FilterGenWindow:
         if self._style_q and not filter_style.is_empty(self._style_q):
             self._quest_lbl.configure(text="ตั้งสไตล์เองแล้ว", fg=_ACCENT)
         else:
-            self._style_q = None
             self._quest_lbl.configure(text="ใช้ของ NeverSink", fg="#888")
 
     # ---- sound file conflict (asked from the generate thread) ---------------------
@@ -373,225 +451,6 @@ class FilterGenWindow:
             return "keep"
         done.wait(300)
         return answer.get("v", "keep")
-
-    def _open_cat_refine(self) -> None:
-        """Popup: per-category checklist. Checked = shown (default), unchecked =
-        excluded; only the exclude lists are stored (self._cat_exclude)."""
-        if self._refine_win is not None:
-            try:
-                if self._refine_win.winfo_exists():
-                    self._refine_win.lift()
-                    return
-            except tk.TclError:
-                pass
-        cats = [c for c in filter_gen.WHITELIST_CATEGORIES.get(self._game_version, [])
-                if self._vars[f"whitelist_cat_{c}"].get()]
-        if not cats:
-            self.log("ติ๊กหมวดก่อน แล้วค่อยปรับรายการ", "warn")
-            return
-        if self._hub_loader is None:
-            self.log("ต้องต่อ hub เพื่อดูรายการ: ไม่มี hub loader", "warn")
-            return
-        try:
-            hub_data = self._hub_loader()
-        except Exception as e:
-            self.log(f"ต้องต่อ hub เพื่อดูรายการ: {e}", "warn")
-            return
-
-        top = tk.Toplevel(self._win)
-        self._refine_win = top
-        top.title("ปรับรายการในหมวด")
-        top.configure(bg=_BG)
-        top.attributes("-topmost", True)
-
-        sel = tk.StringVar(value=cats[0])
-        q = tk.StringVar()
-        top_row = tk.Frame(top, bg=_BG)
-        top_row.pack(fill=tk.X, padx=8, pady=6)
-        menu = tk.OptionMenu(top_row, sel, *cats)
-        menu.config(bg=_BUTTON_BG, fg=_FG, activebackground=_ACCENT, relief=tk.FLAT,
-                    highlightthickness=0, font=_PANEL_FONT)
-        menu.pack(side=tk.LEFT)
-        tk.Entry(top, textvariable=q, bg=_INPUT_BG, fg=_FG, insertbackground=_FG,
-                 relief=tk.FLAT, font=_PANEL_FONT).pack(fill=tk.X, padx=8)
-
-        wrap = tk.Frame(top, bg=_BG)
-        wrap.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
-        canvas = tk.Canvas(wrap, bg=_BG, highlightthickness=0, width=320, height=340)
-        scrollbar = tk.Scrollbar(wrap, orient=tk.VERTICAL, command=canvas.yview)
-        canvas.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        body = tk.Frame(canvas, bg=_BG)
-        canvas.create_window((0, 0), window=body, anchor="nw")
-
-        def on_wheel(event) -> None:
-            canvas.yview_scroll(int(-event.delta / 120), "units")
-        canvas.bind("<MouseWheel>", on_wheel)
-        body.bind("<MouseWheel>", on_wheel)
-
-        item_vars: dict[str, tk.BooleanVar] = {}
-
-        def all_names(cat: str) -> list[str]:
-            return sorted(set(filter_gen.names_in_categories(hub_data, [cat])))
-
-        def toggle(nm: str) -> None:
-            cat = sel.get()
-            ex = set(self._cat_exclude.get(cat, []))
-            if item_vars[nm].get():
-                ex.discard(nm)
-            else:
-                ex.add(nm)
-            if ex:
-                self._cat_exclude[cat] = sorted(ex)
-            else:
-                self._cat_exclude.pop(cat, None)
-
-        def rebuild(*_a) -> None:
-            cat = sel.get()
-            excl = set(self._cat_exclude.get(cat, []))
-            kw = q.get().strip().lower()
-            for w in body.winfo_children():
-                w.destroy()
-            item_vars.clear()
-            for nm in all_names(cat):
-                if kw and kw not in nm.lower():
-                    continue
-                v = tk.BooleanVar(value=(nm not in excl))
-                item_vars[nm] = v
-                cb = tk.Checkbutton(body, text=nm, variable=v, bg=_BG, fg=_FG,
-                                    selectcolor="#2A2020", activebackground=_BG,
-                                    font=_PANEL_FONT, anchor="w",
-                                    command=lambda n=nm: toggle(n))
-                cb.pack(fill=tk.X, anchor="w")
-                cb.bind("<MouseWheel>", on_wheel)
-            body.update_idletasks()
-            canvas.configure(scrollregion=(0, 0, body.winfo_reqwidth(), body.winfo_reqheight()))
-            canvas.yview_moveto(0)
-
-        def select_all() -> None:
-            self._cat_exclude.pop(sel.get(), None)
-            rebuild()
-
-        def select_none() -> None:
-            self._cat_exclude[sel.get()] = all_names(sel.get())
-            rebuild()
-
-        btn_row = tk.Frame(top, bg=_BG)
-        btn_row.pack(pady=(0, 6))
-        self._btn(btn_row, "เลือกทั้งหมด", select_all, side=tk.LEFT)
-        self._btn(btn_row, "ไม่เลือกเลย", select_none, side=tk.LEFT)
-        self._btn(btn_row, "ปิด", top.destroy, side=tk.LEFT)
-
-        sel.trace_add("write", rebuild)
-        q.trace_add("write", rebuild)
-        rebuild()
-        # exposed for headless tests
-        top._refine = {"sel": sel, "q": q, "items": item_vars, "toggle": toggle,
-                       "select_all": select_all, "select_none": select_none}
-
-    @staticmethod
-    def _rarity_tag(rarities) -> str:
-        abbr = {"Normal": "N", "Magic": "M", "Rare": "R", "Unique": "U"}
-        rs = [r for r in _RARITIES if r in set(rarities)]
-        return "/".join(abbr[r] for r in rs) if rs else "N"
-
-    def _render_custom(self) -> None:
-        self._custom_list.delete(0, tk.END)
-        for e in self._custom_entries:
-            self._custom_list.insert(
-                tk.END, f"{e['name']}   [{self._rarity_tag(e['rarities'])}]")
-
-    def _current_rarities(self) -> list:
-        rs = [r for r in _RARITIES if self._cust_rar[r].get()]
-        return rs or ["Normal"]       # never empty
-
-    def _gem_load_names(self) -> None:
-        if self._gem_all_names:
-            return
-        try:
-            data = hub_client.get_gems(self._game_version) or {}
-            seen, out = set(), []
-            for g in data.get("gems", []):
-                nm = (g.get("display_name") or "").strip()
-                if not nm or nm == "..." or nm.lower() in seen:
-                    continue
-                seen.add(nm.lower())
-                out.append(nm)
-            self._gem_all_names = sorted(out)
-        except Exception as e:
-            self.log(f"⚠ โหลดรายชื่อ gem ไม่ได้ (พิมพ์เองได้): {e}", "warn")
-            self._gem_all_names = []
-
-    def _gem_suggest(self, _e=None) -> None:
-        self._gem_load_names()
-        kw = self._gem_name_var.get().strip().lower()
-        self._gem_sugg.delete(0, tk.END)
-        if not kw:
-            return
-        for nm in self._gem_all_names:
-            if kw in nm.lower():
-                self._gem_sugg.insert(tk.END, nm)
-                if self._gem_sugg.size() >= 20:
-                    break
-
-    def _gem_pick_sugg(self, _e=None) -> None:
-        sel = self._gem_sugg.curselection()
-        if sel:
-            self._gem_name_var.set(self._gem_sugg.get(sel[0]))
-
-    def _gem_add(self) -> None:
-        nm = self._gem_name_var.get().strip()
-        if not nm:
-            return
-        existing = {x.lower() for x in self._gem_list.get(0, tk.END)}
-        if nm.lower() not in existing:
-            self._gem_list.insert(tk.END, nm)
-        self._gem_name_var.set("")
-        self._gem_sugg.delete(0, tk.END)
-
-    def _gem_remove(self) -> None:
-        for idx in reversed(self._gem_list.curselection()):
-            self._gem_list.delete(idx)
-
-    def _add_custom(self) -> None:
-        text = self._custom_var.get().strip()
-        if not text:
-            return
-        if any(e["name"].lower() == text.lower() for e in self._custom_entries):
-            self._custom_var.set("")
-            return
-        self._custom_entries.append({"name": text, "rarities": self._current_rarities()})
-        self._custom_var.set("")
-        self._render_custom()
-
-    def _remove_custom(self) -> None:
-        for idx in sorted(self._custom_list.curselection(), reverse=True):
-            if 0 <= idx < len(self._custom_entries):
-                del self._custom_entries[idx]
-        self._render_custom()
-
-    def _on_custom_select(self, _e=None) -> None:
-        # selecting a name loads its rarities back into the checkboxes
-        sel = self._custom_list.curselection()
-        if not sel or sel[0] >= len(self._custom_entries):
-            return
-        rs = set(self._custom_entries[sel[0]]["rarities"])
-        for r in _RARITIES:
-            self._cust_rar[r].set(r in rs)
-
-    def _set_custom_rarity(self) -> None:
-        # apply the currently ticked rarities to every selected name
-        sel = list(self._custom_list.curselection())
-        if not sel:
-            return
-        rs = self._current_rarities()
-        for idx in sel:
-            if 0 <= idx < len(self._custom_entries):
-                self._custom_entries[idx]["rarities"] = list(rs)
-        self._render_custom()
-        for i in sel:
-            self._custom_list.selection_set(i)
 
     def _browse_game_dir(self) -> None:
         path = filedialog.askdirectory(title="Select the game's filter folder")
@@ -631,35 +490,6 @@ class FilterGenWindow:
             self._nb.select(1 if fg.get("last_tab") == "whitelist" else 0)
         except tk.TclError:
             pass
-        self._vars["whitelist_gold"].set(bool(fg.get("whitelist_gold", False)))
-        self._vars["whitelist_gold_min"].set(str(fg.get("whitelist_gold_min", 0)))
-        self._vars["whitelist_unique_all"].set(bool(fg.get("whitelist_unique_all", False)))
-        cats = set(fg.get(f"whitelist_cats_{self._game_version}", []))
-        for cat in filter_gen.WHITELIST_CATEGORIES.get(self._game_version, []):
-            self._vars[f"whitelist_cat_{cat}"].set(cat in cats)
-        self._cat_exclude = {
-            str(c): list(v) for c, v in
-            dict(fg.get(f"whitelist_cat_exclude_{self._game_version}", {}) or {}).items() if v}
-        self._custom_entries = []
-        for item in fg.get(f"whitelist_custom_{self._game_version}", []):
-            if isinstance(item, str):                       # pre-0.8.2 = any rarity (nothing disappears)
-                self._custom_entries.append({"name": item, "rarities": list(_RARITIES)})
-            elif isinstance(item, dict) and item.get("name"):
-                rs = [r for r in _RARITIES if r in set(item.get("rarities") or [])]
-                self._custom_entries.append({"name": item["name"], "rarities": rs or ["Normal"]})
-        self._render_custom()
-        # gem filter
-        if filter_gen.WHITELIST_GEM_UNCUT.get(self._game_version):   # poe2
-            saved = fg.get(f"whitelist_gem_uncut_{self._game_version}", {}) or {}
-            for base, ev in self._gem_enable_vars.items():
-                ev.set(base in saved)
-                if base in saved:
-                    self._gem_level_vars[base].set(str(saved[base]))
-        else:                                                        # poe1
-            self._gem_list.delete(0, tk.END)
-            for nm in fg.get(f"whitelist_gem_names_{self._game_version}", []):
-                self._gem_list.insert(tk.END, nm)
-
     def _mode(self) -> str:
         """"tier" | "whitelist" - the tab that is open."""
         try:
@@ -687,33 +517,10 @@ class FilterGenWindow:
         fg["filter_name_whitelist"] = (self._vars["filter_name_whitelist"].get().strip()
                                        or filter_core.DEFAULT_WHITELIST_NAME)
         fg["auto_regen_neversink"] = bool(self._vars["auto_regen_neversink"].get())
-        fg["style_q"] = self._style_q if (self._style_q and not filter_style.is_empty(self._style_q)) else None
-        fg["whitelist_gold"] = bool(self._vars["whitelist_gold"].get())
-        fg["whitelist_unique_all"] = bool(self._vars["whitelist_unique_all"].get())
-        try:
-            fg["whitelist_gold_min"] = max(0, int(self._vars["whitelist_gold_min"].get() or 0))
-        except ValueError:
-            fg["whitelist_gold_min"] = 0
-        if filter_gen.WHITELIST_GEM_UNCUT.get(self._game_version):   # poe2
-            gem_out = {}
-            for base, ev in self._gem_enable_vars.items():
-                if ev.get():
-                    try:
-                        gem_out[base] = max(1, int(self._gem_level_vars[base].get() or 1))
-                    except ValueError:
-                        gem_out[base] = 1
-            fg[f"whitelist_gem_uncut_{self._game_version}"] = gem_out
-        else:                                                        # poe1
-            fg[f"whitelist_gem_names_{self._game_version}"] = list(self._gem_list.get(0, tk.END))
-        fg[f"whitelist_cat_exclude_{self._game_version}"] = {
-            c: sorted(v) for c, v in self._cat_exclude.items() if v}
-        fg[f"whitelist_cats_{self._game_version}"] = [
-            cat for cat in filter_gen.WHITELIST_CATEGORIES.get(self._game_version, [])
-            if self._vars[f"whitelist_cat_{cat}"].get()]
-        fg[f"whitelist_custom_{self._game_version}"] = [
-            {"name": e["name"], "rarities": list(e["rarities"])}
-            for e in self._custom_entries]
-
+        fg["style_q"] = self._style_q          # None = never set; an emptied style is kept (reopens unticked)
+        if self._panel is not None:
+            self._panel.read_parts()
+        self._model.to_config(fg)            # wl_v2 + every wl_* / whitelist_* key of the new engine
         self._config.set("filter_gen", fg)
         self._config.save()
         return fg
@@ -726,5 +533,13 @@ class FilterGenWindow:
         if err:
             self.log(f"✗ ชื่อ filter ใช้ไม่ได้: {err}", "err")
             return
+        if mode == "whitelist" and self._opened_path is not None:
+            target = filter_output.filter_path(self._out_dir(), fg[key])
+            if target.resolve() == self._opened_path.resolve():
+                if not messagebox.askyesno("เขียนทับ filter เดิม",
+                                           f"จะเขียนทับไฟล์\n{target}\nด้วยค่าที่ตั้งอยู่ตอนนี้ — ต้องการต่อหรือไม่?",
+                                           parent=self._win):
+                    return
+            self._opened_path = None
         if self._on_generate:
             self._on_generate(force_base, mode)

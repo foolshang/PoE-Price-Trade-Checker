@@ -8,7 +8,7 @@ import shutil
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-FILES = ("filter_gen.py", "filter_core.py", "filter_style.py", "filter_whitelist.py")
+FILES = ("filter_gen.py", "filter_core.py", "filter_style.py", "filter_whitelist.py", "wl_embed.py")
 
 
 def main() -> None:

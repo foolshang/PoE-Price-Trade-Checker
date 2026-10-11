@@ -24,16 +24,21 @@ class StyleEditor(tk.Frame):
     """get_style() / set_style() work on filter_style dicts; on_change() fires after every edit."""
 
     def __init__(self, parent, style=None, on_change: Optional[Callable[[], None]] = None,
-                 allow_file_sound: bool = True, sample_text: str = "Quest Item"):
+                 allow_file_sound: bool = True, sample_text: str = "Quest Item", show_sound: bool = True):
         super().__init__(parent, bg=_BG)
         ui_theme.apply(self)
         self._on_change = on_change
         self._allow_file = allow_file_sound
+        self._show_sound = show_sound        # False: the sound is set elsewhere (shared S / A / B sounds)
         self._sample = sample_text
         self._color: dict = {"text": [255, 255, 255, 255], "border": [255, 255, 255, 255], "bg": [0, 0, 0, 255]}
         self._on: dict = {}
-        self._alpha: dict = {}
+        self._alpha: dict = {}              # key -> StringVar (0..255), the one value the entry / slider / tick share
+        self._alpha_prev: dict = {}         # key -> the opacity to come back to when "โปร่งใส" is unticked
+        self._clear: dict = {}              # key -> BooleanVar of the "โปร่งใส" tick
+        self._slider: dict = {}
         self._swatch: dict = {}
+        self._syncing = False
         self._build()
         self.set_style(style)
 
@@ -50,6 +55,9 @@ class StyleEditor(tk.Frame):
 
     def _build(self) -> None:
         r = 0
+        tk.Label(self, text="ความทึบ (255 = ทึบ, 0 = โปร่งใส)", bg=_BG, fg="#A89868", font=_SMALL).grid(
+            row=r, column=2, columnspan=3, sticky="w", padx=(8, 0))
+        r += 1
         for key, label in (("text", "สีตัวอักษร"), ("border", "สีกรอบ"), ("bg", "สีพื้น")):
             on = tk.BooleanVar()
             self._on[key] = on
@@ -57,13 +65,22 @@ class StyleEditor(tk.Frame):
             sw = tk.Button(self, width=6, relief=tk.FLAT, command=lambda k=key: self._pick(k), cursor="hand2")
             sw.grid(row=r, column=1, padx=4)
             self._swatch[key] = sw
-            tk.Label(self, text="โปร่งใส (alpha)", bg=_BG, fg=_FG, font=_SMALL).grid(row=r, column=2, padx=(8, 2))
             a = tk.StringVar(value="255")
             self._alpha[key] = a
+            self._alpha_prev[key] = 255
             e = tk.Entry(self, textvariable=a, width=4, bg=_INPUT_BG, fg=_FG, insertbackground=_FG, relief=tk.FLAT,
                          font=_FONT)
-            e.grid(row=r, column=3)
-            e.bind("<KeyRelease>", lambda _e: self._changed())
+            e.grid(row=r, column=2, padx=(8, 2))
+            e.bind("<KeyRelease>", lambda _e, k=key: self._alpha_typed(k))
+            sc = tk.Scale(self, from_=0, to=255, orient=tk.HORIZONTAL, showvalue=False, length=110, width=10,
+                          bg=_BG, fg=_FG, troughcolor=_INPUT_BG, highlightthickness=0, bd=0,
+                          activebackground=_ACCENT, command=lambda v, k=key: self._alpha_slid(k, v))
+            sc.grid(row=r, column=3, padx=2)
+            self._slider[key] = sc
+            clear = tk.BooleanVar()
+            self._clear[key] = clear
+            self._check(self, "โปร่งใส", clear, command=lambda k=key: self._clear_toggled(k)).grid(
+                row=r, column=4, sticky="w", padx=(2, 4))
             r += 1
 
         self._size_on = tk.BooleanVar()
@@ -103,9 +120,13 @@ class StyleEditor(tk.Frame):
         self._snd_id = tk.StringVar(value="1")
         self._snd_file = tk.StringVar(value="")
         self._snd_vol = tk.StringVar(value=str(filter_style.DEFAULT_VOLUME))
-        tk.Label(self, text="เสียง", bg=_BG, fg=_FG, font=_FONT).grid(row=r, column=0, sticky="nw", padx=4, pady=2)
+        snd_label = tk.Label(self, text="เสียง", bg=_BG, fg=_FG, font=_FONT)
+        snd_label.grid(row=r, column=0, sticky="nw", padx=4, pady=2)
         box = tk.Frame(self, bg=_BG)
         box.grid(row=r, column=1, columnspan=3, sticky="w")
+        if not self._show_sound:
+            snd_label.grid_remove()
+            box.grid_remove()
         rb = lambda text, val: tk.Radiobutton(box, text=text, variable=self._snd_kind, value=val, bg=_BG, fg=_FG,
                                               selectcolor="#2A2020", activebackground=_BG, font=_FONT,
                                               command=self._changed)
@@ -147,6 +168,48 @@ class StyleEditor(tk.Frame):
             self._snd_file.set(path)
             self._snd_kind.set("file")
             self._changed()
+
+    # -- opacity: entry, slider and the "โปร่งใส" tick are three views of one value ---
+
+    def _set_alpha(self, key: str, value: int, from_slider: bool = False) -> None:
+        value = max(0, min(255, int(value)))
+        self._syncing = True
+        try:
+            self._alpha[key].set(str(value))
+            if not from_slider:
+                self._slider[key].set(value)
+            self._clear[key].set(value == 0)
+        finally:
+            self._syncing = False
+        if value > 0:
+            self._alpha_prev[key] = value
+
+    def _alpha_typed(self, key: str) -> None:
+        text = self._alpha[key].get().strip()
+        if text.isdigit():
+            v = max(0, min(255, int(text)))
+            self._syncing = True
+            try:
+                self._slider[key].set(v)
+                self._clear[key].set(v == 0)
+            finally:
+                self._syncing = False
+            if v > 0:
+                self._alpha_prev[key] = v
+        self._changed()
+
+    def _alpha_slid(self, key: str, value) -> None:
+        if self._syncing:
+            return
+        self._set_alpha(key, int(float(value)), from_slider=True)
+        self._changed()
+
+    def _clear_toggled(self, key: str) -> None:
+        if self._clear[key].get():
+            self._set_alpha(key, 0)
+        else:
+            self._set_alpha(key, self._alpha_prev.get(key) or 255)
+        self._changed()
 
     def _changed(self) -> None:
         self._refresh_preview()
@@ -191,7 +254,7 @@ class StyleEditor(tk.Frame):
             if s[key]:
                 self._color[key] = list(s[key])
             self._on[key].set(bool(s[key]))
-            self._alpha[key].set(str(self._color[key][3]))
+            self._set_alpha(key, self._color[key][3])
         self._size_on.set(s["size"] is not None)
         if s["size"] is not None:
             self._size.set(str(s["size"]))
@@ -214,13 +277,13 @@ class StyleEditor(tk.Frame):
 
 def open_style_dialog(parent, title: str, style, on_save: Callable[[Optional[dict]], None], *,
                       allow_file_sound: bool = True, clear_text: str = "ล้าง (ใช้ค่าเดิม)",
-                      sample_text: str = "Item") -> tk.Toplevel:
+                      sample_text: str = "Item", show_sound: bool = True) -> tk.Toplevel:
     """Modal-ish popup around StyleEditor. on_save gets the normalized style, or None for "clear"."""
     top = tk.Toplevel(parent)
     top.title(title)
     top.configure(bg=_BG)
     top.transient(parent)
-    ed = StyleEditor(top, style, allow_file_sound=allow_file_sound, sample_text=sample_text)
+    ed = StyleEditor(top, style, allow_file_sound=allow_file_sound, sample_text=sample_text, show_sound=show_sound)
     ed.pack(padx=10, pady=10)
     row = tk.Frame(top, bg=_BG)
     row.pack(pady=(0, 10))

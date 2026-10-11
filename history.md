@@ -5,6 +5,94 @@
 
 ---
 
+## 2026-10-12 — Whitelist tab, phase 3 + 3b + A3: per-block gear, stack minimums, open/edit old filters, style fixes, name lists for Runegraft / Vial / Corpse / Wombgift / Relic, generic gems, open old filters (v0.10.2, not committed yet)
+
+**Why:** Winai's first hands-on round with the Whitelist tab (phase 3) produced a list of gaps; phase 3 was
+never committed, so 3b sits on top of it and ships as one v0.10.0.
+
+**Open old filters without embedded settings (`wl_import.py`):** "เปิด filter…" now also opens whitelist files this
+program wrote before the settings were embedded - v1 (`(show only)`, up to v0.9.9) and v2 (`(own tiers ...)`,
+v0.9.10 / v0.10.0). The blocks are read back by their comment lines (`# tier S`, `# tier S - stack >= N`,
+`# uniques - tier A`, `# gold (stack >= N)`, `# waystones: tier >= N and rarity >= R`, `# tablets`,
+`# uncut gem:`, `# typed names`, `# gear: ... - tier X (type)`, `# tier X - special classes`): tier per name /
+unique base / gear block, Gold N, Map tier + rarity, tablets, the look of every tier / Gold / Tablet / Map,
+the S/A/B sound file names (taken over when the file sits next to the filter; shared with the NeverSink tab),
+typed names, gems. A name the file does not list is read as tier C (that is what the file did), so Generate
+reproduces the old file's behaviour; blocks / lists newer than the file (generic gems, Runegraft ...) therefore
+open as C and the Status says so. Parts no block carries (a tier nobody is in, Map look when maps are not
+filtered ...) keep the value the program remembered and are named in the Status ("เดา/ปรับ"). The old
+engine wrote no StackSize: names NeverSink shows only as stacks get minimum 1 so they stay as shown. v1 files
+have no tiers: shown names take NeverSink's starting tier (C -> B), everything else C, all gear C. Foreign files
+and the NeverSink tab's files are still refused; a file of the other game is refused (Waystone / Tablet vs
+Maps hints, or < 20% of its names known). Tests: `tests/test_wl_import.py` with five real files from
+Winai's game folders (`tests/sample_data/old_filters`): open -> generate -> the tiers / looks / gold / map /
+gear of the old file are all equal, and a second open of the generated file gives the same file.
+
+**A3 (Winai's decision after the report):**
+- New name categories, filled from NeverSink's own `BaseType ==` lists (`NAMED_CATEGORIES`, `named_categories`):
+  poe1 Runegraft, Vial, Corpse, Wombgift, Relic; poe2 Relic. Starting tier = the block's tag (t1 -> S, t2/t3 -> A,
+  t4 -> B; Relic = B). Before this, poe1 Runegrafts and Vials were hidden outright (no category listed them).
+- What is not in any list yet stays shown as before: `Class == "Corpses" / "Wombgifts" / "Relics"` stay in the
+  special classes, and `BaseType "Runegraft"` / `"Vial of"` (NeverSink's own fallback blocks) are new rows of
+  the special category (`SPECIAL_BASE`, key `BaseType:<fragment>` in `wl_class_tier_<g>`). Tier C names are
+  still hidden first.
+- poe1 generic gems: a "Gem ทั่วไป" category (gear group `gems`) that lists NeverSink's 29 `gems->*` Show blocks
+  one by one ("Gem  Quality ≥ 20 · GemLevel ≥ 20 · base Absolution +166"), tickable and movable like gear. poe2
+  gems stay with the uncut-gem setting.
+- Lint: `GemLevel 1` (no operator) is accepted where NeverSink itself writes it that way.
+- `tools/compare_neversink.py` also probes names no list has (the fallback blocks); 6179/6179 (poe1) and
+  3460/3460 (poe2) answers equal NeverSink s2, stack sizes 1..40.
+- Stack defaults re-checked against the live NeverSink s2 (poe1 8.20.1d, poe2 0.10.4 - the same versions as
+  the sample files, nothing to refresh): 96 / 0 by the definition "hidden alone, shown as a stack" (first-match
+  simulation, pinned by `test_stack_defaults_are_the_names_hidden_alone_but_shown_as_a_stack`). The 154 / 71
+  of an earlier report counted names in blocks with a StackSize *or AreaLevel* condition without simulating
+  first match (the same count now gives 158 / 79) - not the same thing, not used.
+
+**Changed:**
+- **Gear is no longer one category.** Every former gear group ("story", "zone", "jewellery", "jewel", "flask" ...)
+  is a category of its own in the list, and each lists NeverSink's gear Show blocks one by one with a readable
+  name summed up from the conditions (`block_label`: "Rare แหวน ilvl ≥ 82", "Rare อาวุธ AreaLevel ≤ 30" + the
+  `$type` tag). Winner order: one block > the whole category > default. Config: `wl_block_tier_<g>` (key
+  `<type>|<tier tag>|<n>`) and `wl_cat_tier_<g>["gear:<id>"]`; the old `wl_gear_tier_<g>` and
+  `wl_cat_tier_<g>["Gear"]` are folded into the new keys on load and dropped on save (the engine still reads
+  them when handed an old config directly).
+- **Names NeverSink shows under non-step tags** (`supply*`, `any`: Rogue's Marker, small runes, shards ...) now
+  start at B instead of falling through to the later Hide (`default_tiers`). Names only NeverSink tiers are
+  filed in the category of their `$type` (Rune / Currency / Essence / Fragment / Scarab / DivinationCard /
+  Omen; tattoos and xenotiering stay in "อื่นๆ").
+- **Stack-size minimums.** `wl_tier_stack` {S|A|B: N} and `wl_item_stack_<g>` {name: N}; per name the larger of
+  the two applies, only to names that can stack (`stack_info`). NeverSink's own gates are the starting value:
+  a name it hides alone but shows as a stack (own block, or a whole-class rule such as
+  `Divination Cards StackSize >= 3`) starts at the tier it shows as, with that minimum (poe1: 96 names -
+  3 supplies + 93 cards; poe2: none in s2). Written as `Show ... StackSize >= N` immediately followed by a
+  `Hide` of the same names, so no later broader block can show a smaller stack (no `StackSize <`: NeverSink
+  never uses it and the lint only allows verified operators).
+- **Open an old filter.** `wl_embed.py`: the whitelist settings go into the file as `# poe-checker-config:`
+  comment lines (zlib + base64 of JSON, ASCII, 110 chars per line, at the end of the file; added in
+  `filter_core._build_whitelist_v2`). "เปิด filter…" loads them back (also the file name), Generate then asks
+  before overwriting that file. Files without settings are refused with the reason (foreign file / NeverSink
+  tab's file / v0.10.0-era whitelist file: generate once more).
+- **Style editor:** opacity is now an entry + 0-255 slider + "โปร่งใส" tick per colour, with the hint "ความทึบ
+  (255 = ทึบ, 0 = โปร่งใส)"; unticking restores the previous value.
+- **Bug (D2): an unticked style part came back after save + reopen.** Cause 1 (Whitelist tab):
+  `WlModel.set_style_from_editor` stored only parts that differ from NeverSink's look, so an unticked part
+  (None) was dropped and `effective_style` merged NeverSink's value back in - text / border / bg / size / icon /
+  beam (and sound on G / Tablet / Map) were all affected whenever the base look had them (S / A / B always do).
+  Fix: an explicit `off` list in the stored style (`filter_style` normalize / merge / PART_KEYWORDS; the engine
+  drops those lines from the base look). Cause 2 (NeverSink tab): an emptied Q style was saved as None and the
+  editor then reopened with the green default ticked; now an emptied style is kept (None only means "never
+  set" / "cleared on purpose"). Round-trip tests cover every field in every place (tiers, G, Tablet, Map, Q).
+- `tools/compare_neversink.py`: first-match evaluator that runs every name x several stack sizes through
+  NeverSink s2 and the untouched whitelist; poe1 3246/3246 and poe2 2055/2055 answers equal (also a test).
+
+**Files:** filter_whitelist.py, wl_model.py, wl_panel.py, wl_embed.py (new), filter_window.py, filter_style.py,
+filter_style_editor.py, filter_core.py, tools/compare_neversink.py, tools/sync_web_py.py, web/app.js (loads
+wl_embed), tests/test_wl_phase3b.py (new) + updates to the phase 3 tests.
+
+**Open:** A3 (generic gems, corpses, relics, runegrafts, vials - report sent, waiting for Winai's decision).
+
+---
+
 ## 2026-09-22 — F4 "Skill Mod Reference" rewritten against the real hub schema (v0.7.6)
 
 **Why:** the same-day-earlier round of this feature (see the superseded

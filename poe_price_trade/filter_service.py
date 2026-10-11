@@ -183,3 +183,26 @@ def generate_filter(config, game_version: str, league_path: str,
         log_.exception("filter generate error")
         log(f"✗ generate ล้มเหลว: {e}", "err")
     return None
+
+
+def load_whitelist_inputs(config, game_version: str, hub_loader: Optional[Callable[[], dict]],
+                          log: Callable[[str, str], None] = lambda m, t="info": None) -> tuple:
+    """(hub_data | None, NeverSink strictness-2 text | "", real item names) for the whitelist tab's lists -
+    the same inputs generate_filter feeds the engine. Each part that cannot be fetched is logged and left
+    empty (no base filter = the tab says so; it cannot show NeverSink's starting tiers)."""
+    cache_dir = config.app_dir() / "cache"
+    hub = None
+    if hub_loader is not None:
+        try:
+            hub = hub_loader()
+        except Exception as e:
+            log(f"⚠ ดึง hub ไม่ได้: {e}", "warn")
+    base = None
+    try:
+        base, _tag = neversink_source.fetch_base_filter(game_version, 2, cache_dir)
+    except Exception as e:
+        log(f"⚠ ดึง NeverSink base filter ไม่ได้: {e}", "warn")
+    if not base:
+        log("⚠ ไม่มี NeverSink base filter (GitHub ล่ม + ไม่มี cache) — รายการ tier เริ่มต้นไม่ครบ", "warn")
+    return hub, base or "", trade_names.get_names(game_version, cache_dir)
+

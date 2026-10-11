@@ -88,3 +88,10 @@ Frozen-exe asset path เป็นกับดัก: `sys._MEIPASS` ของ P
 run (`Path(__file__).parent`) ไม่เจอปัญหานี้เพราะไม่มี prefix `poe_price_trade`
 อยู่แล้ว ดังนั้น "รันจาก source ผ่าน" ไม่ยืนยันว่า exe จริงจะผ่าน ต้อง build+
 รัน exe จริงเช็คเสมอเวลาแก้ asset loading (`tray.py`'s `_asset_path()`)
+
+## After every build (standing rule from Winai)
+
+After each build, without waiting for Winai: close the old running exe (checker AND standalone filter
+generator), replace it in `dist/`, start the new one, and confirm from its title bar / startup log that it is
+the new version. Never leave a new build in a side folder (`dist_new/`) because the old exe locks `dist/`.
+Local-only output (`dist_new/`, `wl-sample/`) is git-ignored and never committed.

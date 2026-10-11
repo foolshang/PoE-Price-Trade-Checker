@@ -26,7 +26,8 @@ def test_core_imports_only_stdlib_and_filter_gen():
             mods.add(("." * n.level) + (n.module or ""))
             if n.level:
                 mods |= {"." + a.name for a in n.names}
-    assert mods <= {"__future__", "typing", "re", ".", ".filter_gen", ".filter_style", ".filter_whitelist"}, mods
+    assert mods <= {"__future__", "typing", "re", ".", ".filter_gen", ".filter_style", ".filter_whitelist",
+                    ".wl_embed"}, mods
 
 
 def test_core_imports_with_io_modules_blocked():
