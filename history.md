@@ -5,6 +5,45 @@
 
 ---
 
+## 2026-10-12 (night, 2) — The program version is recorded in the embedded settings (v0.10.5)
+
+- The `app` field of the embedded settings was always empty (`filter_core` is kept free of the package's own
+  modules, so it never had the version). `build_filter_text(..., app_version=)` now takes it: `filter_service`
+  passes `__version__`, the web glue passes `"web"`. Opening a file says "ค่าฝังจากรุ่น x" (or that the file did not
+  record one). Tests in `tests/test_wl_import.py`.
+
+## 2026-10-12 (night) — New lists that v0.10.2's import filled with C (v0.10.4, not committed yet)
+
+- **Cause (checked in Winai's real files, not guessed):** `poe-Bus.filter` and `poe-checker-whitelist.filter`
+  (PoE2, written 01:05-01:06, after the v0.10.2 build at 00:52 and before v0.10.3 at 01:26) both carry embedded
+  settings (`app` is empty: the version was never recorded) in which all 7 Relic names are `C` in `wl_item_tier_poe2`.
+  v0.10.2's old-file import read every name the old file lacked as C; Generate then embedded those C values, and
+  from then on they were indistinguishable from the player's own choices. v0.10.3 fixed the import of files
+  WITHOUT settings only, so these (with settings) opened as C again.
+- **Fix:** the settings now record which lists existed (`wl_lists_<game>`, in the config and in the embedded
+  settings). A list newer than the record is taken as never chosen by the player -> NeverSink's defaults + a Status
+  note (`WlModel._settle`). Settings without the record (v0.10.0 - v0.10.2, 'known_lists' None): a NEW list
+  (Runegraft / Vial / Corpse / Wombgift / Relic, the generic gems, the fragment rows) that is C all through is
+  taken as program-filled; a list that is only partly C is the player's. A list the player sets to C in this
+  version is recorded as known and stays C. The saved config is repaired the same way; a model whose data is not
+  loaded does not write the record (unknown stays unknown). Both real files now open with Relic at its
+  NeverSink tier.
+- Tests: file embedded by v0.10.2 (import-filled), list set to C by the player, partly set list, saved config,
+  record-based case (`tests/test_wl_import.py`).
+
+## 2026-10-12 (later) — Old filters open with NeverSink's defaults for lists newer than the file; tk test flake (v0.10.3)
+
+- `wl_import`: lists that did not exist when an old file was written (poe1 Runegraft / Vial / Corpse / Wombgift /
+  Relic, poe2 Relic, the poe1 generic-gem group, the name-fragment rows) open with NeverSink's starting tiers,
+  not C; the Status names them. A name of a list the file does have, but does not list, is still C; a gear block
+  of an existing group that the file lacks is still C.
+- `tests/sample_data/old_filters`: sound file names replaced by neutral ones (`sound-S.mp3` ...).
+- Flaky `tk.Tk()` in the tests (about one run in four of `test_filter_gen_standalone.py` was skipped with
+  "no display"): the real error is `couldn't read file ".../tcl8.6/init.tcl": No error` - a transient read
+  failure of the Windows Store Python's own Tcl files (env, cwd and the loader thread ruled out: same rate with
+  the thread patched out; plain Tk create/destroy loops never fail). The same call succeeds a moment later, so
+  the fixtures now retry (`tests/tkutil.py`): 0 skips in 24 runs. Product code is not involved.
+
 ## 2026-10-12 — Whitelist tab, phase 3 + 3b + A3: per-block gear, stack minimums, open/edit old filters, style fixes, name lists for Runegraft / Vial / Corpse / Wombgift / Relic, generic gems, open old filters (v0.10.2, not committed yet)
 
 **Why:** Winai's first hands-on round with the Whitelist tab (phase 3) produced a list of gaps; phase 3 was

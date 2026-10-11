@@ -56,6 +56,7 @@ SPECIAL_CLASSES = {
 # What NeverSink shows by a fragment of the name, for names its lists do not have yet (a new league's
 # Runegraft / Vial ...): written as `BaseType "<fragment>"` at the class tier, like the special classes.
 # Row key in wl_class_tier_<game>: "BaseType:<fragment>".
+NEW_GEAR_GROUPS = ("gems",)      # gear groups added after v0.10.2 (the generic gems)
 SPECIAL_BASE = {"poe1": ["Runegraft", "Vial of"], "poe2": []}
 BASE_PREFIX = "BaseType:"
 # Name lists NeverSink keeps outside its value ladders, one category each: (category, `$type` prefixes). The

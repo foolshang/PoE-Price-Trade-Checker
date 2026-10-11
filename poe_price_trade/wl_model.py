@@ -85,6 +85,12 @@ class WlModel:
         self._entries: list = []
         self._unique_defaults: dict = {}
         self._loaded = False
+        # the lists (category ids) the settings were written with: None = a file / config from before this was
+        # recorded (v0.10.0 - v0.10.2); a list newer than that was never offered to the player, so what it holds
+        # was filled in by the program (see _settle)
+        self.known_lists: Optional[list] = None
+        self._settle_pending = False
+        self._notes: list = []
 
     # ------------------------------------------------------------------ data
 
@@ -103,6 +109,77 @@ class WlModel:
         self._entries = [(n, b) for n, b in w.unique_entries(hub) if b in real]
         self._default_lines = w.default_tier_lines(self.base_text) if self.base_text else {}
         self._loaded = True
+        if self._settle_pending:
+            self._settle()
+
+    # ------------------------------------------------------------------ lists newer than the settings
+
+    def lists_now(self) -> list:
+        """Every list the tab offers: the category ids, plus the name-fragment rows of the special category."""
+        return [c for c, _l in self.categories()] + [w.BASE_PREFIX + f for f in w.SPECIAL_BASE.get(self.game, [])]
+
+    def _new_list_ids(self) -> list:
+        """The lists that appeared after v0.10.2: the name categories, the generic-gem group, the fragment rows."""
+        return ([c for c, _p in w.NAMED_CATEGORIES.get(self.game, [])]
+                + [w.gear_cat(g) for g in w.NEW_GEAR_GROUPS if any(g == x for x, _n, _d in w.GEAR_GROUPS.get(self.game, []))]
+                + [w.BASE_PREFIX + f for f in w.SPECIAL_BASE.get(self.game, [])])
+
+    def _list_rows(self, lst: str) -> list:
+        """[(store, key)] of what the player's setting for a list is made of."""
+        if lst.startswith(w.BASE_PREFIX):
+            return [(self.class_tier, lst)]
+        if self.is_gear(lst):
+            return [(self.block_tier, k) for k in self._gear_keys(lst)]
+        return [(self.item_tier, n) for n in self._names_of(lst)]
+
+    def _list_is_all_c(self, lst: str) -> bool:
+        """True when every row of the list is C (by its own tier or the whole category's)."""
+        rows = self._list_rows(lst)
+        whole = self.cat_tier.get(lst) == "C"
+        return bool(rows) and all(st.get(k) == "C" or (whole and k not in st) for st, k in rows)
+
+    def _clear_list(self, lst: str) -> None:
+        for st, k in self._list_rows(lst):
+            st.pop(k, None)
+        self.cat_tier.pop(lst, None)
+        if not lst.startswith(w.BASE_PREFIX) and not self.is_gear(lst):
+            for n in self._names_of(lst):
+                self.item_stack.pop(n, None)
+
+    def _settle(self) -> None:
+        """Lists newer than the settings hold values the player never chose. A file that recorded its lists
+        (known_lists) simply lacks the new ones -> NeverSink's defaults. A file from v0.10.0 - v0.10.2 recorded
+        nothing, and its old-file import filled every new list with C: a new list that is C all through is taken
+        as filled by the program (a list the player emptied on purpose is told apart by known_lists, which every
+        file since then carries)."""
+        self._settle_pending = False
+        fresh = []
+        for lst in self._new_list_ids():
+            if self.known_lists is not None:
+                if lst in self.known_lists or lst not in self.lists_now():
+                    continue
+            elif not self._list_is_all_c(lst):
+                continue
+            self._clear_list(lst)
+            fresh.append(lst)
+        self.known_lists = self.lists_now()
+        if fresh:
+            labels = dict(self.categories())
+            names = [labels.get(c) or (f'ชื่อที่มีคำว่า "{c[len(w.BASE_PREFIX):]}"' if c.startswith(w.BASE_PREFIX) else c)
+                     for c in fresh]
+            self._notes.append("หมวดที่ไฟล์/ค่าที่เปิดมายังไม่มี หรือเป็น C ทั้งหมวดที่โปรแกรมเติมให้เอง ใช้ค่าเริ่มต้น"
+                               "ของ NeverSink แทน: " + ", ".join(names))
+
+    def adopt_known_lists(self, known: Optional[list]) -> None:
+        """Remember which lists the settings were written with; the check runs when the data is (or already is) loaded."""
+        self.known_lists = list(known) if isinstance(known, (list, tuple)) else None
+        self._settle_pending = True
+        if self._loaded:
+            self._settle()
+
+    def take_notes(self) -> list:
+        out, self._notes = self._notes, []
+        return out
 
     def _real(self) -> set:
         return w.known_names(self.base_text) | self.extra_names
@@ -139,6 +216,8 @@ class WlModel:
             m.gold_min = max(0, int(fg.get("whitelist_gold_min") or 0))
         except (TypeError, ValueError):
             m.gold_min = 0
+        m.known_lists = fg.get(f"wl_lists_{g}") if isinstance(fg.get(f"wl_lists_{g}"), list) else None
+        m._settle_pending = True
         m.map_on = bool(fg.get("wl_map_on"))
         try:
             m.map_tier = max(1, min(16, int(fg.get("wl_map_tier_min") or 1)))
@@ -168,6 +247,11 @@ class WlModel:
         fg[f"wl_unique_tier_{g}"] = dict(self.unique_tier)
         fg.pop(f"wl_gear_tier_{g}", None)               # folded into wl_cat_tier_<g>["gear:<id>"]
         fg[f"wl_block_tier_{g}"] = dict(self.block_tier)
+        lists = self.lists_now() if self._loaded else self.known_lists      # unknown stays unknown (not written)
+        if lists is None:
+            fg.pop(f"wl_lists_{g}", None)
+        else:
+            fg[f"wl_lists_{g}"] = lists
         fg["wl_tier_stack"] = dict(self.tier_stack)
         fg[f"wl_item_stack_{g}"] = dict(self.item_stack)
         fg["wl_tier_style"] = {k: copy.deepcopy(v) for k, v in self.tier_style.items()

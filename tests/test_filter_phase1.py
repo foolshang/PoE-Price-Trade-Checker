@@ -6,6 +6,8 @@ from unittest import mock
 
 import pytest
 
+from tests import tkutil
+
 from poe_price_trade import filter_core, filter_service, filter_style
 from poe_price_trade.config import AppConfig
 from poe_price_trade.filter_style_editor import StyleEditor, open_style_dialog
@@ -181,7 +183,7 @@ def test_neversink_update_check():
 
 @pytest.fixture
 def root():
-    r = tk.Tk()
+    r = tkutil.new_root()
     r.withdraw()
     yield r
     r.destroy()

@@ -9,6 +9,7 @@ from unittest import mock
 
 import pytest
 
+from tests import tkutil
 from poe_price_trade import filter_service, filter_whitelist as w
 from poe_price_trade.config import AppConfig
 from poe_price_trade.filter_window import FilterGenWindow
@@ -52,7 +53,7 @@ def block(text, header):
 @pytest.fixture
 def root():
     try:
-        r = tk.Tk()
+        r = tkutil.new_root()
     except tk.TclError as e:
         pytest.skip(f"no display: {e}")
     r.withdraw()

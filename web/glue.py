@@ -75,7 +75,7 @@ def generate(cfg_json: str, game: str, hub_json, base_text, base_tag, log, hashe
     try:
         res = filter_core.build_filter_text(
             cfg, game, hub_data=hub_data, base_text=base_text or None, base_tag=base_tag or None,
-            copy_sounds_fn=_copy_sounds_fn(used, hashes, log), log=log)
+            copy_sounds_fn=_copy_sounds_fn(used, hashes, log), app_version="web", log=log)
         if res is None:
             return json.dumps({"status": "none"})
         text = filter_core.compose_filter_body(res["generated_section"], res["base_text"])

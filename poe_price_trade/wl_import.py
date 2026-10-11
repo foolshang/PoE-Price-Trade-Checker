@@ -29,6 +29,7 @@ V2_HEADER = "# === PoE Checker - Whitelist (own tiers"
 _STYLE_KW = set(w._STYLE_TOKENS) | {"CustomAlertSoundOptional"}
 _TIERS = ("S", "A", "B")
 _ALL_RAR = ["Normal", "Magic", "Rare", "Unique"]
+NEW_GEAR_GROUPS = w.NEW_GEAR_GROUPS          # no file of these versions can have them: NeverSink's starting values
 
 
 def version_of(text: str) -> Optional[str]:
@@ -286,8 +287,9 @@ def read(text: str, game: str, current: WlModel, folder: Optional[Path] = None) 
     stackable = wm._stackable
     # ---- names
     new_cat = {c for c, _p in w.NAMED_CATEGORIES.get(game, [])}
-    absent_new = 0
     for n, cat in wm._names.items():
+        if cat in new_cat:
+            continue                                    # a list the old file cannot have: NeverSink's own tiers
         if w.is_tablet(game, n):
             if n in sm.tablet_own:
                 if sm.tablet_own[n] != "T":
@@ -302,17 +304,12 @@ def read(text: str, game: str, current: WlModel, folder: Optional[Path] = None) 
             tier, need = (default if default != "C" else "B") if n in sm.names_v1 else "C", 1
         else:
             tier, need = sm.shown.get(n, ("C", 1))
-            if n not in sm.shown and cat in new_cat:
-                absent_new += 1
         if tier != default:
             wm.item_tier[n] = tier
         if tier != "C" and n in stackable:
             dflt = (wm._stack_defaults.get(n) or (1,))[0]
             if need != dflt:
                 wm.item_stack[n] = need
-    if absent_new:
-        notes.append(f"หมวดที่ไฟล์เก่ายังไม่มี (Runegraft / Vial / Corpse / Wombgift / Relic) {absent_new} ชื่อ "
-                     f"ถูกอ่านเป็น C (ซ่อน) ตามไฟล์เดิม — ตั้งเป็น tier อื่นได้ในแท็บ")
     # ---- uniques
     if not sm.unique_bases and not sm.unique_all:
         wm.cat_tier[w.UNIQUE_CATEGORY] = "C"
@@ -336,6 +333,8 @@ def read(text: str, game: str, current: WlModel, folder: Optional[Path] = None) 
     per_group: dict = {}
     missing = 0
     for key, gid, ty, _tag, conds in wm._gear_items:
+        if gid in NEW_GEAR_GROUPS:
+            continue
         ck = _cond_key([tuple(c.strip().split(None, 1)) if " " in c.strip() else (c.strip(), "") for c in conds])
         q = queues.get((ty, ck))
         if q and not v1:
@@ -353,17 +352,19 @@ def read(text: str, game: str, current: WlModel, folder: Optional[Path] = None) 
             if t != top:
                 wm.block_tier[key] = t
     if missing and not v1:
-        notes.append(f"อุปกรณ์/Gem {missing} block ที่ไฟล์เก่าไม่มี (NeverSink รุ่นใหม่กว่า หรือหมวด Gem ใหม่) "
+        notes.append(f"อุปกรณ์ {missing} block ที่ไฟล์เก่าไม่มี (NeverSink รุ่นใหม่กว่าไฟล์) "
                      f"ตั้งเป็น C (ซ่อน) ตามไฟล์เดิม")
     # ---- special classes / fragments
     for c in w.SPECIAL_CLASSES.get(game, []):
         tier = sm.classes.get(c, "C")
         if tier != "B":
             wm.class_tier[c] = tier
-    for f in w.SPECIAL_BASE.get(game, []):
-        tier = sm.fragments.get(f, "C")
-        if tier != "B":
-            wm.class_tier[w.BASE_PREFIX + f] = tier
+    # (the name-fragment rows are new too: they keep B)
+    fresh = [c for c, _p in w.NAMED_CATEGORIES.get(game, [])]
+    fresh += [name for gid, name, _d in w.GEAR_GROUPS.get(game, []) if gid in NEW_GEAR_GROUPS]
+    fresh += [f'ชื่อที่มีคำว่า "{f}"' for f in w.SPECIAL_BASE.get(game, [])]
+    if fresh:
+        notes.append("หมวดที่ไฟล์รุ่นนั้นยังไม่มี ใช้ค่าเริ่มต้นของ NeverSink (ไม่ใช่ C): " + ", ".join(fresh))
     # ---- gold / map / gems / typed names
     wm.gold = bool(sm.gold_on)
     if sm.gold_on:

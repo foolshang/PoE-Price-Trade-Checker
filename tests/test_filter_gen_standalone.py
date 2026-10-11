@@ -8,6 +8,7 @@ from unittest import mock
 
 import pytest
 
+from tests import tkutil
 from poe_price_trade import __version__
 from poe_price_trade.config import AppConfig
 from poe_price_trade.filter_window import FilterGenWindow
@@ -16,7 +17,7 @@ from poe_price_trade.filter_window import FilterGenWindow
 @pytest.fixture
 def root():
     try:
-        r = tk.Tk()
+        r = tkutil.new_root()
     except tk.TclError as e:
         pytest.skip(f"no display: {e}")
     r.withdraw()

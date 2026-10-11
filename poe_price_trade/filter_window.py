@@ -339,7 +339,8 @@ class FilterGenWindow:
             return False
         model = WlModel.from_config(data["cfg"], self._game_version)
         self._adopt(Path(path), model)
-        self.log(f"✓ เปิด {Path(path).name} แล้ว — แก้แล้วกด Generate Now เพื่อเขียนทับไฟล์นี้", "ok")
+        made = f" (ค่าฝังจากรุ่น {data['app']})" if data.get("app") else " (ค่าฝังไม่ได้บันทึกรุ่น)"
+        self.log(f"✓ เปิด {Path(path).name} แล้ว{made} — แก้แล้วกด Generate Now เพื่อเขียนทับไฟล์นี้", "ok")
         return True
 
     def _open_old_filter(self, path: Path, text: str) -> bool:
@@ -384,11 +385,16 @@ class FilterGenWindow:
         else:
             self.log(f'⚠ เสียง tier {label} ในไฟล์คือ "{fname}" แต่ไม่พบไฟล์นี้ข้างๆ filter — ไม่ได้ตั้งเสียง', "warn")
 
+    def _log_model_notes(self) -> None:
+        for note in self._model.take_notes():
+            self.log("⚠ " + note, "warn")
+
     def _adopt(self, path: Path, model: WlModel) -> None:
         """Make `model` the tab's settings, the file's name the filter name, and Generate write back to this file."""
         self._model = model
         if self._wl_data is not None:
             self._model.set_data(*self._wl_data)
+            self._log_model_notes()
         old = self._panel
         if old is not None:
             old.destroy()
@@ -404,6 +410,7 @@ class FilterGenWindow:
         """Give the whitelist tab its data (also used by tests / callers that already have it)."""
         self._wl_data = (hub, base_text, extra_names)
         self._model.set_data(hub, base_text, extra_names)
+        self._log_model_notes()
         if self._panel is not None:
             self._panel.data_loaded()
         self.log("✓ โหลดรายการ whitelist แล้ว" if base_text else

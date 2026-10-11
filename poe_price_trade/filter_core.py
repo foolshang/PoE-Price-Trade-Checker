@@ -258,6 +258,7 @@ def build_filter_text(fg_cfg: dict, game: str, *,
                       base_tag: Optional[str] = None,
                       copy_sounds_fn: Optional[Callable[[dict], dict]] = None,
                       extra_names: Optional[set] = None,
+                      app_version: str = "",
                       log: Callable[[str, str], None] = _noop) -> Optional[dict]:
     """Returns:
       whitelist : {"mode": "whitelist", "generated_section", "base_text": None, "count"}
@@ -271,7 +272,7 @@ def build_filter_text(fg_cfg: dict, game: str, *,
     (filter_gen.apply_ladder_sounds). No base filter -> nothing to write."""
     gv = game
     if fg_cfg.get("whitelist_enabled") and fg_cfg.get("wl_v2"):
-        return _build_whitelist_v2(fg_cfg, gv, hub_data, base_text, copy_sounds_fn, extra_names, log)
+        return _build_whitelist_v2(fg_cfg, gv, hub_data, base_text, copy_sounds_fn, extra_names, log, app_version)
     if fg_cfg.get("whitelist_enabled"):
         return _build_whitelist(fg_cfg, gv, hub_data, log, copy_sounds_fn)
     return _build_tier(fg_cfg, gv, base_text, base_tag, copy_sounds_fn, log)
@@ -338,9 +339,11 @@ def _build_whitelist(fg_cfg: dict, gv: str, hub_data: Optional[dict], log, copy_
     return {"mode": "whitelist", "generated_section": section, "base_text": None, "count": count}
 
 
-def _build_whitelist_v2(fg_cfg, gv, hub_data, base_text, copy_sounds_fn, extra_names, log) -> Optional[dict]:
+def _build_whitelist_v2(fg_cfg, gv, hub_data, base_text, copy_sounds_fn, extra_names, log,
+                        app_version: str = "") -> Optional[dict]:
     """The new whitelist: our own tiers, starting tiers from NeverSink strictness 2 (filter_whitelist).
-    Needs the base filter for the starting tiers; without it nothing is written."""
+    Needs the base filter for the starting tiers; without it nothing is written. `app_version` (the caller's
+    program version; filter_core stays free of the package's own modules) is recorded in the embedded settings."""
     if not base_text:
         log("⚠ ไม่มี NeverSink base filter — whitelist ไม่มี tier เริ่มต้น ไม่ generate", "warn")
         return None
@@ -357,7 +360,7 @@ def _build_whitelist_v2(fg_cfg, gv, hub_data, base_text, copy_sounds_fn, extra_n
         more = f" … +{len(res['skipped']) - 8}" if len(res["skipped"]) > 8 else ""
         log(f"⚠ ข้าม {len(res['skipped'])} ชื่อที่ไม่ยืนยันว่าเป็นชื่อจริงของเกม (ไม่เขียนลงไฟล์): {shown}{more}", "warn")
     # the settings go into the file too (comment lines), so the Whitelist tab can open and edit it again
-    return {"mode": "whitelist", "generated_section": wl_embed.embed(res["text"], fg_cfg, gv),
+    return {"mode": "whitelist", "generated_section": wl_embed.embed(res["text"], fg_cfg, gv, app_version),
             "base_text": None, "count": res["count"], "report": res["report"], "skipped": res["skipped"]}
 
 

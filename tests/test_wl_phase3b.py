@@ -10,6 +10,7 @@ from unittest import mock
 
 import pytest
 
+from tests import tkutil
 from poe_price_trade import filter_core, filter_service, filter_style, filter_whitelist as w, wl_embed
 from poe_price_trade.config import AppConfig
 from poe_price_trade.filter_style_editor import StyleEditor
@@ -46,7 +47,7 @@ def block(text, header):
 @pytest.fixture
 def root():
     try:
-        r = tk.Tk()
+        r = tkutil.new_root()
     except tk.TclError as e:
         pytest.skip(f"no display: {e}")
     r.withdraw()

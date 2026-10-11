@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from typing import Callable, Optional
 
-from . import debug, filter_core, filter_gen, filter_output, hub_client, neversink_source, trade_names
+from . import __version__, debug, filter_core, filter_gen, filter_output, hub_client, neversink_source, trade_names
 
 log_ = logging.getLogger(__name__)
 
@@ -135,7 +135,7 @@ def generate_filter(config, game_version: str, league_path: str,
             extra_names=trade_names.get_names(gv, cache_dir) if plan["neversink"] else None,
             copy_sounds_fn=lambda sound_map: filter_output.copy_sounds(
                 out_dir, sound_map, decide=ask_sound, notify=lambda text: log(text, "info")),
-            log=log)
+            app_version=__version__, log=log)
         if res is None:
             return None
         try:
