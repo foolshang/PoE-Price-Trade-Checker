@@ -58,6 +58,15 @@ jobs:
             exit 1
           fi
 
+      # a Windows checkout may turn LF into CRLF (autocrlf): .gitattributes keeps release/ LF, this proves it
+      - name: Check release files use LF line endings
+        shell: bash
+        run: |
+          if grep -q $'' release/update_public_readme.sh release/README_public.md; then
+            echo "::error::release/ files have CRLF line endings - check .gitattributes"
+            exit 1
+          fi
+
       - name: Build standalone exe
         run: pyinstaller PoE-Filter-Generator.spec --noconfirm
 

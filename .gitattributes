@@ -1,0 +1,4 @@
+# the files the release workflow ships / runs must stay LF on the Windows runner too (a CR breaks bash and
+# makes the public README differ byte for byte)
+release/* text eol=lf
+*.sh text eol=lf
