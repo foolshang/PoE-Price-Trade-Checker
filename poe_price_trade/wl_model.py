@@ -5,7 +5,7 @@ generator will write, never a second opinion.
 Only changes are stored (an item / category / block / class the player did not touch keeps NeverSink's
 starting tier). Config keys (all per game where it matters), read by filter_whitelist:
     wl_item_tier_<g> {name: S|A|B|C}      wl_cat_tier_<g> {category: S|A|B|C}   (Unique / Tablet / "gear:<id>" too)
-    wl_block_tier_<g> {gear block key: tier}   wl_class_tier_<g> {class: tier}   wl_unique_tier_<g> {name: tier}
+    wl_block_tier_<g> {gear block key: tier}   wl_rarity_tier_<g> {jewel/flask category: {rarity: tier}}   wl_class_tier_<g> {class: tier}   wl_unique_tier_<g> {name: tier}
     wl_tier_stack {S|A|B: N}              wl_item_stack_<g> {name: N}           (stack-size minimums)
     wl_tier_style {S|A|B|G|Tablet|Map: style}
     whitelist_gold / whitelist_gold_min, wl_map_on / wl_map_tier_min / wl_map_rarity_min,
@@ -61,6 +61,7 @@ class WlModel:
         self.class_tier: dict = {}
         self.unique_tier: dict = {}
         self.block_tier: dict = {}
+        self.rarity_tier: dict = {}          # {category id: {Normal|Magic|Rare: S|A|B|C}} (absent = by NeverSink)
         self.tier_stack: dict = {}
         self.item_stack: dict = {}
         self.tier_style: dict = {}
@@ -199,6 +200,10 @@ class WlModel:
         m.class_tier = dict(fg.get(f"wl_class_tier_{g}") or {})
         m.unique_tier = dict(fg.get(f"wl_unique_tier_{g}") or {})
         m.block_tier = dict(fg.get(f"wl_block_tier_{g}") or {})
+        m.rarity_tier = {c: {r: t for r, t in (v or {}).items() if r in w.RARITY_CHOICES and t in ALL_CHOICES}
+                         for c, v in (fg.get(f"wl_rarity_tier_{g}") or {}).items()
+                         if c in w.RARITY_CATEGORIES.get(g, {}) and isinstance(v, dict)}
+        m.rarity_tier = {c: v for c, v in m.rarity_tier.items() if v}
         m.tier_stack = {k: n for k, n in ((k, _count(v)) for k, v in (fg.get("wl_tier_stack") or {}).items())
                         if k in TIER_CHOICES and n > 1}
         m.item_stack = {str(k): _count(v) for k, v in (fg.get(f"wl_item_stack_{g}") or {}).items()}
@@ -247,6 +252,7 @@ class WlModel:
         fg[f"wl_unique_tier_{g}"] = dict(self.unique_tier)
         fg.pop(f"wl_gear_tier_{g}", None)               # folded into wl_cat_tier_<g>["gear:<id>"]
         fg[f"wl_block_tier_{g}"] = dict(self.block_tier)
+        fg[f"wl_rarity_tier_{g}"] = {c: dict(v) for c, v in self.rarity_tier.items() if v}
         lists = self.lists_now() if self._loaded else self.known_lists      # unknown stays unknown (not written)
         if lists is None:
             fg.pop(f"wl_lists_{g}", None)
@@ -388,6 +394,25 @@ class WlModel:
         for k in keys:
             self.item_stack[k] = max(1, int(n))
 
+    def has_rarity(self, cat: str) -> bool:
+        """The category can also be tiered by rarity (jewels, flasks / charms)."""
+        return cat in w.RARITY_CATEGORIES.get(self.game, {})
+
+    def get_rarity(self, cat: str, rarity: str) -> Optional[str]:
+        """The player's tier for this rarity of the category, None = by NeverSink's blocks."""
+        t = (self.rarity_tier.get(cat) or {}).get(rarity)
+        return t if t in ALL_CHOICES else None
+
+    def set_rarity(self, cat: str, rarity: str, tier: Optional[str]) -> None:
+        if not self.has_rarity(cat) or rarity not in w.RARITY_CHOICES:
+            return
+        if tier in ALL_CHOICES:
+            self.rarity_tier.setdefault(cat, {})[rarity] = tier
+        else:
+            self.rarity_tier.get(cat, {}).pop(rarity, None)
+            if not self.rarity_tier.get(cat):
+                self.rarity_tier.pop(cat, None)
+
     def set_tier_stack(self, tier: str, n: int) -> None:
         if tier in TIER_CHOICES:
             if int(n) > 1:
@@ -409,6 +434,7 @@ class WlModel:
             return
         if self.is_gear(cat):
             self.cat_tier[cat] = tier
+            self.rarity_tier.pop(cat, None)              # a rarity tier would win over the whole-category tier
             for k in self._gear_keys(cat):
                 self.block_tier.pop(k, None)
         elif cat == UNIQUE:
@@ -429,6 +455,7 @@ class WlModel:
         """Back to NeverSink's values for the whole category."""
         if self.is_gear(cat):
             self.cat_tier.pop(cat, None)
+            self.rarity_tier.pop(cat, None)
             for k in self._gear_keys(cat):
                 self.block_tier.pop(k, None)
         elif cat == UNIQUE:
@@ -449,7 +476,7 @@ class WlModel:
     def changed_count(self, cat: str) -> int:
         """How many rows of the category differ from the starting values (list header hint)."""
         n = sum(1 for r in self.rows(cat) if r.user_set)
-        return n + (1 if self.category_tier(cat) else 0)
+        return n + (1 if self.category_tier(cat) else 0) + len(self.rarity_tier.get(cat) or {})
 
     # ------------------------------------------------------------------ styles
 

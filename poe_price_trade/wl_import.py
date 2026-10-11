@@ -283,6 +283,7 @@ def read(text: str, game: str, current: WlModel, folder: Optional[Path] = None) 
     wm.set_data(current.hub, current.base_text, current.extra_names)
     wm.item_tier, wm.cat_tier, wm.class_tier, wm.unique_tier, wm.block_tier = {}, {}, {}, {}, {}
     wm.item_stack, wm.tier_stack = {}, {}
+    wm.rarity_tier = {}                                     # no old file has them
     v1 = sm.version == "v1"
     stackable = wm._stackable
     # ---- names

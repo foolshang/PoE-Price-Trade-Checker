@@ -5,6 +5,40 @@
 
 ---
 
+## 2026-10-12 (night, 5) — Release v0.11.0 (desktop)
+
+Winai tested v0.10.8 in game (rarity per category for jewels / flasks / charms, always-written Q blocks) and
+confirmed the public README (kept in `wl-sample/README.draft.reviewed.md`, not committed, pushed to the public repo
+only with the release). Version 0.11.0 = phase 3 / 3b / A3 whitelist tab + open old filters + rarity + Q fix.
+Not tagged: a tag publishes the release through Actions and waits for Winai.
+
+## 2026-10-12 (night, 4) — Whitelist always writes the quest (Q) blocks (v0.10.8, not committed yet)
+
+- **Bug:** with no Q style set, the whitelist wrote no quest block at all (`build_quest_blocks` returned "" for an
+  empty style), so every quest class relied on the game never hiding them in front of the final `Hide`.
+- **Fix:** `_build_whitelist_v2` always writes the Q blocks (all quest classes of both games, plus poe2's Bronze /
+  Silver / Gold Key): the player's Q style when set, else NeverSink's own look of its `$tier->questitems` block
+  (`filter_whitelist.neversink_quest_lines`; an emptied style counts as not set). The NeverSink tab is unchanged
+  (its file already carries NeverSink's quest blocks). Tests: `tests/test_wl_quest.py` (first match: Quest Items,
+  Cursed Ducat, Pantheon Souls, Labyrinth Items / Trinkets, Instance Local Items, the three keys all go to the Q
+  block, which is among the first two of the file).
+
+## 2026-10-12 (night, 3) — Rarity per category for jewels / flasks / charms (v0.10.6/0.10.7, not committed yet)
+
+- Categories `gear:jewel` and `gear:flask` (poe1 Jewels + Abyss Jewels / Life, Mana, Hybrid, Utility Flasks +
+  Tinctures; poe2 Jewels / Life, Mana Flasks + Charms - all classes checked against NeverSink s2 of both games,
+  `filter_whitelist.RARITY_CATEGORIES`) got a "ตั้งตาม rarity" box: Normal / Magic / Rare each by NeverSink / S / A / B / C.
+  Config `wl_rarity_tier_<game>` {category: {rarity: tier}} (also in the embedded settings; an old file has none).
+- Written as `Show|Hide` + `Class == <classes>` + `Rarity X` at the start of the gear section, ahead of every gear
+  block: rarity > a block set alone > the whole category > NeverSink. "ทั้งหมวด → tier" / reset clear the
+  category's rarity settings (they would win otherwise). No Unique row: uniques keep going by the Unique
+  category (the rarity blocks never list Unique, and the unique-by-base blocks come earlier).
+- Because the rule is by class it also beats NeverSink blocks of OTHER gear groups for the same classes (poe1
+  `rare_mod` jewel blocks, `story` flask blocks, poe2 salvage / story charms): "Rare jewel = C" hides those too.
+- Winai kept the class-wide rule; the box carries the warning "ตั้ง C = ซ่อนทุกชิ้นของ rarity นั้น รวมตัวที่ mod ดีในหมวดอื่นด้วย" (v0.10.7).
+- Panel: the box shows only for those categories (`winfo_manager`, not `winfo_ismapped`: a hidden tab is never mapped).
+- Tests `tests/test_wl_rarity.py` (first match with `tools/compare_neversink` evaluator, lint, embed / open / saved config).
+
 ## 2026-10-12 (night, 2) — The program version is recorded in the embedded settings (v0.10.5)
 
 - The `app` field of the embedded settings was always empty (`filter_core` is kept free of the package's own

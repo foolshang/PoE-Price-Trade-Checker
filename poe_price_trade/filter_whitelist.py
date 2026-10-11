@@ -100,6 +100,17 @@ GEAR_GROUPS = {
         ("salvage", "Salvage (Quality/Sockets)", "B"), ("alwaysshow", "ของที่เกมบังคับโชว์ (AlwaysShow)", "B"),
     ],
 }
+# Categories the player can also tier by rarity (Normal / Magic / Rare): category id -> the item classes it is
+# about (checked against NeverSink s2 of both games: every class below is one its gear blocks use). A rarity
+# set to a tier is written as `Class == <classes>` + `Rarity X` ahead of the category's own blocks (it wins over
+# one block, the whole category and NeverSink); Unique is not offered - uniques go by the Unique category.
+# Key in the config: wl_rarity_tier_<game> {category id: {rarity: S|A|B|C}}.
+RARITY_CHOICES = ("Normal", "Magic", "Rare")
+RARITY_CATEGORIES = {
+    "poe1": {"gear:jewel": ["Jewels", "Abyss Jewels"],
+             "gear:flask": ["Life Flasks", "Mana Flasks", "Hybrid Flasks", "Utility Flasks", "Tinctures"]},
+    "poe2": {"gear:jewel": ["Jewels"], "gear:flask": ["Life Flasks", "Mana Flasks", "Charms"]},
+}
 # `$type` tags that are not equipment (other categories / classes own them)
 _GEAR_NOT = ("exoticmap", "exotic->wombgifts", "currency")      # currency->leveling* is currency, not gear
 _GEAR_RULES = {
@@ -275,6 +286,19 @@ def gear_block_tiers(game: str, cfg: dict, items: list) -> dict:
     group = gear_tiers(game, cfg)
     own = cfg.get(f"wl_block_tier_{game}") or {}
     return {key: _valid(own.get(key)) or group[gid] for key, gid, _ty, _tag, _c in items}
+
+
+def neversink_quest_lines(base_text: str) -> list:
+    """The style lines of NeverSink's own quest-item block (`$tier->questitems`), what the Q blocks of a whitelist
+    use when the player set no Q style; the green quest look when the base filter has no such block."""
+    lines, blocks = scan(base_text or "")
+    for b in blocks:
+        if b.block_type == "Show" and filter_gen._header_tags(lines, b)[1] == "questitems":
+            got = ["    " + l.strip() for l in lines[b.start + 1:b.end]
+                   if l.strip() and l.split(None, 1)[0] in _STYLE_TOKENS]
+            if got:
+                return got
+    return filter_style.style_lines(filter_style.default_quest_style())
 
 
 def tier_of_step(tag: Optional[str]) -> Optional[str]:
@@ -890,6 +914,19 @@ def build_whitelist_filter(game: str, cfg: dict, base_text: str, hub_data: Optio
 
     gear_t = gear_tiers(game, cfg)
     gear_names = {gid: name for gid, name, _d in GEAR_GROUPS.get(game, [])}
+    rarity_cfg = cfg.get(f"wl_rarity_tier_{game}") or {}
+    for cat, classes in RARITY_CATEGORIES.get(game, {}).items():       # rarity first: it beats every block of the category
+        for rar in RARITY_CHOICES:
+            t = _valid((rarity_cfg.get(cat) or {}).get(rar))
+            if not t:
+                continue
+            title = f"# rarity: {gear_names.get(cat[len(GEAR_PREFIX):], cat)} - {rar} - tier {t}"
+            if t == "C":
+                out += [title, "Hide", f"    Class == {_quote(classes)}", f"    Rarity {rar}", ""]
+            else:
+                out += [title, "Show", f"    Class == {_quote(classes)}", f"    Rarity {rar}"] + style[t] + [""]
+                count += 1
+
     gear_items = gear_block_items(game, base_text)
     block_t = gear_block_tiers(game, cfg, gear_items)
     for key, gid, ty, _tag, conds in gear_items:

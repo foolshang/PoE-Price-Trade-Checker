@@ -5,12 +5,14 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Callable, Optional
 
-from . import filter_style, ui_theme
+from . import filter_style, filter_whitelist as w, ui_theme
 from .filter_style_editor import open_style_dialog
 from .wl_model import ALL_CHOICES, RARITIES, TIER_CHOICES, WlModel, tier_label
 
 _BG, _FG, _ACCENT = ui_theme.BG, ui_theme.FG, ui_theme.ACCENT
 _INPUT_BG, _BUTTON_BG = ui_theme.INPUT_BG, ui_theme.BUTTON_BG
+RARITY_AUTO = "ตาม NeverSink"          # the rarity box: no setting
+RARITY_WARNING = "ตั้ง C = ซ่อนทุกชิ้นของ rarity นั้น รวมตัวที่ mod ดีในหมวดอื่นด้วย"
 _FONT = ("Segoe UI", 9)
 _SMALL = ("Segoe UI", 8)
 # colour of the tier suffix in the list (readable on the dark list background)
@@ -116,7 +118,23 @@ class WhitelistPanel(tk.Frame):
         self._cat_info = self._label(f, "", fg="#9a9a9a", font=_SMALL, anchor="w")
         self._cat_info.pack(fill=tk.X, pady=(2, 0))
 
+        # jewels / flasks / charms can also be tiered by rarity (the box shows only for those categories)
+        self._rar_box = tk.Frame(f, bg=_BG)
+        self._label(self._rar_box, "ตั้งตาม rarity — ชนะ block รายตัวด้านล่าง (Unique ตั้งที่หมวด Unique)",
+                    fg="#c9b37a", font=_SMALL, anchor="w").pack(fill=tk.X)
+        rar_row = tk.Frame(self._rar_box, bg=_BG)
+        rar_row.pack(fill=tk.X)
+        self.v_rar = {}
+        for rar in w.RARITY_CHOICES:
+            self._label(rar_row, rar).pack(side=tk.LEFT, padx=(0, 2))
+            self.v_rar[rar] = tk.StringVar(value=RARITY_AUTO)
+            c = self._combo(rar_row, self.v_rar[rar], [RARITY_AUTO] + list(ALL_CHOICES), width=14)
+            c.pack(side=tk.LEFT, padx=(0, 8))
+            c.bind("<<ComboboxSelected>>", lambda _e, r=rar: self._rarity_picked(r))
+        self._rar_warn = self._label(self._rar_box, RARITY_WARNING, fg="#d9a441", font=_SMALL, anchor="w")
+        self._rar_warn.pack(fill=tk.X)
         wrap = tk.Frame(f, bg=_BG)
+        self._wrap = wrap
         wrap.pack(fill=tk.BOTH, expand=True)
         style = ttk.Style(self)
         style.configure("Wl.Treeview", background=_INPUT_BG, fieldbackground=_INPUT_BG, foreground=_FG,
@@ -452,6 +470,7 @@ class WhitelistPanel(tk.Frame):
         if not self.model.loaded:
             self._cat_info.configure(text="กำลังโหลดรายการ… (hub + NeverSink)")
             return
+        self._refresh_rarity(cat)
         rows = self.model.rows(cat, self.query.get())
         for r in rows:
             on = r.tier != "C"
@@ -469,6 +488,22 @@ class WhitelistPanel(tk.Frame):
         self._cat_info.configure(text=info)
         notes = sorted({r.note for r in rows if r.note})
         self._warn.configure(text="\n".join(notes))
+
+    def _refresh_rarity(self, cat: str) -> None:
+        if self.model.has_rarity(cat):
+            for rar, var in self.v_rar.items():
+                var.set(self.model.get_rarity(cat, rar) or RARITY_AUTO)
+            if not self._rar_box.winfo_manager():
+                self._rar_box.pack(fill=tk.X, pady=(2, 2), before=self._wrap)
+        else:
+            self._rar_box.pack_forget()
+
+    def _rarity_picked(self, rar: str) -> None:
+        cat = self.current_category()
+        val = self.v_rar[rar].get()
+        self.model.set_rarity(cat, rar, val if val in ALL_CHOICES else None)
+        self.refresh_list()
+        self._changed()
 
     def refresh_sounds(self) -> None:
         s = self._get_sounds() or {}

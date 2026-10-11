@@ -211,9 +211,10 @@ QUEST_CLASSES = {
 QUEST_BASETYPES = {"poe1": [], "poe2": ["Bronze Key", "Gold Key", "Silver Key"]}
 
 
-def build_quest_blocks(game: str, style, sound_file: Optional[str] = None) -> str:
-    """The Q blocks ("" when the style writes nothing, i.e. NeverSink's own quest blocks stay)."""
-    lines = filter_style.style_lines(style, sound_file)
+def build_quest_blocks(game: str, style, sound_file: Optional[str] = None, default_lines: Optional[list] = None) -> str:
+    """The Q blocks ("" when the style writes nothing and there are no `default_lines` to fall back on, i.e.
+    NeverSink's own quest blocks stay). `default_lines` = style lines used when the player's style is empty."""
+    lines = filter_style.style_lines(style, sound_file) or list(default_lines or [])
     if not lines:
         return ""
     quote = lambda names: " ".join(f'"{n}"' for n in names)
@@ -350,7 +351,9 @@ def _build_whitelist_v2(fg_cfg, gv, hub_data, base_text, copy_sounds_fn, extra_n
     sound_map = filter_whitelist.sound_requests(fg_cfg, gv)
     sound_map["Q"] = filter_style.uses_sound_file(fg_cfg.get("style_q")) if fg_cfg.get("style_q") else None
     copied = copy_sounds_fn(sound_map) if copy_sounds_fn else {}
-    quest = build_quest_blocks(gv, fg_cfg.get("style_q"), copied.get("Q")) if fg_cfg.get("style_q") else ""
+    # the whitelist ends in `Hide`, so the quest blocks are always written: the player's Q style, else NeverSink's own look
+    quest = build_quest_blocks(gv, fg_cfg.get("style_q"), copied.get("Q"),
+                               default_lines=filter_whitelist.neversink_quest_lines(base_text))
     res = filter_whitelist.build_whitelist_filter(gv, fg_cfg, base_text, hub_data, quest, copied, extra_names)
     for base, tiers in res["unique_conflicts"]:
         log(f"⚠ unique หลายตัวบน base {base} มี tier ไม่เท่ากัน — ใช้ tier สูงสุด: "
