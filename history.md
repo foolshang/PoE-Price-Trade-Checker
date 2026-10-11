@@ -5,6 +5,17 @@
 
 ---
 
+## 2026-10-12 (night, 6) — CI: public README ships with real releases; CI builds like the local machine
+
+- `release/README_public.md` = the README of foolshang/PoE-Filter-Generator (the version Winai confirmed);
+  `release/update_public_readme.sh` writes it to the public repo after a release (no commit when equal, skipped for
+  prerelease tags such as v0.11.0-test). Tested: unchanged / changed (on a temporary branch of the public repo) /
+  unchanged again, and a prerelease tag run (README sha untouched, release deleted again with its tag).
+- `release.yml`: Python 3.12 (the exe built on CI with 3.13 bundled python313.dll, 12.23 MB; with 3.12 it bundles
+  python312.dll like the local build, 12.18 MB vs 11.98 MB local) and PyInstaller pinned to 6.21.0 (the local one).
+  A step fails the build if `release/` files arrive with CRLF (`.gitattributes` keeps them LF on the Windows runner).
+- A tag of the test must match `__version__` (suffix ignored): `v0.11.0-test`, not `v0.11.1-test`.
+
 ## 2026-10-12 (night, 5) — Release v0.11.0 (desktop)
 
 Winai tested v0.10.8 in game (rarity per category for jewels / flasks / charms, always-written Q blocks) and
