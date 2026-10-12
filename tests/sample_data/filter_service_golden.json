@@ -12,10 +12,13 @@
     "copy_sounds",
     "game",
     {
-     "A": false,
-     "B": false,
-     "Q": false,
-     "S": false
+     "1": false,
+     "2": false,
+     "3": false,
+     "4": false,
+     "5": false,
+     "6": false,
+     "Q": false
     }
    ],
    [
@@ -144,10 +147,13 @@
     "copy_sounds",
     "game",
     {
-     "A": false,
-     "B": false,
-     "Q": false,
-     "S": false
+     "1": false,
+     "2": false,
+     "3": false,
+     "4": false,
+     "5": false,
+     "6": false,
+     "Q": false
     }
    ],
    [
@@ -202,25 +208,28 @@
     "copy_sounds",
     "game",
     {
-     "A": true,
-     "B": true,
-     "Q": false,
-     "S": true
+     "1": true,
+     "2": true,
+     "3": true,
+     "4": false,
+     "5": false,
+     "6": false,
+     "Q": false
     }
    ],
    [
     "write_filter",
     "game",
     "497d2c0b8c10",
-    "81e5ffa02b4d"
+    "41a3eae7de45"
    ]
   ],
   "events": [
    "filter generated gv=poe1 league= base_tag=tagX path=<T>/game/poe-checker.filter"
   ],
   "file": null,
-  "file_len": 499044,
-  "file_sha256": "e953e7850991a4ae4268361f4e4b2e7a018460c2776219ec93cf39009c397173",
+  "file_len": 504044,
+  "file_sha256": "b15d360d35142c2e478332efd153ff4bb95b003fd43c9acbfa27dc73b9228c3c",
   "logs": [
    [
     "info",
@@ -232,7 +241,7 @@
    ],
    [
     "ok",
-    "✓ ใส่เสียง custom ใน 93 block ตาม tier ของ NeverSink (S/A/B = เสียง 6/1/2 ของ NeverSink)"
+    "✓ ใส่เสียง custom ใน 218 block ตามเลขเสียงของ NeverSink (เสียง 1: 30, เสียง 2: 60, เสียง 3: 128)"
    ],
    [
     "ok",
@@ -266,10 +275,13 @@
     "copy_sounds",
     "game",
     {
-     "A": false,
-     "B": false,
-     "Q": false,
-     "S": false
+     "1": false,
+     "2": false,
+     "3": false,
+     "4": false,
+     "5": false,
+     "6": false,
+     "Q": false
     }
    ],
    [
@@ -324,10 +336,13 @@
     "copy_sounds",
     "game",
     {
-     "A": false,
-     "B": false,
-     "Q": false,
-     "S": false
+     "1": false,
+     "2": false,
+     "3": false,
+     "4": false,
+     "5": false,
+     "6": false,
+     "Q": false
     }
    ],
    [
@@ -382,10 +397,13 @@
     "copy_sounds",
     "game",
     {
-     "A": false,
-     "B": false,
-     "Q": false,
-     "S": false
+     "1": false,
+     "2": false,
+     "3": false,
+     "4": false,
+     "5": false,
+     "6": false,
+     "Q": false
     }
    ],
    [
@@ -440,25 +458,28 @@
     "copy_sounds",
     "game",
     {
-     "A": true,
-     "B": false,
-     "Q": false,
-     "S": true
+     "1": true,
+     "2": true,
+     "3": false,
+     "4": false,
+     "5": false,
+     "6": false,
+     "Q": false
     }
    ],
    [
     "write_filter",
     "game",
     "497d2c0b8c10",
-    "cdaad257c537"
+    "97a02c8464b5"
    ]
   ],
   "events": [
    "filter generated gv=poe2 league= base_tag=tagX path=<T>/game/poe-checker.filter"
   ],
   "file": null,
-  "file_len": 253390,
-  "file_sha256": "1f627f211034f677a9d6a843e09182f345cef4280ffb5601f2cd042f726dce8d",
+  "file_len": 254110,
+  "file_sha256": "cb90f66d4695db215e21f724670ecf983a0a06289e1cc355968fd3c1223ef4ec",
   "logs": [
    [
     "info",
@@ -470,7 +491,7 @@
    ],
    [
     "ok",
-    "✓ ใส่เสียง custom ใน 18 block ตาม tier ของ NeverSink (S/A/B = เสียง 6/1/2 ของ NeverSink)"
+    "✓ ใส่เสียง custom ใน 36 block ตามเลขเสียงของ NeverSink (เสียง 1: 14, เสียง 2: 22)"
    ],
    [
     "ok",
@@ -504,10 +525,13 @@
     "copy_sounds",
     "game",
     {
-     "A": false,
-     "B": false,
-     "Q": false,
-     "S": false
+     "1": false,
+     "2": false,
+     "3": false,
+     "4": false,
+     "5": false,
+     "6": false,
+     "Q": false
     }
    ],
    [
@@ -551,10 +575,13 @@
     "copy_sounds",
     "game",
     {
-     "A": false,
-     "B": false,
-     "Q": false,
-     "S": false
+     "1": false,
+     "2": false,
+     "3": false,
+     "4": false,
+     "5": false,
+     "6": false,
+     "Q": false
     }
    ],
    [

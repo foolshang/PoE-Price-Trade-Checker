@@ -1,22 +1,28 @@
-"""Whitelist tab body (Tk): pick a tier first, then style, category and items. All state lives in WlModel;
-this file only draws it and forwards clicks. Widgets use the dark theme (ui_theme) - no white boxes."""
+"""Whitelist tab body (Tk): pick a tier first, then its style (inline - no pop-up), then the sub tabs: items /
+categories, Gold, Map / Waystone, Tablet (poe2), Gem, typed names. Gold / Map / Tablet / Gem each show their own style
+editor (colours, opacity, size, icon, beam, sound) in their sub tab. All state lives in WlModel; this file only draws it
+and forwards clicks. Widgets use the dark theme (ui_theme) - no white boxes."""
 from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 from typing import Callable, Optional
 
 from . import filter_style, filter_whitelist as w, ui_theme
-from .filter_style_editor import open_style_dialog
-from .wl_model import ALL_CHOICES, RARITIES, TIER_CHOICES, WlModel, tier_label
+from .filter_style_editor import StyleEditor
+from .wl_model import ALL_CHOICES, EQUIP_CATEGORY, FLASK_CATEGORY, RARITIES, TIER_CHOICES, WlModel, tier_label
 
 _BG, _FG, _ACCENT = ui_theme.BG, ui_theme.FG, ui_theme.ACCENT
 _INPUT_BG, _BUTTON_BG = ui_theme.INPUT_BG, ui_theme.BUTTON_BG
-RARITY_AUTO = "ตาม NeverSink"          # the rarity box: no setting
-RARITY_WARNING = "ตั้ง C = ซ่อนทุกชิ้นของ rarity นั้น รวมตัวที่ mod ดีในหมวดอื่นด้วย"
+TIER_BOX_WIDTH = 5                       # the S / A / B / C boxes of a row: one width for Normal / Magic / Rare
+GROUP_BOX_WIDTH = 13                     # ... and the three at a group header (the prompt + "ค่าเริ่มต้น" must fit)
+RARITY_WARNING = "ตั้ง D = ซ่อนทุกชิ้นของ rarity นั้น รวมตัวที่ mod ดีในหมวดอื่นด้วย"
+EQUIP_C_WARNING = "D = ซ่อนทุกชิ้นของ class+rarity นี้ รวมของดีที่ NeverSink โชว์"
+EQUIP_GROUP_AUTO = "ตั้งทั้งกลุ่ม…"
+EQUIP_GROUP_DEFAULT = "ค่าเริ่มต้น"      # every row of the group back to NeverSink
 _FONT = ("Segoe UI", 9)
 _SMALL = ("Segoe UI", 8)
 # colour of the tier suffix in the list (readable on the dark list background)
-TIER_COLORS = {"S": "#FF7A66", "A": "#F2A93B", "B": "#8FD16A", "C": "#8A8A8A", "T": "#4FD8E0"}
+TIER_COLORS = {"S": "#FF7A66", "A": "#F2A93B", "B": "#8FD16A", "C": "#6FB1C2", "D": "#8A8A8A", "T": "#4FD8E0"}
 
 
 class WhitelistPanel(tk.Frame):
@@ -49,7 +55,8 @@ class WhitelistPanel(tk.Frame):
                         font=_FONT, width=width, disabledbackground=_BG, disabledforeground="#6a6050")
 
     def _combo(self, parent, var, values, width=8):
-        return ttk.Combobox(parent, textvariable=var, values=values, width=width, state="readonly", font=_FONT)
+        return ui_theme.calm(ttk.Combobox(parent, textvariable=var, values=values, width=width, state="readonly",
+                                          font=_FONT))
 
     def _changed(self) -> None:
         if self._on_changed:
@@ -74,34 +81,39 @@ class WhitelistPanel(tk.Frame):
         self._hint = self._label(top, "ยังไม่ได้เลือก — ส่วนอื่นยังกดไม่ได้", fg="#C8A050", font=_SMALL)
         self._hint.pack(side=tk.LEFT, padx=8)
 
-        # 2) the tier's style
+        # 2) the tier's style, right here (colours, opacity, size, icon, beam, sound) - the sound is this tab's own
         st = tk.Frame(self, bg=_BG)
         st.pack(fill=tk.X, padx=6, pady=2)
-        self._label(st, "2) สไตล์ของ tier:").pack(side=tk.LEFT)
-        self._style_btn = self._btn(st, "แก้สไตล์…", self._edit_tier_style)
-        self._style_btn.pack(side=tk.LEFT, padx=6)
-        self._preview = tk.Label(st, text="ตัวอย่าง", width=16, font=("Segoe UI", 10, "bold"), bd=0,
-                                 highlightthickness=2)
-        self._preview.pack(side=tk.LEFT, padx=6)
+        self._label(st, "2) สไตล์ของ tier:").grid(row=0, column=0, sticky="nw")
+        self._tier_editor = StyleEditor(st, None, sample_text="ตัวอย่าง", on_change=self._tier_style_changed, compact=True)
+        self._tier_editor.grid(row=0, column=1, sticky="w", padx=6)
+        side = tk.Frame(st, bg=_BG)
+        side.grid(row=0, column=2, sticky="nw", padx=6)
+        self._tier_reset = self._btn(side, "รีเซ็ตเป็นค่า NeverSink", self._reset_tier_style)
+        self._tier_reset.pack(anchor="w", pady=(2, 8))
         # minimum stack size of the tier (only stackable names are affected)
-        sk = tk.Frame(self, bg=_BG)
-        sk.pack(fill=tk.X, padx=6, pady=2)
-        self._label(sk, "   โชว์เมื่อจำนวน ≥").pack(side=tk.LEFT)
+        self._label(side, "โชว์เมื่อจำนวน ≥").pack(anchor="w")
         self.v_tier_stack = tk.StringVar(value="1")
-        self._tier_stack_entry = self._entry(sk, self.v_tier_stack, 5)
-        self._tier_stack_entry.pack(side=tk.LEFT, padx=4)
+        self._tier_stack_entry = self._entry(side, self.v_tier_stack, 5)
+        self._tier_stack_entry.pack(anchor="w", pady=2)
         self._tier_stack_entry.bind("<KeyRelease>", lambda _e: self._apply_tier_stack())
-        self._label(sk, "(1 = โชว์ทุกชิ้น · ใช้กับของที่ stack ได้ · ค่ารายชิ้นที่สูงกว่าชนะ)", fg="#777",
-                    font=_SMALL).pack(side=tk.LEFT)
+        self._label(side, "(1 = โชว์ทุกชิ้น · ใช้กับของที่\nstack ได้ · ค่ารายชิ้นที่สูงกว่าชนะ)", fg="#777",
+                    font=_SMALL, justify=tk.LEFT).pack(anchor="w")
 
         self._sub = ttk.Notebook(self)
         self._sub.pack(fill=tk.BOTH, expand=True, padx=4, pady=(4, 2))
-        items = tk.Frame(self._sub, bg=_BG, padx=4, pady=4)
-        parts = tk.Frame(self._sub, bg=_BG, padx=4, pady=4)
-        self._sub.add(items, text="3) หมวด / ไอเท็ม")
-        self._sub.add(parts, text="ส่วนแยก")
-        self._build_items(items)
-        self._build_parts(parts)
+        self._sub_frames = {}
+        names = [("items", "3) หมวด / ไอเท็ม"), ("gold", "Gold"), ("map", "Waystone" if self.model.game == "poe2" else "Map")]
+        if self.model.game == "poe2":
+            names.append(("tablet", "Tablet"))
+        names += [("gem", "Gem"), ("custom", "พิมพ์เอง")]
+        for key, text in names:
+            fr = tk.Frame(self._sub, bg=_BG, padx=4, pady=4)
+            self._sub.add(fr, text=text)
+            self._sub_frames[key] = fr
+        self._style_eds: dict = {}
+        self._build_items(self._sub_frames["items"])
+        self._build_parts()
 
     def _build_items(self, f) -> None:
         r = tk.Frame(f, bg=_BG)
@@ -118,23 +130,40 @@ class WhitelistPanel(tk.Frame):
         self._cat_info = self._label(f, "", fg="#9a9a9a", font=_SMALL, anchor="w")
         self._cat_info.pack(fill=tk.X, pady=(2, 0))
 
-        # jewels / flasks / charms can also be tiered by rarity (the box shows only for those categories)
-        self._rar_box = tk.Frame(f, bg=_BG)
-        self._label(self._rar_box, "ตั้งตาม rarity — ชนะ block รายตัวด้านล่าง (Unique ตั้งที่หมวด Unique)",
-                    fg="#c9b37a", font=_SMALL, anchor="w").pack(fill=tk.X)
-        rar_row = tk.Frame(self._rar_box, bg=_BG)
-        rar_row.pack(fill=tk.X)
-        self.v_rar = {}
-        for rar in w.RARITY_CHOICES:
-            self._label(rar_row, rar).pack(side=tk.LEFT, padx=(0, 2))
-            self.v_rar[rar] = tk.StringVar(value=RARITY_AUTO)
-            c = self._combo(rar_row, self.v_rar[rar], [RARITY_AUTO] + list(ALL_CHOICES), width=14)
-            c.pack(side=tk.LEFT, padx=(0, 8))
-            c.bind("<<ComboboxSelected>>", lambda _e, r=rar: self._rarity_picked(r))
-        self._rar_warn = self._label(self._rar_box, RARITY_WARNING, fg="#d9a441", font=_SMALL, anchor="w")
-        self._rar_warn.pack(fill=tk.X)
-        wrap = tk.Frame(f, bg=_BG)
-        self._wrap = wrap
+        # the "Flask / Charm" category has no list: one box per row (Flask, Charm) - default = NeverSink's blocks, or
+        # "set myself" = Normal / Magic each S / A / B / C / D (start at B)
+        self._flask_box = tk.Frame(f, bg=_BG)
+        self.v_flask_mode, self.v_flask_rar, self._flask_custom_frames = {}, {}, {}
+        for fr in self.model.flask_rows():
+            rid = fr["id"]
+            box = tk.Frame(self._flask_box, bg=_BG, highlightthickness=1, highlightbackground="#3a3a3a")
+            box.pack(fill=tk.X, pady=3, padx=1)
+            self._label(box, fr["label"], fg="#c9b37a", font=("Segoe UI", 9, "bold"), anchor="w").pack(fill=tk.X, padx=6, pady=(3, 0))
+            self.v_flask_mode[rid] = tk.StringVar(value="default")
+            for val, text in (("default", "ค่าเริ่มต้น (block ของ NeverSink ทั้งหมดของแถวนี้)"), ("custom", "ตั้งค่าเอง")):
+                tk.Radiobutton(box, text=text, variable=self.v_flask_mode[rid], value=val, bg=_BG, fg=_FG, selectcolor="#2A2020",
+                               activebackground=_BG, activeforeground=_FG, font=_FONT, anchor="w",
+                               command=lambda r=rid: self._flask_mode(r)).pack(fill=tk.X, padx=14)
+            cf = tk.Frame(box, bg=_BG)
+            self._flask_custom_frames[rid] = cf
+            line = tk.Frame(cf, bg=_BG)
+            line.pack(fill=tk.X, padx=14)
+            self.v_flask_rar[rid] = {}
+            for rar in w.RARITY_CHOICES:
+                self._label(line, rar).pack(side=tk.LEFT, padx=(0, 2))
+                self.v_flask_rar[rid][rar] = tk.StringVar(value="B")
+                c = self._combo(line, self.v_flask_rar[rid][rar], list(ALL_CHOICES), width=TIER_BOX_WIDTH)
+                c.pack(side=tk.LEFT, padx=(0, 8))
+                c.bind("<<ComboboxSelected>>", lambda _e, r=rid, q=rar: self._flask_rarity(r, q))
+            self._label(cf, RARITY_WARNING, fg="#d9a441", font=_SMALL, anchor="w").pack(fill=tk.X, padx=14, pady=(0, 3))
+        self._label(self._flask_box, "Unique ตั้งที่หมวด Unique · แถวที่เป็น \"ค่าเริ่มต้น\" ใช้ block ของ NeverSink ตามเดิม",
+                    fg="#777", font=_SMALL, anchor="w").pack(fill=tk.X)
+        self._build_equip(f)
+        # everything of the item list lives in one frame so the Flask / Charm page can replace it
+        self._list_box = tk.Frame(f, bg=_BG)
+        self._list_box.pack(fill=tk.BOTH, expand=True)
+        lb = self._list_box
+        wrap = tk.Frame(lb, bg=_BG)
         wrap.pack(fill=tk.BOTH, expand=True)
         style = ttk.Style(self)
         style.configure("Wl.Treeview", background=_INPUT_BG, fieldbackground=_INPUT_BG, foreground=_FG,
@@ -142,7 +171,7 @@ class WhitelistPanel(tk.Frame):
         style.configure("Wl.Treeview.Heading", background=_BUTTON_BG, foreground=_FG, font=_SMALL, relief="flat")
         style.map("Wl.Treeview", background=[("selected", "#4a3d20")], foreground=[("selected", "#FFFFFF")])
         self.tree = ttk.Treeview(wrap, columns=("name", "tier", "mark"), show="headings", style="Wl.Treeview",
-                                 height=11, selectmode="extended")
+                                 height=6, selectmode="extended")
         self.tree.heading("name", text="ชื่อ (คลิก ☑/☐ = ติ๊ก/เอาออก)")
         self.tree.heading("tier", text="tier")
         self.tree.heading("mark", text="")
@@ -157,25 +186,25 @@ class WhitelistPanel(tk.Frame):
             self.tree.tag_configure(t, foreground=c)
         self.tree.bind("<Button-1>", self._on_click)
 
-        self._warn = self._label(f, "", fg="#E0B060", font=_SMALL, anchor="w", justify=tk.LEFT, wraplength=420)
+        self._warn = self._label(lb, "", fg="#E0B060", font=_SMALL, anchor="w", justify=tk.LEFT, wraplength=420)
         self._warn.pack(fill=tk.X)
-        b1 = tk.Frame(f, bg=_BG)
+        b1 = tk.Frame(lb, bg=_BG)
         b1.pack(fill=tk.X, pady=(3, 0))
         self._act_btns = []
         for text, cmd in (("ทั้งหมวด → tier นี้", lambda: self._set_cat(self.active.get())),
-                          ("ทั้งหมวด → C (ซ่อน)", lambda: self._set_cat("C")),
+                          ("ทั้งหมวด → D (ซ่อน)", lambda: self._set_cat("D")),
                           ("ย้ายที่เลือก → tier นี้", self._move_selected)):
             b = self._btn(b1, text, cmd)
             b.pack(side=tk.LEFT, padx=2)
             self._act_btns.append(b)
-        b2 = tk.Frame(f, bg=_BG)
+        b2 = tk.Frame(lb, bg=_BG)
         b2.pack(fill=tk.X, pady=(3, 0))
         for text, cmd in (("รีเซ็ตที่เลือกเป็นค่า NeverSink", self._reset_selected),
                           ("รีเซ็ตทั้งหมวด", self._reset_cat)):
             b = self._btn(b2, text, cmd)
             b.pack(side=tk.LEFT, padx=2)
             self._act_btns.append(b)
-        b3 = tk.Frame(f, bg=_BG)
+        b3 = tk.Frame(lb, bg=_BG)
         b3.pack(fill=tk.X, pady=(3, 0))
         self._label(b3, "จำนวนขั้นต่ำของที่เลือก ≥").pack(side=tk.LEFT, padx=(2, 0))
         self.v_item_stack = tk.StringVar(value="1")
@@ -186,53 +215,76 @@ class WhitelistPanel(tk.Frame):
         self._act_btns.append(b)
         self._label(b3, "(1 = โชว์ทุกชิ้น)", fg="#777", font=_SMALL).pack(side=tk.LEFT, padx=4)
 
-    def _build_parts(self, f) -> None:
+    def _style_editor(self, parent, label: str, sample: str) -> StyleEditor:
+        """An inline style editor for one label (G / Map / Tablet / Gem): every edit goes to the model at once."""
+        box = tk.Frame(parent, bg=_BG)
+        box.pack(anchor="w", pady=(6, 2))
+        ed = StyleEditor(box, self.model.effective_style(label), sample_text=sample,
+                         on_change=lambda: self._part_style_changed(label), compact=True)
+        ed.grid(row=0, column=0, sticky="w")
+        self._btn(box, "รีเซ็ตเป็นค่า NeverSink", lambda: self._reset_part_style(label)).grid(
+            row=0, column=1, sticky="nw", padx=8, pady=2)
+        self._style_eds[label] = ed
+        return ed
+
+    def _part_style_changed(self, label: str) -> None:
+        self.model.set_style_from_editor(label, self._style_eds[label].get_style())
+        self._changed()
+
+    def _reset_part_style(self, label: str) -> None:
+        self.model.set_style(label, None)
+        self._style_eds[label].set_style(self.model.effective_style(label))
+        self._changed()
+
+    def _build_parts(self) -> None:
         m = self.model
+        F = self._sub_frames
         # gold
-        g = tk.Frame(f, bg=_BG)
+        g = tk.Frame(F["gold"], bg=_BG)
         g.pack(fill=tk.X, pady=2)
         self.v_gold = tk.BooleanVar(value=m.gold)
         self._check(g, "Gold", self.v_gold).pack(side=tk.LEFT)
         self._label(g, "จำนวน ≥").pack(side=tk.LEFT, padx=(6, 2))
         self.v_gold_min = tk.StringVar(value=str(m.gold_min))
-        self._entry(g, self.v_gold_min, 6).pack(side=tk.LEFT)
-        self._btn(g, "สไตล์ Gold…", lambda: self._edit_style("G", "Gold")).pack(side=tk.LEFT, padx=6)
+        e = self._entry(g, self.v_gold_min, 6)
+        e.pack(side=tk.LEFT)
+        e.bind("<KeyRelease>", lambda _e: self._parts_changed())
+        self._label(F["gold"], "(ไม่ติ๊ก = โชว์ตามเกม)", fg="#777", font=_SMALL).pack(anchor="w")
+        self._style_editor(F["gold"], "G", "Gold")
         # map / waystone
-        mp = tk.Frame(f, bg=_BG)
-        mp.pack(fill=tk.X, pady=2)
         name = "Waystone" if m.game == "poe2" else "Map"
+        mp = tk.Frame(F["map"], bg=_BG)
+        mp.pack(fill=tk.X, pady=2)
         self.v_map = tk.BooleanVar(value=m.map_on)
         self._check(mp, f"{name} (ต้องผ่านทั้ง 2 เงื่อนไข)", self.v_map).pack(side=tk.LEFT)
-        mp2 = tk.Frame(f, bg=_BG)
+        mp2 = tk.Frame(F["map"], bg=_BG)
         mp2.pack(fill=tk.X, pady=(0, 2))
         self._label(mp2, "   tier ≥").pack(side=tk.LEFT)
         self.v_map_tier = tk.StringVar(value=str(m.map_tier))
-        self._entry(mp2, self.v_map_tier, 4).pack(side=tk.LEFT, padx=2)
+        e = self._entry(mp2, self.v_map_tier, 4)
+        e.pack(side=tk.LEFT, padx=2)
+        e.bind("<KeyRelease>", lambda _e: self._parts_changed())
         self._label(mp2, "rarity ≥").pack(side=tk.LEFT, padx=(6, 2))
         self.v_map_rar = tk.StringVar(value=m.map_rarity)
         c = self._combo(mp2, self.v_map_rar, list(RARITIES), 8)
         c.pack(side=tk.LEFT)
         c.bind("<<ComboboxSelected>>", lambda _e: self._parts_changed())
-        self._btn(mp2, f"สไตล์ {name}…", lambda: self._edit_style("Map", name)).pack(side=tk.LEFT, padx=6)
-        self._label(f, "   (ไม่ติ๊ก = โชว์ตามเกม · poe1: map พิเศษผ่านเสมอ)", fg="#777", font=_SMALL).pack(anchor="w")
+        self._label(F["map"], "   (ไม่ติ๊ก = โชว์ตามเกม · poe1: map พิเศษผ่านเสมอ)", fg="#777", font=_SMALL).pack(anchor="w")
+        self._style_editor(F["map"], "Map", name)
+        # tablet (poe2)
         if m.game == "poe2":
-            tb = tk.Frame(f, bg=_BG)
-            tb.pack(fill=tk.X, pady=2)
-            self._label(tb, "Tablet (โชว์เสมอ ยกเว้นตั้ง tier รายชิ้น)").pack(side=tk.LEFT)
-            self._btn(tb, "สไตล์ Tablet…", lambda: self._edit_style("Tablet", "Tablet")).pack(side=tk.LEFT, padx=6)
+            self._label(F["tablet"], "Tablet โชว์เสมอ ยกเว้นตั้ง tier รายชิ้น (หมวด Tablet ที่แท็บ 3)", fg="#777",
+                        font=_SMALL).pack(anchor="w")
+            self._style_editor(F["tablet"], "Tablet", "Tablet")
         # gem
-        self._gem_frame = tk.Frame(f, bg=_BG)
-        self._gem_frame.pack(fill=tk.X, pady=(4, 2))
+        self._gem_frame = tk.Frame(F["gem"], bg=_BG)
+        self._gem_frame.pack(fill=tk.X, pady=(2, 2))
         self._build_gems(self._gem_frame)
+        self._label(F["gem"], "สไตล์ของ Gem = สไตล์ของ tier ที่เลือกข้างบน (แก้ตรงนี้ = เปลี่ยนเฉพาะ Gem)", fg="#777",
+                    font=_SMALL).pack(anchor="w")
+        self._style_editor(F["gem"], "Gem", "Gem")
         # typed names
-        self._build_custom(f)
-        # shared sounds (read only)
-        sd = tk.LabelFrame(f, text=" เสียงที่ใช้ (แชร์กับแท็บ NeverSink) ", bg=_BG, fg=_FG, font=_SMALL)
-        sd.pack(fill=tk.X, pady=(6, 0))
-        self._sound_lbl = self._label(sd, "", fg="#bfae80", font=_SMALL, anchor="w", justify=tk.LEFT, wraplength=410)
-        self._sound_lbl.pack(fill=tk.X, padx=4)
-        self._btn(sd, "ไปตั้งที่แท็บ NeverSink", self._on_goto_sound).pack(anchor="w", padx=4, pady=3)
-        self._parts_widgets = [w for w in f.winfo_children()]
+        self._build_custom(F["custom"])
 
     def _check(self, parent, text, var):
         return tk.Checkbutton(parent, text=text, variable=var, bg=_BG, fg=_FG, selectcolor="#2A2020",
@@ -338,6 +390,8 @@ class WhitelistPanel(tk.Frame):
 
     def _parts_changed(self) -> None:
         self.read_parts()
+        if "Gem" in self._style_eds:                       # the Gem look follows the tier picked for the gems
+            self._style_eds["Gem"].set_style(self.model.effective_style("Gem"))
         self._changed()
 
     def read_parts(self) -> None:
@@ -368,7 +422,7 @@ class WhitelistPanel(tk.Frame):
     # ------------------------------------------------------------------ tier / style
 
     def _controls(self):
-        return [self._style_btn, self._cat_combo, self._search, self._tier_stack_entry, self._item_stack_entry,
+        return [self._tier_reset, self._cat_combo, self._search, self._tier_stack_entry, self._item_stack_entry,
                 *self._act_btns]
 
     def _on_tier_picked(self) -> None:
@@ -412,31 +466,29 @@ class WhitelistPanel(tk.Frame):
         self._hint.configure(text="" if on else "ยังไม่ได้เลือก — ส่วนอื่นยังกดไม่ได้")
 
     def refresh_preview(self) -> None:
-        t = self.active.get()
-        if not t:
-            self._preview.configure(text="—", bg=_BG, fg="#777", highlightbackground=_BG)
-            return
-        s = self.model.effective_style(t)
-        bg = _color(s["bg"], "#101010")
-        self._preview.configure(text=f"ตัวอย่าง {t}", bg=bg, fg=_color(s["text"], "#C8C8C8"),
-                                highlightbackground=_color(s["border"], bg), highlightcolor=_color(s["border"], bg))
-
-    def _edit_tier_style(self) -> None:
+        """The tier editor shows the picked tier's effective look (its own preview is the sample)."""
         t = self.active.get()
         if t:
-            self._edit_style(t, f"tier {t}", show_sound=False)
+            self._tier_editor.set_style(self.model.effective_style(t))
 
-    def _edit_style(self, label: str, title: str, show_sound: bool = True) -> None:
-        def _save(style) -> None:
-            if style is None:
-                self.model.set_style(label, None)
-            else:
-                self.model.set_style_from_editor(label, style)
+    def _tier_style_changed(self) -> None:
+        t = self.active.get()
+        if t:
+            self.model.set_style_from_editor(t, self._tier_editor.get_style())
+            self._changed()
+
+    def _reset_tier_style(self) -> None:
+        t = self.active.get()
+        if t:
+            self.model.set_style(t, None)
             self.refresh_preview()
             self._changed()
-        self._style_dialog = open_style_dialog(
-            self.winfo_toplevel(), f"สไตล์ {title} (ติ๊กออก = ใช้ค่า NeverSink)", self.model.effective_style(label),
-            _save, clear_text="รีเซ็ตเป็นค่า NeverSink", sample_text=title, show_sound=show_sound)
+
+    def refresh_styles(self) -> None:
+        """Show the model's looks again (the lists / NeverSink arrived, or a file was opened)."""
+        self.refresh_preview()
+        for label, ed in self._style_eds.items():
+            ed.set_style(self.model.effective_style(label))
 
     # ------------------------------------------------------------------ list
 
@@ -457,9 +509,108 @@ class WhitelistPanel(tk.Frame):
     def refresh_all(self) -> None:
         self.load_categories()
         self.refresh_enabled()
-        self.refresh_preview()
+        self.refresh_styles()
         self.refresh_list()
-        self.refresh_sounds()
+
+    def _build_equip(self, f) -> None:
+        """"อุปกรณ์ตาม class": groups (weapon / armour / jewellery / other) with one row per class - default = NeverSink's
+        blocks, or "set myself" = Normal / Magic / Rare each NeverSink or S / A / B / C. Scrolls (many rows)."""
+        self._equip_box = tk.Frame(f, bg=_BG)
+        self._label(self._equip_box, "ช่องที่ตั้ง S/A/B/C/D ชนะทุกชิ้นของ class+rarity นั้น รวมของดีที่ NeverSink จัดไว้ · D = ซ่อนทั้งหมด · "
+                    "Unique ตั้งที่หมวด Unique · Flask/Charm/Tincture มีหมวดของตัวเอง", fg="#777", font=_SMALL,
+                    anchor="w", wraplength=700, justify=tk.LEFT).pack(fill=tk.X)
+        wrap = tk.Frame(self._equip_box, bg=_BG)
+        wrap.pack(fill=tk.BOTH, expand=True)
+        canvas = tk.Canvas(wrap, bg=_BG, highlightthickness=0, height=250)
+        sb = ttk.Scrollbar(wrap, orient=tk.VERTICAL, command=canvas.yview)
+        inner = tk.Frame(canvas, bg=_BG)
+        win = canvas.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(win, width=e.width))
+        canvas.configure(yscrollcommand=sb.set)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        wheel = lambda e: canvas.yview_scroll(-1 if e.delta > 0 else 1, "units")
+        canvas.bind("<Enter>", lambda _e: canvas.bind_all("<MouseWheel>", wheel))
+        canvas.bind("<Leave>", lambda _e: canvas.unbind_all("<MouseWheel>"))
+        self._equip_canvas = canvas
+        self.v_eq_mode, self.v_eq_rar, self._eq_combos, self._eq_warn, self.v_eq_grp = {}, {}, {}, {}, {}
+        self._eq_grp_combos: dict = {}
+        for g in self.model.equip_groups():
+            head = tk.Frame(inner, bg=_BG)
+            head.pack(fill=tk.X, pady=(8, 2))
+            self._label(head, g["label"], fg="#c9b37a", font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT, padx=(2, 10))
+            self.v_eq_grp[g["id"]] = {}
+            for rar in w.EQUIP_CHOICES:
+                self._label(head, rar, font=_SMALL).pack(side=tk.LEFT, padx=(0, 2))
+                var = tk.StringVar(value=EQUIP_GROUP_AUTO)
+                self.v_eq_grp[g["id"]][rar] = var
+                c = self._combo(head, var, [EQUIP_GROUP_AUTO, EQUIP_GROUP_DEFAULT] + list(ALL_CHOICES), width=GROUP_BOX_WIDTH)
+                c.pack(side=tk.LEFT, padx=(0, 8))
+                self._eq_grp_combos.setdefault(g["id"], {})[rar] = c
+                c.bind("<<ComboboxSelected>>", lambda _e, gid=g["id"], r=rar: self._equip_group(gid, r))
+            for fr in g["classes"]:
+                cid = fr["id"]
+                blk = tk.Frame(inner, bg=_BG)
+                blk.pack(fill=tk.X, padx=6)
+                line = tk.Frame(blk, bg=_BG)
+                line.pack(fill=tk.X)
+                self._label(line, fr["label"], width=25, anchor="w").pack(side=tk.LEFT)
+                self.v_eq_mode[cid] = tk.StringVar(value="default")
+                for val, text in (("default", "ค่าเริ่มต้น"), ("custom", "ตั้งค่าเอง")):
+                    tk.Radiobutton(line, text=text, variable=self.v_eq_mode[cid], value=val, bg=_BG, fg=_FG, selectcolor="#2A2020",
+                                   activebackground=_BG, activeforeground=_FG, font=_FONT,
+                                   command=lambda c=cid: self._equip_mode(c)).pack(side=tk.LEFT, padx=(0, 6))
+                self.v_eq_rar[cid], self._eq_combos[cid] = {}, []
+                for rar in w.EQUIP_CHOICES:
+                    self._label(line, rar, font=_SMALL).pack(side=tk.LEFT, padx=(4, 2))
+                    var = tk.StringVar(value="B")
+                    self.v_eq_rar[cid][rar] = var
+                    c = self._combo(line, var, list(ALL_CHOICES), width=TIER_BOX_WIDTH)
+                    c.pack(side=tk.LEFT)
+                    c.bind("<<ComboboxSelected>>", lambda _e, cc=cid, r=rar: self._equip_rarity(cc, r))
+                    self._eq_combos[cid].append(c)
+                self._eq_warn[cid] = self._label(blk, "", fg="#d9a441", font=_SMALL, anchor="w")     # its own line: never wider
+
+    def _refresh_equip(self) -> None:
+        for g in self.model.equip_groups():
+            for fr in g["classes"]:
+                cid = fr["id"]
+                self.v_eq_mode[cid].set("custom" if fr["custom"] else "default")
+                for rar, var in self.v_eq_rar[cid].items():
+                    var.set(fr["tiers"].get(rar) or "B")
+                for c in self._eq_combos[cid]:
+                    c.configure(state="readonly" if fr["custom"] else "disabled")
+                has_c = fr["custom"] and w.HIDE_TIER in fr["tiers"].values()
+                if has_c:
+                    self._eq_warn[cid].configure(text=EQUIP_C_WARNING)
+                    if not self._eq_warn[cid].winfo_manager():
+                        self._eq_warn[cid].pack(fill=tk.X, padx=(20, 0))
+                else:
+                    self._eq_warn[cid].pack_forget()
+            for var in self.v_eq_grp[g["id"]].values():
+                var.set(EQUIP_GROUP_AUTO)
+            for c in self._eq_grp_combos.get(g["id"], {}).values():       # the prompt is shown, never highlighted
+                c.selection_clear()
+
+    def _equip_mode(self, cid: str) -> None:
+        self.model.set_equip_custom(cid, self.v_eq_mode[cid].get() == "custom")
+        self.refresh_list()
+        self._changed()
+
+    def _equip_rarity(self, cid: str, rar: str) -> None:
+        val = self.v_eq_rar[cid][rar].get()
+        self.model.set_equip_rarity(cid, rar, val if val in ALL_CHOICES else None)
+        self.refresh_list()
+        self._changed()
+
+    def _equip_group(self, gid: str, rar: str) -> None:
+        val = self.v_eq_grp[gid][rar].get()
+        if val == EQUIP_GROUP_AUTO:
+            return
+        self.model.set_equip_group(gid, rar, val if val in ALL_CHOICES else None)      # "ค่าเริ่มต้น" = None = every row default
+        self.refresh_list()
+        self._changed()
 
     def refresh_list(self) -> None:
         cat = self.current_category()
@@ -470,11 +621,33 @@ class WhitelistPanel(tk.Frame):
         if not self.model.loaded:
             self._cat_info.configure(text="กำลังโหลดรายการ… (hub + NeverSink)")
             return
-        self._refresh_rarity(cat)
+        if cat == EQUIP_CATEGORY:                       # no list: classes by group, each with its own controls
+            self._list_box.pack_forget()
+            self._flask_box.pack_forget()
+            if not self._equip_box.winfo_manager():
+                self._equip_box.pack(fill=tk.BOTH, expand=True, pady=(4, 2))
+            self._refresh_equip()
+            n = self.model.changed_count(cat)
+            self._cat_info.configure(text="ตั้งค่าเองแล้ว " + (f"{n} class" if n else "ไม่มี — ใช้ NeverSink ทั้งหมด"))
+            self._warn.configure(text="")
+            return
+        self._equip_box.pack_forget()
+        if cat == FLASK_CATEGORY:                       # no list: the two rows (Flask, Charm) with their own controls
+            self._list_box.pack_forget()
+            if not self._flask_box.winfo_manager():
+                self._flask_box.pack(fill=tk.X, pady=(4, 2))
+            self._refresh_flask()
+            n = self.model.changed_count(cat)
+            self._cat_info.configure(text="ตั้งค่าเองแล้ว " + (f"{n} แถว" if n else "ไม่มี — ใช้ NeverSink ทั้งหมด"))
+            self._warn.configure(text="")
+            return
+        self._flask_box.pack_forget()
+        if not self._list_box.winfo_manager():
+            self._list_box.pack(fill=tk.BOTH, expand=True)
         rows = self.model.rows(cat, self.query.get())
         for r in rows:
-            on = r.tier != "C"
-            tier_text = tier_label(r.tier) if on else "C"
+            on = r.tier != w.HIDE_TIER
+            tier_text = tier_label(r.tier) if on else w.HIDE_TIER
             if on and r.stack > 1:
                 tier_text += f" ≥{r.stack}"
             mark = "● ตั้งเอง" if (r.user_set or r.stack_set) else ""
@@ -489,29 +662,32 @@ class WhitelistPanel(tk.Frame):
         notes = sorted({r.note for r in rows if r.note})
         self._warn.configure(text="\n".join(notes))
 
-    def _refresh_rarity(self, cat: str) -> None:
-        if self.model.has_rarity(cat):
-            for rar, var in self.v_rar.items():
-                var.set(self.model.get_rarity(cat, rar) or RARITY_AUTO)
-            if not self._rar_box.winfo_manager():
-                self._rar_box.pack(fill=tk.X, pady=(2, 2), before=self._wrap)
-        else:
-            self._rar_box.pack_forget()
+    def _refresh_flask(self) -> None:
+        for fr in self.model.flask_rows():
+            rid = fr["id"]
+            self.v_flask_mode[rid].set("custom" if fr["custom"] else "default")
+            for rar, var in self.v_flask_rar[rid].items():
+                var.set(fr["tiers"].get(rar) or "B")
+            cf = self._flask_custom_frames[rid]
+            if fr["custom"]:
+                if not cf.winfo_manager():
+                    cf.pack(fill=tk.X)
+            else:
+                cf.pack_forget()
 
-    def _rarity_picked(self, rar: str) -> None:
-        cat = self.current_category()
-        val = self.v_rar[rar].get()
-        self.model.set_rarity(cat, rar, val if val in ALL_CHOICES else None)
+    def _flask_mode(self, rid: str) -> None:
+        self.model.set_flask_custom(rid, self.v_flask_mode[rid].get() == "custom")
+        self.refresh_list()
+        self._changed()
+
+    def _flask_rarity(self, rid: str, rar: str) -> None:
+        val = self.v_flask_rar[rid][rar].get()
+        self.model.set_flask_rarity(rid, rar, val if val in ALL_CHOICES else None)
         self.refresh_list()
         self._changed()
 
     def refresh_sounds(self) -> None:
-        s = self._get_sounds() or {}
-        names = []
-        for k in ("S", "A", "B", "Q"):
-            v = s.get(k) or ""
-            names.append(f"{k}: " + (v.replace("\\", "/").rsplit("/", 1)[-1] if v else "(เสียงของ NeverSink)"))
-        self._sound_lbl.configure(text="   ".join(names))
+        """(kept for callers: this tab's sounds are in its style editors; only Q is shared and set elsewhere)"""
 
     def _on_click(self, event) -> Optional[str]:
         if not self.active.get():
@@ -552,10 +728,6 @@ class WhitelistPanel(tk.Frame):
         self.model.reset_category(self.current_category())
         self.refresh_list()
         self._changed()
-
-    def _on_goto_sound(self) -> None:
-        if self._goto_sound_tab:
-            self._goto_sound_tab()
 
     # called by the window once hub / NeverSink data arrived
     def data_loaded(self) -> None:

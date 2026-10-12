@@ -9,32 +9,41 @@
 </head>
 <body>
 <main>
-  <h1>PoE1 &amp; PoE2 Filter Generator</h1>
-  <p class="muted">สร้าง loot filter ในเบราว์เซอร์ — ตั้งค่าเสร็จกด Generate แล้วดาวน์โหลดไปวางในโฟลเดอร์เกม</p>
-
-  <div id="loading" class="loading">กำลังโหลด… (ครั้งแรกอาจใช้เวลาสักครู่ — ดาวน์โหลด Python runtime ~10MB, ครั้งต่อไปเร็วขึ้น)</div>
-  <div id="fatal" class="fatal" hidden></div>
-
-  <div id="app" hidden>
+  <header class="top">
+    <h1>PoE Filter Generator <small id="ver" class="muted" title="ใช้ตอนแจ้งบั๊ก"></small></h1>
     <div class="game-toggle" role="radiogroup" aria-label="เกม">
       <button type="button" id="game-poe1" data-game="poe1">PoE1</button>
       <button type="button" id="game-poe2" data-game="poe2">PoE2</button>
     </div>
+  </header>
 
-    <form id="form" autocomplete="off" onsubmit="return false"></form>
+  <div id="loading" class="loading">กำลังโหลด… (ครั้งแรกอาจใช้เวลาสักครู่ — ดาวน์โหลด Python runtime ~5MB, ครั้งต่อไปเร็วขึ้น)</div>
+  <div id="fatal" class="fatal" hidden></div>
 
-    <div class="actions">
-      <button type="button" id="btn-generate" disabled>Generate</button>
-      <button type="button" id="btn-refresh" disabled>Refresh NeverSink Base</button>
-      <button type="button" id="btn-reset" class="secondary">ล้างค่า</button>
+  <div id="app" hidden>
+    <section id="folder-box" class="folder" hidden>
+      <span class="lbl">โฟลเดอร์เกม:</span>
+      <span id="folder-name" class="muted">ยังไม่ได้เลือก — จะดาวน์โหลดเป็นไฟล์แทน</span>
+      <button type="button" id="btn-folder">เลือกโฟลเดอร์เกม</button>
+      <button type="button" id="btn-folder-grant" class="secondary" hidden>ยืนยันสิทธิ์โฟลเดอร์</button>
+      <button type="button" id="btn-folder-forget" class="secondary" hidden>เลิกใช้</button>
+      <div class="muted small" id="folder-hint"></div>
+    </section>
+
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" id="tab-ns" data-tab="tier" aria-selected="true">NeverSink</button>
+      <button type="button" role="tab" id="tab-wl" data-tab="whitelist" aria-selected="false">Whitelist</button>
     </div>
+
+    <section id="pane-tier" class="pane" role="tabpanel"></section>
+    <section id="pane-whitelist" class="pane" role="tabpanel" hidden></section>
 
     <label class="section">Status</label>
     <div id="log" class="log" aria-live="polite"></div>
 
     <div id="result" class="result" hidden>
       <div class="actions">
-        <button type="button" id="btn-download">ดาวน์โหลด poe-checker.filter</button>
+        <button type="button" id="btn-download">ดาวน์โหลด</button>
         <button type="button" id="btn-copy" class="secondary">Copy</button>
       </div>
       <p class="muted" id="result-info"></p>
@@ -43,20 +52,17 @@
   </div>
 </main>
 
-<dialog id="refine">
-  <div class="dlg-head">
-    <select id="refine-cat"></select>
-    <input id="refine-q" type="search" placeholder="ค้นหา…">
-  </div>
-  <div id="refine-list" class="refine-list"></div>
-  <div class="actions">
-    <button type="button" id="refine-all" class="secondary">เลือกทั้งหมด</button>
-    <button type="button" id="refine-none" class="secondary">ไม่เลือกเลย</button>
-    <button type="button" id="refine-close">ปิด</button>
-  </div>
-</dialog>
+<dialog id="dlg-style" class="dlg"></dialog>
+<dialog id="dlg-ask" class="dlg"></dialog>
 
 <script src="https://cdn.jsdelivr.net/pyodide/v0.27.7/full/pyodide.js"></script>
+<script src="js/util.js"></script>
+<script src="js/store.js"></script>
+<script src="js/data.js"></script>
+<script src="js/files.js"></script>
+<script src="js/style_dialog.js"></script>
+<script src="js/tab_ns.js"></script>
+<script src="js/tab_wl.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

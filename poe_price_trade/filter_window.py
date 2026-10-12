@@ -8,7 +8,7 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Callable, Optional
 
 from . import (__version__, filter_core, filter_gen, filter_output, filter_service, filter_style, hub_client,
-               ui_theme, wl_embed, wl_import)
+               ui_theme, wl_session)
 from .wl_model import WlModel
 from .wl_panel import WhitelistPanel
 from .filter_style_editor import open_style_dialog
@@ -96,8 +96,8 @@ class FilterGenWindow:
     def _combo(self, parent, key: str, values: list, row, col, width=18):
         var = tk.StringVar()
         self._vars[key] = var
-        cb = ttk.Combobox(parent, textvariable=var, values=values, width=width,
-                          state="readonly", font=_PANEL_FONT)
+        cb = ui_theme.calm(ttk.Combobox(parent, textvariable=var, values=values, width=width,
+                                        state="readonly", font=_PANEL_FONT))
         cb.grid(row=row, column=col, sticky="w", padx=6, pady=3)
         return cb
 
@@ -124,9 +124,9 @@ class FilterGenWindow:
         self._lbl(parent, label, row, 0)
         var = tk.StringVar()
         self._vars[key] = var
-        tk.Entry(parent, textvariable=var, bg=_INPUT_BG, fg=_FG, insertbackground=_FG,
-                 readonlybackground=_INPUT_BG, disabledforeground=_FG,
-                 relief=tk.FLAT, font=_PANEL_FONT, width=28, state="readonly").grid(
+        ui_theme.calm(tk.Entry(parent, textvariable=var, bg=_INPUT_BG, fg=_FG, insertbackground=_FG,
+                               readonlybackground=_INPUT_BG, disabledforeground=_FG,
+                               relief=tk.FLAT, font=_PANEL_FONT, width=28, state="readonly")).grid(
             row=row, column=1, sticky="w", padx=6, pady=3)
         btn_frame = tk.Frame(parent, bg=_BG)
         btn_frame.grid(row=row, column=2, sticky="w")
@@ -225,15 +225,12 @@ class FilterGenWindow:
         self._quest_lbl.pack(side=tk.LEFT, padx=6)
         row += 1
 
-        tk.Label(f, text="Alert sounds (S/A/B — C is always silent):", bg=_BG, fg=_FG,
+        tk.Label(f, text="Alert sounds:", bg=_BG, fg=_FG,
                  font=_PANEL_FONT).grid(row=row, column=0, columnspan=3, sticky="w", padx=6, pady=(8, 2))
         row += 1
-        tk.Label(f, text="(เสียง S/A/B = tier สูงสุด/รอง/กลาง ของ NeverSink · ไฟล์ mp3/wav/ogg ใช้ชื่อเดิมของไฟล์)",
-                 bg=_BG, fg="#666", font=_SMALL_FONT).grid(row=row, column=0, columnspan=3, sticky="w", padx=6)
-        row += 1
-        self._sound_row(f, "sound_s", "Tier S sound:", row); row += 1
-        self._sound_row(f, "sound_a", "Tier A sound:", row); row += 1
-        self._sound_row(f, "sound_b", "Tier B sound:", row); row += 1
+        for n in filter_gen.SOUND_SLOTS:               # one per NeverSink sound number (1 <- 6, 2 <- 1, 3 <- 2 ...)
+            self._sound_row(f, f"sound_{n}", f"เสียง {n}", row)
+            row += 1
 
         self._check(f, "auto_regen_neversink", "regenerate อัตโนมัติเมื่อ NeverSink ออกเวอร์ชันใหม่",
                     row, 0, columnspan=3)
@@ -263,8 +260,8 @@ class FilterGenWindow:
         self._btn(btns, "โหลดรายการใหม่", self._load_wl_data, side=tk.LEFT)
 
     def _shared_sounds(self) -> dict:
-        """S / A / B / Q sounds as set on the NeverSink tab (shown read-only on the whitelist tab)."""
-        out = {k: self._vars[f"sound_{k.lower()}"].get() for k in ("S", "A", "B")}
+        """Q is the only sound the two tabs share (shown read-only on the whitelist tab)."""
+        out = {}
         if self._style_q:
             out["Q"] = filter_style.uses_sound_file(self._style_q) or ""
         return out
@@ -314,87 +311,29 @@ class FilterGenWindow:
     def open_filter(self, path: Path) -> bool:
         """Load the settings embedded in a whitelist filter file into the tab (and its name into the name
         box); the next Generate overwrites that file after asking. False (and a message) when the file is
-        not one this tab can edit."""
+        not one this tab can edit. What is said and decided lives in wl_session (shared with the web page)."""
+        path = Path(path)
         try:
-            text = Path(path).read_text(encoding="utf-8", errors="replace")
+            text = path.read_text(encoding="utf-8", errors="replace")
         except OSError as e:
             self.log(f"✗ เปิดไฟล์ไม่ได้: {e}", "err")
             return False
-        kind = wl_embed.classify(text)
-        name = Path(path).stem
-        _n, err = filter_core.validate_filter_name(name)
-        if kind in ("ok", "no_config") and err:
-            self.log(f"✗ ชื่อไฟล์ใช้เป็นชื่อ filter ไม่ได้: {err}", "err")
+        out = wl_session.open_text(
+            text, path.name, self._game_version, self._model, self._wl_data, folder=path.parent,
+            current_sound=lambda label: "",
+            sound_file=lambda name: str(path.parent / name) if (path.parent / name).is_file() else None)
+        for tag, msg in out.messages:
+            self.log(msg, tag)
+        if not out.ok:
             return False
-        if kind == "no_config":
-            return self._open_old_filter(Path(path), text)
-        if kind != "ok":
-            self.log("✗ เปิดแก้ไม่ได้: ไฟล์นี้ไม่ได้สร้างจากแท็บ Whitelist ของโปรแกรมนี้"
-                     if kind == "foreign" else
-                     "✗ เปิดแก้ไม่ได้: ไฟล์นี้สร้างจากแท็บ NeverSink ไม่ใช่ Whitelist", "warn")
-            return False
-        data = wl_embed.extract(text)
-        if data["game"] != self._game_version:
-            self.log(f"✗ ไฟล์นี้เป็นของ {data['game'].upper()} แต่หน้าต่างนี้เป็น {self._game_version.upper()}", "warn")
-            return False
-        model = WlModel.from_config(data["cfg"], self._game_version)
-        self._adopt(Path(path), model)
-        made = f" (ค่าฝังจากรุ่น {data['app']})" if data.get("app") else " (ค่าฝังไม่ได้บันทึกรุ่น)"
-        self.log(f"✓ เปิด {Path(path).name} แล้ว{made} — แก้แล้วกด Generate Now เพื่อเขียนทับไฟล์นี้", "ok")
+        self._adopt(path, out.model)
         return True
-
-    def _open_old_filter(self, path: Path, text: str) -> bool:
-        """A whitelist file of this program from before settings were embedded (v1 / v2 engine): read its blocks
-        back into settings (wl_import); what a block cannot say keeps the remembered value and is named in the log."""
-        if wl_import.version_of(text) is None:
-            self.log("✗ เปิดแก้ไม่ได้: ไฟล์นี้ไม่ได้สร้างจากแท็บ Whitelist ของโปรแกรมนี้", "warn")
-            return False
-        guess = wl_import.guess_game(text)
-        if guess and guess != self._game_version:
-            self.log(f"✗ ไฟล์นี้ดูเป็นของ {guess.upper()} แต่หน้าต่างนี้เป็น {self._game_version.upper()}", "warn")
-            return False
-        if self._wl_data is None:
-            self.log("✗ ยังโหลดรายการ whitelist ไม่เสร็จ — รอให้โหลดเสร็จแล้วเปิดไฟล์อีกครั้ง "
-                     "(ใช้ชื่อไอเท็มจริงอ่านไฟล์เก่ากลับ)", "warn")
-            return False
-        res = wl_import.read(text, self._game_version, self._model, folder=path.parent)
-        if res is None or res["overlap"] < 0.2:
-            self.log("✗ เปิดแก้ไม่ได้: ชื่อในไฟล์ไม่ตรงกับรายการของเกมนี้ — ไฟล์น่าจะเป็นของอีกเกมหรืออีกลีก", "warn")
-            return False
-        self._adopt(path, res["model"])
-        ver = "v1 (โชว์เฉพาะแบบเก่า)" if res["version"] == "v1" else "v2 (ก่อนฝังค่าที่ตั้ง)"
-        self.log(f"✓ เปิด {path.name} แล้ว — ไฟล์รุ่น {ver} ไม่มีค่าที่ฝังไว้ จึงอ่านกลับจาก block "
-                 f"(แก้แล้วกด Generate Now เพื่อเขียนทับไฟล์นี้ แล้วไฟล์จะมีค่าฝังตามปกติ)", "ok")
-        for note in res["notes"]:
-            self.log("⚠ เดา/ปรับ: " + note, "warn")
-        for label, fname in res["sounds"].items():
-            self._adopt_sound(label, fname, path.parent)
-        return True
-
-    def _adopt_sound(self, label: str, fname: str, folder: Path) -> None:
-        """Tier S / A / B sound = the file the old filter played (found next to it); Q is left to the NeverSink tab."""
-        if label not in ("S", "A", "B"):
-            return
-        var = self._vars[f"sound_{label.lower()}"]
-        found = folder / fname
-        if Path(var.get() or "").name == fname:
-            return
-        if found.is_file():
-            var.set(str(found))
-            self.log(f"⚠ เสียง tier {label} ตั้งเป็น {fname} ตามไฟล์ที่เปิด (ใช้ร่วมกับแท็บ NeverSink)", "warn")
-        else:
-            self.log(f'⚠ เสียง tier {label} ในไฟล์คือ "{fname}" แต่ไม่พบไฟล์นี้ข้างๆ filter — ไม่ได้ตั้งเสียง', "warn")
-
-    def _log_model_notes(self) -> None:
-        for note in self._model.take_notes():
-            self.log("⚠ " + note, "warn")
 
     def _adopt(self, path: Path, model: WlModel) -> None:
         """Make `model` the tab's settings, the file's name the filter name, and Generate write back to this file."""
         self._model = model
-        if self._wl_data is not None:
+        if self._wl_data is not None and not model.loaded:
             self._model.set_data(*self._wl_data)
-            self._log_model_notes()
         old = self._panel
         if old is not None:
             old.destroy()
@@ -410,11 +349,11 @@ class FilterGenWindow:
         """Give the whitelist tab its data (also used by tests / callers that already have it)."""
         self._wl_data = (hub, base_text, extra_names)
         self._model.set_data(hub, base_text, extra_names)
-        self._log_model_notes()
+        msgs = wl_session.data_loaded_messages(self._model, base_text)
         if self._panel is not None:
             self._panel.data_loaded()
-        self.log("✓ โหลดรายการ whitelist แล้ว" if base_text else
-                 "⚠ ไม่มี NeverSink base filter — ไม่มี tier เริ่มต้น", "ok" if base_text else "warn")
+        for tag, msg in msgs:
+            self.log(msg, tag)
 
     # ---- Q style ------------------------------------------------------------
 
@@ -484,9 +423,9 @@ class FilterGenWindow:
         strictness = strictness if 0 <= strictness < len(_STRICTNESS_VALUES) else 2
         self._vars["strictness"].set(_STRICTNESS_VALUES[strictness])
 
-        self._vars["sound_s"].set(fg.get("sound_s", ""))
-        self._vars["sound_a"].set(fg.get("sound_a", ""))
-        self._vars["sound_b"].set(fg.get("sound_b", ""))
+        fg, _sound_notes = filter_core.migrate_sounds(fg)        # the old S / A / B files -> sounds 1 - 3 (once)
+        for n in filter_gen.SOUND_SLOTS:
+            self._vars[f"sound_{n}"].set(fg.get(f"sound_{n}", ""))
         self._vars["game_dir"].set(fg.get(f"game_dir_{self._game_version}", ""))
         self._vars["filter_name_tier"].set(fg.get("filter_name_tier") or filter_core.DEFAULT_TIER_NAME)
         self._vars["filter_name_whitelist"].set(fg.get("filter_name_whitelist") or filter_core.DEFAULT_WHITELIST_NAME)
@@ -513,9 +452,8 @@ class FilterGenWindow:
         strictness = int(strictness_str.split(" - ")[0]) if strictness_str else 2
         fg[f"strictness_{self._game_version}"] = strictness
 
-        fg["sound_s"] = self._vars["sound_s"].get()
-        fg["sound_a"] = self._vars["sound_a"].get()
-        fg["sound_b"] = self._vars["sound_b"].get()
+        for n in filter_gen.SOUND_SLOTS:
+            fg[f"sound_{n}"] = self._vars[f"sound_{n}"].get()
         fg[f"game_dir_{self._game_version}"] = self._vars["game_dir"].get()
         mode = mode or self._mode()
         fg["whitelist_enabled"] = (mode == "whitelist")

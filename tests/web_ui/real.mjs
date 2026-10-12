@@ -1,0 +1,34 @@
+// A smoke run against the REAL network (hub, NeverSink on GitHub, Pyodide CDN): node real.mjs <url> <shot dir>
+import { chromium } from "playwright";
+import fs from "fs"; import os from "os"; import path from "path";
+const url = process.argv[2] || "http://localhost:8000/";
+const out = process.argv[3] || os.tmpdir();
+const base = path.join(process.env.LOCALAPPDATA || os.homedir(), "ms-playwright");
+const chrome = fs.readdirSync(base).filter((d) => /^chromium-\d+$/.test(d)).sort().reverse().map((d) => path.join(base, d, "chrome-win64", "chrome.exe")).find((f) => fs.existsSync(f));
+const browser = await chromium.launch({ executablePath: chrome, headless: true });
+const page = await (await browser.newContext({ viewport: { width: 900, height: 1000 }, acceptDownloads: true })).newPage();
+const errs = []; page.on("console", (m) => { if (m.type() === "error" && !/favicon/.test(m.text())) errs.push(m.text()); });
+page.on("dialog", (d) => d.accept());
+const t0 = Date.now();
+await page.goto(url);
+await page.waitForSelector("#app:not([hidden])", { timeout: 120000 });
+const tBoot = Date.now() - t0;
+const t1 = Date.now();
+await page.waitForFunction(() => /โหลดรายการ whitelist แล้ว/.test(document.querySelector("#log").innerText), null, { timeout: 120000 });
+const tLists = Date.now() - t1;
+await page.click("#tab-wl");
+await page.click(".tier-btns button[data-t=B]");
+await page.selectOption("#pane-whitelist select[aria-label=หมวด]", { label: "Currency" });
+const rows = await page.locator("table.items tbody tr").count();
+const t2 = Date.now();
+await page.click("#btn-generate-wl");
+await page.waitForSelector("#result:not([hidden])", { timeout: 120000 });
+const tGen = Date.now() - t2;
+const [dl] = await Promise.all([page.waitForEvent("download"), page.click("#btn-download")]);
+const f = path.join(out, "real-" + dl.suggestedFilename()); await dl.saveAs(f);
+const text = fs.readFileSync(f, "utf-8");
+await page.screenshot({ path: path.join(out, "real_whitelist.png"), fullPage: true });
+const log = await page.locator("#log").innerText();
+await browser.close();
+console.log(JSON.stringify({ bootMs: tBoot, listsMs: tLists, generateMs: tGen, rows, bytes: text.length, lines: text.split("\n").length, hasEmbed: text.includes("# poe-checker-config:"),
+  names: /snapshot|hub/.exec(log)?.[0], errors: errs, log: log.split("\n").slice(-6) }, null, 1));

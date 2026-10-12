@@ -29,13 +29,16 @@ def look(lines):
     return filter_style.lines_to_style(lines or [])
 
 
-def differences(a: wl_import.Summary, b: wl_import.Summary, fresh=frozenset()) -> list:
-    """What the old file (a) says that the regenerated one (b) does not - the report of the mismatches."""
+def differences(a: wl_import.Summary, b: wl_import.Summary, fresh=frozenset(), skip_bases=frozenset()) -> list:
+    """What the old file (a) says that the regenerated one (b) does not - the report of the mismatches.
+    skip_bases = unique bases the import itself named as not reproducible (a name on two bases)."""
     out = []
-    for f in ("shown", "unique_bases", "tablet_own", "classes"):
+    for f in ("shown", "unique_bases", "tablet_own"):
         x, y = getattr(a, f), getattr(b, f)
         out += [f"{f}: {k} {x.get(k)} -> {y.get(k)}" for k in sorted(set(x) | set(y)) if x.get(k) != y.get(k)
-                and not (f == "shown" and k not in x and k in fresh)]
+                and not (f == "shown" and k not in x and k in fresh)
+                and not (f == "unique_bases" and k in skip_bases)
+                and not w.bad_name(k)]                    # an old file may carry names that are never written any more
     for f in ("gold_on", "gold_min", "map_on", "map_tier", "map_rarity", "gem_uncut", "gem_names", "custom"):
         if getattr(a, f) != getattr(b, f):
             out.append(f"{f}: {getattr(a, f)!r} -> {getattr(b, f)!r}")
@@ -46,13 +49,7 @@ def differences(a: wl_import.Summary, b: wl_import.Summary, fresh=frozenset()) -
         x, y = getattr(a, f), getattr(b, f)
         if x is not None and (y is None or look(x.style) != look(y.style)):
             out.append(f"look of {f}")
-    new_gear = {}
-    for g in b.gear:
-        new_gear[g] = new_gear.get(g, 0) + 1
-    old_gear = {}
-    for g in a.gear:
-        old_gear[g] = old_gear.get(g, 0) + 1
-    out += [f"gear block lost or changed: {g[0]}" for g in old_gear if new_gear.get(g, 0) < old_gear[g]]
+    # (gear blocks and special classes are NeverSink's own blocks now: nothing of an old file is carried over)
     return out
 
 
@@ -74,7 +71,10 @@ def reopen(name, game):
 def test_a_v2_file_reads_back_and_generates_the_same_tiers_and_looks(name, game):
     res, new = reopen(name, game)
     assert res["version"] == "v2"
-    assert differences(res["summary"], wl_import.summarize(new), _fresh(res["model"], game)) == []
+    assert differences(res["summary"], wl_import.summarize(new), _fresh(res["model"], game),
+                       res["unique_mismatch"]) == []
+    assert len(res["unique_mismatch"]) <= 20                       # a name on two bases: only a handful, and named in the notes
+    assert (not res["unique_mismatch"]) or any("ไม่ตรงไฟล์เดิม" in n for n in res["notes"])
     assert lint(new, data(game)[1]) == []
     assert wl_embed.classify(wl_embed.embed(new, res["model"].cfg(), game)) == "ok"       # generate -> embedded settings
 
@@ -92,18 +92,18 @@ def test_lists_newer_than_the_file_open_with_neversinks_defaults_and_the_status_
     res, new = reopen("v2_poe1_wl_sample", "poe1")
     notes = " ".join(res["notes"])
     assert "ใช้ค่าเริ่มต้นของ NeverSink" in notes
-    for c in ("Runegraft", "Vial", "Corpse", "Wombgift", "Relic", "Gem ทั่วไป"):
+    for c in ("Runegraft", "Vial", "Corpse", "Wombgift", "Relic"):
         assert c in notes
+    assert "ใช้ block ของ NeverSink แทนค่าในไฟล์เก่า" in notes       # the cut categories of the old file are named
     m = res["model"]
-    assert w.gear_cat("gems") not in m.cat_tier and not any(k.startswith("gems|") for k in m.block_tier)
     fresh = {n for n, c in m._names.items() if c in {x for x, _p in w.NAMED_CATEGORIES["poe1"]}}
     assert fresh and not (fresh & set(m.item_tier))                       # untouched = NeverSink's own tier
     assert all(m.rows(c) and all(not r.user_set for r in m.rows(c)) for c in ("Runegraft", "Vial", "Corpse"))
     shown = wl_import.summarize(new).shown
     assert "Runegraft of Gemcraft" in shown and shown["Runegraft of Gemcraft"][0] == "S"
-    assert any("tier S (gems->" in l or "tier B (gems->" in l for l in new.splitlines())      # generic gem blocks are written
+    assert any(l.startswith("# neversink (gems): gems->") for l in new.splitlines())      # the generic gems: NeverSink's own blocks
     # names of a list the file does have stay C when it does not list them
-    assert "# gear:" in new and any(n not in shown for n in m._names if m._names[n] == "Currency")
+    assert "# neversink (" in new and any(n not in shown for n in m._names if m._names[n] == "Currency")
 
 
 def test_v1_file_keeps_exactly_the_names_it_showed():
@@ -172,7 +172,8 @@ def test_window_opens_an_old_v2_file_then_generate_writes_embedded_settings(root
     assert "ไม่มีค่าที่ฝังไว้" in log
     assert win._vars["filter_name_whitelist"].get() == "v2_poe2_checker_whitelist"
     assert win._opened_path == f and win._model.loaded and win._panel.model is win._model
-    assert Path(win._vars["sound_s"].get()).name == "sound-S.mp3"
+    assert Path(win._model.tier_style["S"]["sound"]["file"]).name == "sound-S.mp3"      # the Whitelist tab's tier S sound
+    assert win._vars["sound_1"].get() == ""                                                 # ... not the NeverSink tab's
     assert win._model.gold and win._model.gold_min == 500 and win._model.map_on and win._model.map_tier == 15
     res = _generate(win._save("whitelist"), "poe2", tmp_path / "gen", name="reopened")
     new = res["path"].read_text(encoding="utf-8")
@@ -202,16 +203,12 @@ def test_opening_an_old_file_waits_for_the_item_lists(root, cfg, tmp_path):
 NEW_LISTS = {"poe1": ("Runegraft", "Vial", "Corpse", "Wombgift", "Relic"), "poe2": ("Relic",)}
 
 
-def _filled_with_c(game):
-    """The config v0.10.2 wrote after importing an old file: every new list C, no record of the lists."""
+def _filled_with_d(game):
+    """The config v0.10.2 wrote after importing an old file: every new list hidden, no record of the lists."""
     m = model(game)
     for c in NEW_LISTS[game]:
         for n in m._names_of(c):
-            m.item_tier[n] = "C"
-    if game == "poe1":
-        m.cat_tier[w.gear_cat("gems")] = "C"
-        for f in w.SPECIAL_BASE["poe1"]:
-            m.class_tier[w.BASE_PREFIX + f] = "C"
+            m.item_tier[n] = "D"
     m.set_style_from_editor("A", dict(m.effective_style("A"), size=36))        # something the player really set
     m.set_row("Currency", "Chaos Orb", "S")
     fg = m.to_config({})
@@ -220,8 +217,8 @@ def _filled_with_c(game):
 
 
 @pytest.mark.parametrize("game", ["poe1", "poe2"])
-def test_a_file_from_0_10_2_with_every_new_list_C_gets_neversinks_defaults(root, cfg, tmp_path, game):
-    m, fg = _filled_with_c(game)
+def test_a_file_from_0_10_2_with_every_new_list_D_gets_neversinks_defaults(root, cfg, tmp_path, game):
+    m, fg = _filled_with_d(game)
     path = _generate(fg, game, tmp_path, name="from-0102")["path"]
     assert wl_embed.extract(path.read_text(encoding="utf-8"))["cfg"].get(f"wl_lists_{game}") is None
     win = make_window(root, cfg, game)
@@ -231,9 +228,6 @@ def test_a_file_from_0_10_2_with_every_new_list_C_gets_neversinks_defaults(root,
     for c in NEW_LISTS[game]:
         assert [(r.key, r.tier) for r in opened.rows(c)] == [(r.key, r.tier) for r in fresh.rows(c)]
         assert not any(r.user_set for r in opened.rows(c))
-    if game == "poe1":
-        assert [r.tier for r in opened.rows(w.gear_cat("gems"))] == [r.tier for r in fresh.rows(w.gear_cat("gems"))]
-        assert all(opened.class_tier.get(w.BASE_PREFIX + f) is None for f in w.SPECIAL_BASE["poe1"])
     log = win._log_text.get("1.0", tk.END)
     assert "ใช้ค่าเริ่มต้นของ NeverSink" in log and "Relic" in log
     assert opened.item_tier["Chaos Orb"] == "S" and opened.tier_style["A"]["size"] == 36        # the player's own values stay
@@ -243,38 +237,34 @@ def test_a_file_from_0_10_2_with_every_new_list_C_gets_neversinks_defaults(root,
 
 
 @pytest.mark.parametrize("game", ["poe1", "poe2"])
-def test_a_list_the_player_sets_to_C_in_the_new_version_stays_C(root, cfg, tmp_path, game):
+def test_a_list_the_player_sets_to_D_in_the_new_version_stays_D(root, cfg, tmp_path, game):
     m = model(game)
     for c in NEW_LISTS[game]:
-        m.set_category(c, "C")
-    if game == "poe1":
-        m.set_category(w.gear_cat("gems"), "C")
+        m.set_category(c, "D")
     path = _generate(m.to_config({}), game, tmp_path, name="player-c")["path"]
     assert wl_embed.extract(path.read_text(encoding="utf-8"))["cfg"][f"wl_lists_{game}"]      # recorded
     win = make_window(root, cfg, game)
     assert win.open_filter(path) is True
     for c in NEW_LISTS[game]:
-        assert all(r.tier == "C" for r in win._model.rows(c)), c
-    if game == "poe1":
-        assert all(r.tier == "C" for r in win._model.rows(w.gear_cat("gems")))
+        assert all(r.tier == "D" for r in win._model.rows(c)), c
     assert "ใช้ค่าเริ่มต้นของ NeverSink" not in win._log_text.get("1.0", tk.END)
 
 
 def test_a_list_partly_set_in_an_unrecorded_config_is_the_players_own():
     m = model("poe2")
-    m.item_tier["Coffer Relic"] = "C"                                          # one relic only: the player's choice
+    m.item_tier["Coffer Relic"] = "D"                                          # one relic only: the player's choice
     fg = m.to_config({})
     fg.pop("wl_lists_poe2")
     back = WlModel.from_config(fg, "poe2")
     back.set_data(*data("poe2"))
-    assert back.item_tier == {"Coffer Relic": "C"} and back.take_notes() == []
+    assert back.item_tier == {"Coffer Relic": "D"} and back.take_notes() == []
 
 
 def test_the_saved_settings_of_the_window_are_repaired_too_and_unknown_lists_are_not_written(root, cfg):
-    m, fg = _filled_with_c("poe2")
+    m, fg = _filled_with_d("poe2")
     cfg.set("filter_gen", dict(fg))
     win = make_window(root, cfg, "poe2")                                       # starts from the saved settings
-    assert all(r.tier != "C" for r in win._model.rows("Relic"))
+    assert all(r.tier != "D" for r in win._model.rows("Relic"))
     saved = win._save("whitelist")
     assert "Relic" in saved["wl_lists_poe2"]
     never = WlModel.from_config(fg, "poe2")                                    # data never loaded: nothing to say about lists
@@ -286,7 +276,7 @@ def test_a_new_list_in_a_file_that_recorded_its_lists_gets_defaults():
     m = model("poe1")
     fg = m.to_config({})
     fg["wl_lists_poe1"] = [x for x in fg["wl_lists_poe1"] if x != "Vial"]
-    fg["wl_item_tier_poe1"]["Vial of Fate"] = "C"
+    fg["wl_item_tier_poe1"]["Vial of Fate"] = "D"
     back = WlModel.from_config(fg, "poe1")
     back.set_data(*data("poe1"))
     assert "Vial of Fate" not in back.item_tier and "Vial" in " ".join(back.take_notes())

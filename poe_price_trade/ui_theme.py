@@ -5,6 +5,7 @@ Entry widgets white, so gold text (#E8D5A0) ended up on white and was unreadable
 colours; everything the windows used from the default theme (Notebook) is restyled here to match.
 """
 from __future__ import annotations
+import tkinter as tk
 from tkinter import ttk
 
 BG = "#1C1C1C"
@@ -12,6 +13,36 @@ FG = "#E8D5A0"
 ACCENT = "#C8A050"
 INPUT_BG = "#2A2A2A"
 BUTTON_BG = "#3A3020"
+
+
+def calm(widget):
+    """Keep a readonly Combobox / Entry from showing a highlighted (selected) text.
+
+    A readonly Combobox selects its whole text when a value is picked and keeps the focus; the program then often
+    puts another text in it (a prompt such as "ตั้งทั้งกลุ่ม…"). Tk draws a selected text cluster by cluster, so a Thai
+    word with vowels / tone marks above the line fell apart ("ต◌ั◌้ง..." - verified with a real screenshot). Nothing is
+    ever selected in such a box: the selection is cleared after a pick and whenever the box gets the focus, and the
+    focus goes back to the window after a pick. Returns the widget (so it can wrap a constructor)."""
+    def clear(_e=None):
+        try:
+            widget.selection_clear()
+        except tk.TclError:
+            pass
+
+    def picked(_e=None):
+        clear()
+
+        def later():
+            clear()
+            try:
+                widget.winfo_toplevel().focus_set()
+            except tk.TclError:
+                pass
+        widget.after(1, later)           # after the handlers of the pick (they set the text) have run
+
+    widget.bind("<<ComboboxSelected>>", picked, add="+")
+    widget.bind("<FocusIn>", lambda _e: widget.after_idle(clear), add="+")
+    return widget
 
 
 def apply(widget) -> None:

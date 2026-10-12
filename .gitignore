@@ -46,3 +46,8 @@ wl-sample/
 
 # web build: copies of poe_price_trade/filter_gen.py + filter_core.py (tools/sync_web_py.py)
 web/py/
+
+# node packages of the web tests
+tests/web_parity/node_modules/
+web/tests/node_modules/
+tests/web_ui/node_modules/

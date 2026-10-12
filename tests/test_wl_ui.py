@@ -85,15 +85,15 @@ def test_item_beats_category_beats_default_in_rows_and_in_the_file():
     m = model("poe1")
     start = {r.key: r for r in m.rows("Currency")}
     assert start["Chaos Orb"].default == start["Chaos Orb"].tier and not start["Chaos Orb"].user_set
-    m.set_category("Currency", "C")
-    assert all(r.tier == "C" for r in m.rows("Currency")) and m.category_tier("Currency") == "C"
+    m.set_category("Currency", "D")
+    assert all(r.tier == "D" for r in m.rows("Currency")) and m.category_tier("Currency") == "D"
     m.set_row("Currency", "Chaos Orb", "S")
     rows = {r.key: r for r in m.rows("Currency")}
-    assert rows["Chaos Orb"].tier == "S" and rows["Chaos Orb"].user_set and rows["Divine Orb"].tier == "C"
+    assert rows["Chaos Orb"].tier == "S" and rows["Chaos Orb"].user_set and rows["Divine Orb"].tier == "D"
     text = text_of(m)
-    assert '"Chaos Orb"' in block(text, "# tier S\n") and '"Divine Orb"' not in text.split("# hide everything")[0].split("# tier C")[0]
+    assert '"Chaos Orb"' in block(text, "# tier S\n") and '"Divine Orb"' not in text.split("# hide everything")[0].split("# tier D")[0]
     m.reset_row("Currency", "Chaos Orb")
-    assert {r.key: r for r in m.rows("Currency")}["Chaos Orb"].tier == "C"      # back to the category tier
+    assert {r.key: r for r in m.rows("Currency")}["Chaos Orb"].tier == "D"      # back to the category tier
     m.reset_category("Currency")
     assert [r.tier for r in m.rows("Currency")] == [start[r.key].tier for r in m.rows("Currency")]
     assert m.changed_count("Currency") == 0
@@ -106,10 +106,10 @@ def test_whole_category_clears_item_overrides_so_it_is_not_lost():
     assert all(r.tier == "A" and not r.user_set for r in m.rows("Scarab"))
 
 
-def test_toggle_is_into_the_active_tier_or_c():
+def test_toggle_is_into_the_active_tier_or_d():
     m = model("poe1")
     m.toggle_row("Currency", "Chaos Orb", "S")          # shown -> hidden
-    assert {r.key: r for r in m.rows("Currency")}["Chaos Orb"].tier == "C"
+    assert {r.key: r for r in m.rows("Currency")}["Chaos Orb"].tier == "D"
     m.toggle_row("Currency", "Chaos Orb", "S")          # hidden -> the active tier
     assert {r.key: r for r in m.rows("Currency")}["Chaos Orb"].tier == "S"
 
@@ -126,11 +126,11 @@ def test_tablets_are_listed_with_tablet_default_and_follow_their_tier():
     assert rows and all(r.tier == w.TABLET_DEFAULT and not r.user_set for r in rows.values())
     assert "Ritual Tablet" not in {r.key for r in m.rows("Fragment")}          # listed once, under Tablet
     m.set_row("Tablet", "Ritual Tablet", "S")
-    m.set_row("Tablet", "Abyss Tablet", "C")
+    m.set_row("Tablet", "Abyss Tablet", "D")
     text = text_of(m)
     assert 'BaseType == "Ritual Tablet"' in block(text, "# tablets - tier S")
-    assert "Hide" in block(text, "# tablets - tier C") and 'BaseType == "Abyss Tablet"' in block(text, "# tablets - tier C")
-    assert 'Class == "Tablet"' in block(text, "# tablets\n")
+    assert "Hide" in block(text, "# tablets - tier D") and 'BaseType == "Abyss Tablet"' in block(text, "# tablets - tier D")
+    assert 'Class "Tablet"' in block(text, "# tablets\n")
 
 
 def test_unique_rows_show_name_and_base_and_warn_on_a_shared_base():
@@ -142,115 +142,31 @@ def test_unique_rows_show_name_and_base_and_warn_on_a_shared_base():
         shared.setdefault(base, []).append(name)
     base, names = next((b, n) for b, n in shared.items() if len(n) > 1)
     assert not m.unique_conflicts()
-    m.set_row(UNIQUE, names[0], "C")
+    m.set_row(UNIQUE, names[0], "D")
     assert any(b == base for b, _t in m.unique_conflicts())
     warned = [r for r in m.rows(UNIQUE) if r.label.endswith(f"({base})")]
     assert warned and all(r.note.startswith("⚠") for r in warned)
     # the higher tier wins on the shared base
-    assert {r.key: r for r in m.rows(UNIQUE)}[names[0]].tier == "C"
+    assert {r.key: r for r in m.rows(UNIQUE)}[names[0]].tier == "D"
     text = text_of(m)
     assert f'"{base}"' in text
 
 
-def test_every_gear_group_is_a_category_listing_its_blocks_one_by_one():
-    m = model("poe1")
-    cats = dict(m.categories())
-    assert "Gear" not in cats and "อุปกรณ์ (กลุ่ม)" not in cats.values()
-    assert [c for c in cats if c.startswith("gear:")] == [w.gear_cat(g) for g, _n, _d in w.GEAR_GROUPS["poe1"]]
-    assert len(m.rows(GEAR_STORY)) > 50 and all(r.tier == "B" for r in m.rows(GEAR_STORY))
-    assert all(r.tier == "A" for r in m.rows(GEAR_LINKS))                          # the group's default
-    assert all(r.label and "[" in r.label for r in m.rows(GEAR_JEWEL))
-    assert sum(len(m.rows(c)) for c in cats if c.startswith("gear:")) == len(w.gear_blocks("poe1", data("poe1")[1]))
-
-
-def test_gear_block_beats_category_beats_default_in_rows_and_in_the_file():
-    m = model("poe1")
-    keys = [r.key for r in m.rows(GEAR_JEWEL)]
-    m.set_category(GEAR_JEWEL, "S")
-    assert all(r.tier == "S" for r in m.rows(GEAR_JEWEL)) and m.category_tier(GEAR_JEWEL) == "S"
-    m.set_row(GEAR_JEWEL, keys[0], "C")
-    rows = {r.key: r for r in m.rows(GEAR_JEWEL)}
-    assert rows[keys[0]].tier == "C" and rows[keys[0]].user_set and rows[keys[1]].tier == "S"
-    assert all(r.tier == "B" for r in m.rows(GEAR_STORY))                           # other categories untouched
-    text = text_of(m)
-    segs = [x for x in text.split(chr(10) * 2) if x.startswith("# gear: Jewel")]
-    assert len(segs) == len(keys)
-    assert segs[0].splitlines()[1] == "Hide" and all(" - tier S (" in x.splitlines()[0] for x in segs[1:])
-    m.reset_row(GEAR_JEWEL, keys[0])
-    assert {r.key: r for r in m.rows(GEAR_JEWEL)}[keys[0]].tier == "S"             # the whole category again
-    m.set_row(GEAR_JEWEL, keys[2], "A")
-    m.set_category(GEAR_JEWEL, "B")                                                 # a new whole-category tier clears the blocks
-    assert not m.block_tier and all(r.tier == "B" for r in m.rows(GEAR_JEWEL))
-    m.set_row(GEAR_JEWEL, keys[3], "S")
-    m.reset_category(GEAR_JEWEL)
-    assert not m.block_tier and m.category_tier(GEAR_JEWEL) is None
-    assert all(r.tier == "B" for r in m.rows(GEAR_JEWEL))
-
-
-def test_old_gear_settings_are_folded_into_the_gear_categories():
-    old = {"wl_gear_tier_poe1": {"jewel": "C", "links": "S"}, "wl_cat_tier_poe1": {"Gear": "A", "Currency": "S"}}
-    m = WlModel.from_config(old, "poe1")
-    m.set_data(*data("poe1"))
-    assert m.cat_tier == {"Currency": "S", GEAR_JEWEL: "C", GEAR_LINKS: "S", GEAR_STORY: "A",
-                          **{w.gear_cat(g): "A" for g, _n, _d in w.GEAR_GROUPS["poe1"] if g not in ("jewel", "links")}}
-    assert all(r.tier == "C" for r in m.rows(GEAR_JEWEL)) and all(r.tier == "A" for r in m.rows(GEAR_STORY))
-    fg = m.to_config(dict(old))
-    assert "wl_gear_tier_poe1" not in fg and "Gear" not in fg["wl_cat_tier_poe1"]
-    m.reset_category(GEAR_JEWEL)                                                    # the old key must not come back
-    again = WlModel.from_config(m.to_config(dict(fg)), "poe1")
-    again.set_data(*data("poe1"))
-    assert all(r.tier == "B" for r in again.rows(GEAR_JEWEL))
-    # and the engine still understands an old config handed to it directly
-    assert w.gear_tiers("poe1", old)["jewel"] == "C" and w.gear_tiers("poe1", old)["story"] == "A"
-
-
-def test_special_classes_gold_map_gem_and_typed_names_reach_the_file():
-    m = model("poe2")
-    m.set_row("Special", "Vault Keys", "S")
-    m.gold, m.gold_min = True, 250
-    m.map_on, m.map_tier, m.map_rarity = True, 9, "Rare"
-    m.gem_uncut = {"Uncut Skill Gem": 14}
-    m.gem_tier = "A"
-    m.custom = [{"name": "Heavy Belt", "rarities": ["Magic", "Rare"], "tier": "S"}]
-    t = text_of(m)
-    assert 'Class == "Vault Keys"' in block(t, "# tier S - special classes")
-    assert "StackSize >= 250" in block(t, "# gold")
-    seg = block(t, "# waystones")
-    assert "WaystoneTier >= 9" in seg and "Rarity >= Rare" in seg
-    assert "GemLevel >= 14" in block(t, "# uncut gem")
-    seg = block(t, "# typed names")
-    assert 'BaseType "Heavy Belt"' in seg and "Rarity Magic Rare" in seg
-
-
-def test_style_edit_keeps_only_the_differences_and_sound_is_never_stored_for_s_a_b():
+def test_style_edit_keeps_only_the_differences_and_each_style_keeps_its_own_sound():
     m = model("poe1")
     base = m.base_style("S")
     assert base["sound"]["kind"] == "game" and base["size"]                    # NeverSink's own S look
     edited = dict(base, text=[1, 2, 3, 255], sound={"kind": "file", "id": 1, "file": "x.mp3", "volume": 300})
     m.set_style_from_editor("S", edited)
-    assert m.tier_style["S"]["text"] == [1, 2, 3, 255] and m.tier_style["S"]["sound"]["kind"] == "none"
+    assert m.tier_style["S"]["text"] == [1, 2, 3, 255] and m.tier_style["S"]["sound"]["file"] == "x.mp3"   # the tier's own sound
     assert m.tier_style["S"]["size"] is None                                    # untouched part follows NeverSink
     lines = block(text_of(m), "# tier S\n")
     assert "SetTextColor 1 2 3 255" in lines and "PlayAlertSound 6" in lines and "SetFontSize 45" in lines
+    assert 'CustomAlertSoundOptional "x.mp3"' in block(text_of(m, sound_names={"S": "x.mp3"}), "# tier S\n")
     m.set_style_from_editor("G", dict(m.base_style("G"), sound={"kind": "file", "id": 1, "file": "g.mp3", "volume": 200}))
     assert m.tier_style["G"]["sound"]["file"] == "g.mp3"                       # G / Tablet / Map keep theirs
     m.set_style("S", None)
     assert "S" not in m.tier_style
-
-
-def test_config_round_trip_keeps_every_setting():
-    m = model("poe2")
-    m.set_row("Currency", "Chaos Orb", "S"); m.set_category("Rune", "C"); m.set_category(GEAR_STORY, "C")
-    m.set_row(GEAR_JEWEL, m.rows(GEAR_JEWEL)[0].key, "S")
-    m.set_tier_stack("B", 3); m.set_stack(["Chaos Orb"], 5)
-    m.set_row("Special", "Vault Keys", "A"); m.set_row(UNIQUE, "Ab Aeterno", "S")
-    m.gold, m.gold_min, m.map_on, m.map_tier, m.map_rarity = True, 5, True, 12, "Magic"
-    m.gem_uncut, m.gem_tier = {"Uncut Spirit Gem": 3}, "S"
-    m.custom = [{"name": "belt", "rarities": ["Rare"], "tier": "A"}]
-    m.set_style("Tablet", {"text": [9, 9, 9, 255]})
-    fg = m.to_config({"keep": 1})
-    back = WlModel.from_config(json.loads(json.dumps(fg)), "poe2")
-    assert back.to_config({}) == m.to_config({}) and fg["keep"] == 1 and fg["wl_v2"] is True
 
 
 # ---------------------------------------------------------------------------- legacy config
@@ -261,17 +177,17 @@ def test_legacy_config_is_converted_once_and_nothing_is_deleted():
     updates, notes = WlModel.convert_legacy(old, "poe1")
     assert notes and updates["wl_converted_poe1"] is True
     ct = updates["wl_cat_tier_poe1"]
-    assert ct["Fragment"] == "C" and "Currency" not in ct and "Scarab" not in ct       # unticked categories hidden
-    assert ct[UNIQUE] == "C" and ct[GEAR_STORY] == "C" and ct[w.OTHER_CATEGORY] == "C"
-    assert updates["wl_item_tier_poe1"] == {"Chaos Orb": "C"}
+    assert ct["Fragment"] == "D" and "Currency" not in ct and "Scarab" not in ct       # unticked categories hidden
+    assert ct[UNIQUE] == "D" and ct[w.OTHER_CATEGORY] == "D" and not any(k.startswith("gear:") for k in ct)
+    assert updates["wl_item_tier_poe1"] == {"Chaos Orb": "D"}
     merged = {**old, **updates}
     assert merged["whitelist_cats_poe1"] == old["whitelist_cats_poe1"]                 # old keys untouched
     assert WlModel.convert_legacy(merged, "poe1") == ({}, [])                          # only once
     m = WlModel.from_config(merged, "poe1")
     m.set_data(*data("poe1"))
     tiers = {r.key: r.tier for r in m.rows("Currency")}
-    assert tiers["Chaos Orb"] == "C" and tiers["Divine Orb"] != "C"
-    assert all(r.tier == "C" for r in m.rows("Fragment")) and all(r.tier == "C" for r in m.rows(GEAR_LINKS))
+    assert tiers["Chaos Orb"] == "D" and tiers["Divine Orb"] != "D"
+    assert all(r.tier == "D" for r in m.rows("Fragment"))
 
 
 def test_legacy_unique_all_and_fragment_keep_tablets_and_uniques():
@@ -279,7 +195,7 @@ def test_legacy_unique_all_and_fragment_keep_tablets_and_uniques():
     updates, _n = WlModel.convert_legacy(old, "poe2")
     assert UNIQUE not in updates["wl_cat_tier_poe2"] and "Tablet" not in updates["wl_cat_tier_poe2"]
     old = {"whitelist_cats_poe2": ["Currency"]}
-    assert WlModel.convert_legacy(old, "poe2")[0]["wl_cat_tier_poe2"]["Tablet"] == "C"
+    assert WlModel.convert_legacy(old, "poe2")[0]["wl_cat_tier_poe2"]["Tablet"] == "D"
     assert WlModel.convert_legacy({}, "poe1") == ({}, [])                                # a fresh config: nothing
     assert WlModel.convert_legacy({"wl_cat_tier_poe1": {}, "whitelist_cats_poe1": []}, "poe1")[1] == []
 
@@ -296,11 +212,11 @@ def test_nothing_is_clickable_until_a_tier_is_chosen(root, cfg):
     win = make_window(root, cfg)
     p = win._panel
     assert p.active.get() == ""
-    for widget in (p._style_btn, *p._act_btns):
+    for widget in (p._tier_reset, *p._act_btns):
         assert str(widget.cget("state")) == "disabled"
     assert str(p._search.cget("state")) == "disabled"
     p.active.set("S"); p._on_tier_picked()
-    for widget in (p._style_btn, *p._act_btns):
+    for widget in (p._tier_reset, *p._act_btns):
         assert str(widget.cget("state")) == "normal"
 
 
@@ -315,7 +231,7 @@ def test_clicking_a_row_toggles_and_the_list_shows_the_tier_suffix(root, cfg):
     p.model.toggle_row("Currency", "Chaos Orb", "S"); p.refresh_list()
     iid = next(i for i, k in p._row_keys.items() if k == "Chaos Orb")
     after = p.tree.item(iid, "values")
-    assert after[0].startswith("☐") and after[1] == "C" and "ตั้งเอง" in after[2]
+    assert after[0].startswith("☐") and after[1] == "D" and "ตั้งเอง" in after[2]
     p.cat_var.set("Tablet"); p.refresh_list()
     vals = [p.tree.item(i, "values") for i in p.tree.get_children()]
     assert vals and all(v[1] == "Tablet" for v in vals)
@@ -333,8 +249,8 @@ def test_buttons_move_reset_and_whole_category(root, cfg):
     assert {p.model.item_tier[k] for k in (k1, k2)} == {"A"}
     p.tree.selection_set(next(i for i, k in p._row_keys.items() if k == k1)); p._reset_selected()
     assert k1 not in p.model.item_tier and k2 in p.model.item_tier
-    p._set_cat("C")
-    assert p.model.category_tier("Scarab") == "C" and not p.model.item_tier
+    p._set_cat("D")
+    assert p.model.category_tier("Scarab") == "D" and not p.model.item_tier
     p._reset_cat()
     assert p.model.category_tier("Scarab") is None
 
@@ -343,7 +259,7 @@ def test_window_save_writes_wl_v2_and_generate_gives_the_chosen_file(root, cfg, 
     win = make_window(root, cfg)
     p = win._panel
     p.model.set_row("Currency", "Chaos Orb", "S")
-    p.model.set_category(GEAR_STORY, "C")
+    p.model.set_category("Rune", "D")
     p.model.set_row("Tablet", "Ritual Tablet", "A")
     p.v_gold.set(True); p.v_gold_min.set("77")
     p.v_map.set(True); p.v_map_tier.set("11"); p.v_map_rar.set("Rare")
@@ -351,10 +267,10 @@ def test_window_save_writes_wl_v2_and_generate_gives_the_chosen_file(root, cfg, 
     win._vars["game_dir"].set(str(tmp_path / "game"))
     fg = win._save("whitelist")
     assert fg["wl_v2"] is True and fg["whitelist_enabled"] is True
-    assert fg["wl_item_tier_poe2"]["Chaos Orb"] == "S" and fg["wl_cat_tier_poe2"][GEAR_STORY] == "C"
+    assert fg["wl_item_tier_poe2"]["Chaos Orb"] == "S" and fg["wl_cat_tier_poe2"]["Rune"] == "D"
     assert fg["whitelist_gold_min"] == 77 and fg["wl_map_tier_min"] == 11 and fg["whitelist_gem_uncut_poe2"] == {"Uncut Skill Gem": 13}
     hub, base, extra = data("poe2")
-    cfg_obj = type("C", (), {"get": lambda self, k, d=None: dict(fg) if k == "filter_gen" else d,
+    cfg_obj = type("D", (), {"get": lambda self, k, d=None: dict(fg) if k == "filter_gen" else d,
                              "app_dir": lambda self: tmp_path / "app"})()
     with mock.patch.object(filter_service.neversink_source, "fetch_base_filter", return_value=(base, "t")), \
          mock.patch.object(filter_service.hub_client, "get_prices", return_value=hub), \
@@ -376,16 +292,50 @@ def test_window_with_a_legacy_config_converts_once_and_logs_it(root, cfg):
     assert "แปลง whitelist เดิม" in log
     saved = cfg.get("filter_gen")
     assert saved["wl_converted_poe2"] is True and saved["whitelist_cats_poe2"] == ["Currency"]   # old key kept
-    assert saved["wl_cat_tier_poe2"]["Fragment"] == "C"
+    assert saved["wl_cat_tier_poe2"]["Fragment"] == "D"
     win2 = FilterGenWindow(root, cfg, "poe2", on_generate=lambda *_a: None)
     assert "แปลง whitelist เดิม" not in win2._log_text.get("1.0", tk.END)
 
 
-def test_sounds_are_shown_read_only_from_the_neversink_tab(root, cfg):
+def test_the_tabs_do_not_share_sounds_each_tier_has_its_own_in_its_style_editor(root, cfg):
     win = make_window(root, cfg)
-    win._vars["sound_s"].set("D:/snd/ragnarok.mp3")
-    win._panel.refresh_sounds()
-    assert "ragnarok.mp3" in win._panel._sound_lbl.cget("text")
-    win._nb.select(1)
-    win._panel._on_goto_sound()
-    assert win._mode() == "tier"
+    win._vars["sound_1"].set("D:/snd/ragnarok.mp3")                 # the NeverSink tab's sound 1
+    p = win._panel
+    p.active.set("S"); p._on_tier_picked()
+    assert p._tier_editor.get_style()["sound"]["kind"] != "file"     # the Whitelist tab does not see it
+    p._tier_editor._snd_file.set("D:/snd/mine.mp3"); p._tier_editor._snd_kind.set("file"); p._tier_editor._changed()
+    assert win._model.tier_style["S"]["sound"]["file"] == "D:/snd/mine.mp3"
+    saved = win._save("whitelist")
+    assert saved["sound_1"] == "D:/snd/ragnarok.mp3" and saved["wl_tier_style"]["S"]["sound"]["file"] == "D:/snd/mine.mp3"
+    assert "sound_s" not in saved and saved["sound_format"] == 2
+
+
+def test_gold_map_gem_and_typed_names_reach_the_file():
+    m = model("poe2")
+    m.gold, m.gold_min = True, 250
+    m.map_on, m.map_tier, m.map_rarity = True, 9, "Rare"
+    m.gem_uncut = {"Uncut Skill Gem": 14}
+    m.gem_tier = "A"
+    m.custom = [{"name": "Heavy Belt", "rarities": ["Magic", "Rare"], "tier": "S"}]
+    t = text_of(m)
+    assert "StackSize >= 250" in block(t, "# gold")
+    seg = block(t, "# waystones")
+    assert "WaystoneTier >= 9" in seg and "Rarity >= Rare" in seg
+    assert "GemLevel >= 14" in block(t, "# uncut gem")
+    seg = block(t, "# typed names")
+    assert 'BaseType "Heavy Belt"' in seg and "Rarity Magic Rare" in seg
+
+
+def test_config_round_trip_keeps_every_setting():
+    m = model("poe2")
+    m.set_row("Currency", "Chaos Orb", "S"); m.set_category("Rune", "D")
+    m.set_flask_custom("Flask", True); m.set_flask_rarity("Flask", "Magic", "D"); m.set_flask_rarity("Charm", "Normal", "B")
+    m.set_tier_stack("B", 3); m.set_stack(["Chaos Orb"], 5)
+    m.set_row(UNIQUE, "Ab Aeterno", "S")
+    m.gold, m.gold_min, m.map_on, m.map_tier, m.map_rarity = True, 5, True, 12, "Magic"
+    m.gem_uncut, m.gem_tier = {"Uncut Spirit Gem": 3}, "S"
+    m.custom = [{"name": "belt", "rarities": ["Rare"], "tier": "A"}]
+    m.set_style("Tablet", {"text": [9, 9, 9, 255]})
+    fg = m.to_config({"keep": 1})
+    back = WlModel.from_config(json.loads(json.dumps(fg)), "poe2")
+    assert back.to_config({}) == m.to_config({}) and fg["keep"] == 1 and fg["wl_v2"] is True

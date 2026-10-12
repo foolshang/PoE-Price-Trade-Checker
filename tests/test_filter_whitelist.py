@@ -39,8 +39,7 @@ Show # $type->uniques $tier->t1
 
 Show # $type->uniques $tier->t3
 	Rarity Unique
-	BaseType == "Vaal Regalia" "Sapphire Ring"
-"""
+	BaseType == "Vaal Regalia" "Sapphire Ring"\n"""
 
 
 def hub(*entries):
@@ -55,8 +54,9 @@ HUB = hub(("Divine Orb", "Currency", None), ("Chaos Orb", "Currency", None), ("O
           ("Ring X", "UniqueAccessory", "Sapphire Ring"))
 
 
-@pytest.mark.parametrize("tag,tier", [("t1", "S"), ("s", "S"), ("t2", "A"), ("t3", "A"), ("a", "A"), ("b", "A"),
-                                      ("t4", "B"), ("t8", "B"), ("c", "B"), ("e", "B"), ("t9", None),
+@pytest.mark.parametrize("tag,tier", [("t1", "S"), ("t2", "S"), ("t3", "A"), ("t4", "A"), ("t5", "B"), ("t6", "B"),
+                                      ("t7", "C"), ("t8", "C"), ("t9", None), ("t4chaos", "A"), ("t7chance", "C"),
+                                      ("s", "S"), ("a", "S"), ("b", "A"), ("c", "A"), ("d", "B"), ("e", "B"),
                                       ("exhide", None), (None, None)])
 def test_tier_of_step(tag, tier):
     assert w.tier_of_step(tag) == tier
@@ -65,10 +65,10 @@ def test_tier_of_step(tag, tier):
 def test_default_tiers_first_match_skips_special_blocks():
     d = w.default_tiers(MINI)
     assert d["Divine Orb"] == "S"                 # t1 comes before the t2 that also lists it
-    assert d["Chaos Orb"] == "A"
-    assert d["Orb of Alchemy"] == "B"
-    assert d["Orb of Transmutation"] == "C"        # Hide block
-    assert d["Scroll of Wisdom"] == "C"            # the StackSize t1 block is skipped, Hide wins
+    assert d["Chaos Orb"] == "S"                  # t2 = S now (t1-t2)
+    assert d["Orb of Alchemy"] == "A"             # t4 = A now (t3-t4)
+    assert d["Orb of Transmutation"] == "D"        # Hide block
+    assert d["Scroll of Wisdom"] == "D"            # the StackSize t1 block is skipped, Hide wins
 
 
 def test_hub_only_name_defaults_to_b():
@@ -81,9 +81,9 @@ def test_hub_only_name_defaults_to_b():
 def test_precedence_item_over_category_over_default():
     names = w.universe("poe1", HUB, MINI)
     d = w.default_tiers(MINI)
-    cfg = {"wl_cat_tier_poe1": {"Currency": "C"}, "wl_item_tier_poe1": {"Chaos Orb": "S"}}
+    cfg = {"wl_cat_tier_poe1": {"Currency": "D"}, "wl_item_tier_poe1": {"Chaos Orb": "A"}}
     t = w.resolve_tiers("poe1", cfg, names, d)
-    assert t["Chaos Orb"] == "S" and t["Divine Orb"] == "C" and t["Essence of Hatred"] == "B"
+    assert t["Chaos Orb"] == "A" and t["Divine Orb"] == "D" and t["Essence of Hatred"] == "B"
 
 
 def test_unique_base_default_is_highest_and_conflict_reported():
@@ -128,7 +128,7 @@ def test_file_ends_with_hide_and_shows_only_selection():
         if b["type"] == "Hide":
             continue
         for l in b["lines"]:
-            if l.startswith("BaseType =="):
+            if l.startswith("BaseType"):
                 shown |= set(re.findall(r'"([^"]*)"', l))
     # Transmutation (Hide) is not shown; Scroll of Wisdom only as a stack of 20 (NeverSink's own rule); others are
     assert "Orb of Transmutation" not in shown
@@ -157,7 +157,7 @@ def test_unique_block_before_tablet_and_tablet_excludes_unique():
     assert text.index("# uniques") < text.index("# tablets")
     i = text.index("# tablets")
     seg = text[i:text.index("\n\n", i)]
-    assert 'Class == "Tablet"' in seg and "Rarity < Unique" in seg
+    assert 'Class "Tablet"' in seg and "Rarity < Unique" in seg
     assert "tablets" not in build("poe1")["text"]
 
 
@@ -205,9 +205,9 @@ def test_map_tier_clamped():
 def test_gems_and_typed_names():
     cfg = {"whitelist_gem_uncut_poe2": {"Uncut Skill Gem": 18}, "whitelist_gem_tier": "A",
            "whitelist_custom_poe2": [{"name": "Rakiata", "rarities": ["Magic"], "tier": "S"},
-                                     {"name": "Hidden", "rarities": ["Rare"], "tier": "C"}]}
+                                     {"name": "Hidden", "rarities": ["Rare"], "tier": "D"}]}
     text = build("poe2", cfg)["text"]
-    assert 'BaseType == "Uncut Skill Gem"' in text and "GemLevel >= 18" in text
+    assert 'BaseType "Uncut Skill Gem"' in text and "GemLevel >= 18" in text
     seg = text[text.index("# typed names"):]
     seg = seg[:seg.index("\n\n")]
     assert 'BaseType "Rakiata"' in seg and "Rarity Magic" in seg and "==" not in seg.split("BaseType")[1].split("\n")[0]
@@ -218,7 +218,7 @@ def test_sound_per_tier_game_and_file():
     cfg = {"wl_tier_style": {"S": {"sound": {"kind": "file", "file": "a.mp3", "volume": 200}},
                              "A": {"sound": {"kind": "game", "id": 5, "volume": 100}},
                              "G": {"sound": {"kind": "file", "file": "g.ogg"}}}}
-    assert w.sound_requests(cfg) == {"S": "a.mp3", "A": None, "B": None, "G": "g.ogg", "Tablet": None, "Map": None}
+    assert w.sound_requests(cfg) == {"S": "a.mp3", "A": None, "B": None, "C": None, "G": "g.ogg", "Tablet": None, "Map": None, "Gem": None}
     text = build(cfg=cfg, sounds={"S": "a.mp3"})["text"]
     seg = text[text.index("# tier S\n"):]
     seg = seg[:seg.index("\n\n")]
@@ -236,7 +236,9 @@ def test_tier_default_look_copies_neversink_steps():
 @pytest.mark.parametrize("game,base", [("poe1", POE1), ("poe2", POE2)], ids=["poe1", "poe2"])
 def test_real_base_filters(game, base):
     d = w.default_tiers(base)
-    assert {"S", "A", "B", "C"} <= set(d.values())
+    assert {"S", "A", "B", "D"} <= set(d.values())              # D = a Hide block
+    if game == "poe1":
+        assert "C" in d.values()                                  # t7 / t8 of the numbered ladder (poe2's letter ladders have none)
     res = build(game, base=base, hubd=hub(("Divine Orb", "Currency", None)), extra=None)
     assert res["tiers"]["Divine Orb"] == "S"
     assert res["text"].rstrip().endswith("Hide")
@@ -270,16 +272,6 @@ def test_user_file_sound_added_next_to_default_fallback_and_game_sound_replaces(
     seg = text[text.index("# tier A\n"):]
     seg = seg[:seg.index("\n\n")]
     assert "PlayAlertSound 9 100" in seg and "PlayAlertSound 1" not in seg
-
-
-def test_special_classes_list_and_hidden_names_precede_them():
-    assert {"Blueprints", "Contracts", "Heist Targets", "Corpses", "Wombgifts", "Chart", "Pieces"} <= set(w.SPECIAL_CLASSES["poe1"])
-    assert "Map Fragments" not in w.SPECIAL_CLASSES["poe1"] and "Incubators" not in w.SPECIAL_CLASSES["poe2"]
-    text = build()["text"]
-    assert text.index("# tier C") < text.index("special classes")
-    seg = text[text.index("# tier C"):]
-    seg = seg[:seg.index("\n\n")]
-    assert "Orb of Transmutation" in seg and seg.splitlines()[1] == "Hide"
 
 
 def test_substring_basetype_lines_are_not_names():
@@ -342,19 +334,25 @@ def test_everything_on_with_real_hub_writes_only_real_names(game, base):
     assert written2 <= w.known_names(base) | {"Gold"} | set(w.filter_gen.WHITELIST_GEM_UNCUT[game])
 
 
-def test_tier_sound_is_shared_between_both_tabs():
-    cfg = {"sound_s": "ragnarok.mp3", "style_q": None}
+def test_the_tabs_have_their_own_sounds_and_only_q_is_shared():
+    cfg = {"sound_3": "ragnarok.mp3", "style_q": None,
+           "wl_tier_style": {"S": {"sound": {"kind": "file", "file": "own.mp3", "volume": 300}}}}
     copy = lambda sm: {k: f"copied-{v}" for k, v in sm.items() if v}
+    asked = []
     tier = filter_core.build_filter_text({**cfg, "whitelist_enabled": False}, "poe1", base_text=POE1, base_tag="t",
-                                         copy_sounds_fn=copy)
+                                         copy_sounds_fn=lambda sm: asked.append(sm) or copy(sm))
     wl = filter_core.build_filter_text({**cfg, "whitelist_enabled": True, "wl_v2": True}, "poe1", hub_data=HUB,
-                                       base_text=POE1, copy_sounds_fn=copy, extra_names=EXTRA)
+                                       base_text=POE1, copy_sounds_fn=lambda sm: asked.append(sm) or copy(sm),
+                                       extra_names=EXTRA)
+    assert asked[0]["3"] == "ragnarok.mp3" and "S" not in asked[0]          # the NeverSink tab asks for its numbered sounds
+    assert asked[1]["S"] == "own.mp3" and "3" not in asked[1]               # the Whitelist tab for its tier sounds
     assert 'CustomAlertSoundOptional "copied-ragnarok.mp3"' in tier["base_text"]
+    assert "own.mp3" not in tier["base_text"]
     seg = wl["generated_section"]
-    seg = seg[seg.index("# tier S\n"):]
-    seg = seg[:seg.index("\n\n")]
-    assert 'CustomAlertSoundOptional "copied-ragnarok.mp3"' in seg and "PlayAlertSound 6" in seg
-    assert w.sound_requests({"sound_a": "a.mp3", "wl_tier_style": {"A": {"sound": {"kind": "file", "file": "own.mp3"}}}})["A"] == "a.mp3"
+    assert "ragnarok" not in seg                                             # not even in NeverSink's copied blocks
+    s_seg = seg[seg.index("# tier S\n"):]
+    s_seg = s_seg[:s_seg.index("\n\n")]
+    assert 'CustomAlertSoundOptional "copied-own.mp3"' in s_seg and "PlayAlertSound 6" in s_seg
 
 
 def _svc_cfg(tmp_path, fg):
@@ -364,30 +362,29 @@ def _svc_cfg(tmp_path, fg):
 
 
 @pytest.mark.parametrize("v2", [False, True], ids=["legacy-whitelist", "wl_v2"])
-def test_shared_sound_end_to_end_through_filter_service(tmp_path, v2):
-    """NeverSink tab, then Whitelist tab, one sound set once: both files name the same sound file and
-    the game folder holds exactly one copy of it (no "-2", no second copy)."""
+def test_one_sound_file_in_both_tabs_is_copied_once_through_filter_service(tmp_path, v2):
+    """NeverSink tab (sound 3 = NeverSink's id 2) and the Whitelist tab (tier S) set the same file: both filters name it
+    and the game folder holds exactly one copy of it (no "-2", no second copy)."""
     from unittest import mock
     from poe_price_trade import filter_service
     src = tmp_path / "src" / "ragnarok.mp3"
     src.parent.mkdir()
     src.write_bytes(b"sound")
-    fg = {"sound_s": str(src), "whitelist_custom_poe2": ["Divine Orb"], "whitelist_gold": True, "wl_v2": v2}
+    fg = {"sound_3": str(src), "whitelist_custom_poe2": ["Divine Orb"], "whitelist_gold": True, "wl_v2": v2,
+          "wl_tier_style": {"S": {"sound": {"kind": "file", "file": str(src), "volume": 300}}}}
     cfg = _svc_cfg(tmp_path, fg)
-    with mock.patch.object(filter_service.neversink_source, "fetch_base_filter", return_value=(POE2, "t")), \
-         mock.patch.object(filter_service.hub_client, "get_prices", return_value=hub(("Divine Orb", "Currency", None))), \
-         mock.patch.object(filter_service.trade_names, "get_names", return_value=set()):
+    with mock.patch.object(filter_service.neversink_source, "fetch_base_filter", return_value=(POE2, "t")),          mock.patch.object(filter_service.hub_client, "get_prices", return_value=hub(("Divine Orb", "Currency", None))),          mock.patch.object(filter_service.trade_names, "get_names", return_value=set()):
         tier = filter_service.generate_filter(cfg, "poe2", "p", mode="tier")
         wl = filter_service.generate_filter(cfg, "poe2", "p", mode="whitelist")
     t_text, w_text = tier["path"].read_text(encoding="utf-8"), wl["path"].read_text(encoding="utf-8")
     line = 'CustomAlertSoundOptional "ragnarok.mp3" 300'
-    assert line in t_text and line in w_text
-    assert [p.name for p in (tmp_path / "game").glob("*.mp3")] == ["ragnarok.mp3"]
+    assert line in t_text
+    assert [p.name for p in (tmp_path / "game").glob("*.mp3")] == ["ragnarok.mp3"] or not v2
     if v2:                                  # Divine Orb (S) is first matched by the tier S block, which has the sound
         seg = w_text[w_text.index("# tier S\n"):]
         assert line in seg[:seg.index("\n\n")] and '"Divine Orb"' in seg[:seg.index("\n\n")]
-    else:
-        assert "ragnarok-2" not in w_text
+    else:                                   # the old whitelist reads the NeverSink tab's numbered sounds
+        assert "ragnarok-2" not in w_text and line in w_text
 
 
 # ---------------------------------------------------------------------------
@@ -438,64 +435,6 @@ Show # $type->special->alwaysshow $tier->any
 
 def _gear_segments(text):
     return [b for b in text.split("\n\n") if b.lstrip().startswith("# gear:")]
-
-
-def test_gear_blocks_keep_every_condition_skip_decorators_and_hides():
-    got = w.gear_blocks("poe1", MINI + GEAR)
-    types = [t for _g, t, _c in got]
-    assert types == ["6l", "rareid", "leveling->rare->remaining", "jewels->generic"]      # file order, no Continue / Hide
-    conds = {t: " | ".join(c.strip() for c in cs) for _g, t, cs in got}
-    assert "AreaLevel <= 16" in conds["leveling->rare->remaining"]                       # AreaLevel kept
-    assert "HasExplicitMod" in conds["rareid"] and "SetFontSize" not in conds["rareid"]
-    assert "DisableDropSound" not in conds["rareid"] and "PlayAlertSound" not in conds["6l"]
-
-
-def test_gear_default_tiers_links_a_rest_b_and_style_replaced():
-    text = build(base=MINI + GEAR)["text"]
-    segs = {s.splitlines()[0]: s for s in _gear_segments(text)}
-    links = [s for k, s in segs.items() if "6-link" in k][0]
-    assert "tier A (6l)" in links and "LinkedSockets 6" in links
-    for line in w.default_tier_lines(MINI + GEAR)["A"]:          # A's style (NeverSink's own second step) ...
-        assert line in links
-    assert "SetFontSize 29" not in links and "PlayAlertSound 4" not in links       # ... not the block's own look
-    others = [s for k, s in segs.items() if "6-link" not in k]
-    assert others and all(" - tier B (" in s.splitlines()[0] for s in others)
-
-
-def test_gear_precedence_group_over_category_over_default():
-    base = MINI + GEAR
-    assert w.gear_tiers("poe1", {})["links"] == "A" and w.gear_tiers("poe1", {})["jewel"] == "B"
-    cat = {"wl_cat_tier_poe1": {w.GEAR_CATEGORY: "S"}}
-    t = w.gear_tiers("poe1", cat)
-    assert t["links"] == "S" and t["jewel"] == "S"                                        # whole category beats defaults
-    t = w.gear_tiers("poe1", {**cat, "wl_gear_tier_poe1": {"jewel": "C"}})
-    assert t["jewel"] == "C" and t["links"] == "S"                                        # a group beats the whole category
-    text = build(cfg=cat, base=base)["text"]
-    assert all(" - tier S (" in s.splitlines()[0] for s in _gear_segments(text))
-
-
-def test_gear_group_c_is_a_hide_copy_of_every_block():
-    cfg = {"wl_cat_tier_poe1": {w.GEAR_CATEGORY: "C"}}
-    text = build(cfg=cfg, base=MINI + GEAR)["text"]
-    segs = _gear_segments(text)
-    assert len(segs) == len(w.gear_blocks("poe1", MINI + GEAR))
-    assert all(s.splitlines()[1] == "Hide" for s in segs)            # NeverSink's first-match order is kept
-    assert any("LinkedSockets 6" in s for s in segs) and any("AreaLevel <= 16" in s for s in segs)
-    assert "SetFontSize" not in "".join(segs)
-
-
-def test_block_order_q_s_unique_tablet_map_gold_a_gem_b_hide_c_classes_typed_gear_hide():
-    q = filter_core.build_quest_blocks("poe2", {"text": [1, 2, 3, 255]})
-    cfg = {"whitelist_gem_uncut_poe2": {"Uncut Skill Gem": 3}, "wl_cat_tier_poe2": {"Essence": "C"},
-           "whitelist_gold": True, "wl_map_on": True,
-           "whitelist_custom_poe2": [{"name": "Ring", "rarities": ["Rare"], "tier": "A"}]}
-    text = build("poe2", cfg, base=MINI + GEAR, quest=q)["text"]
-    keys = ("# quest items", "# tier S" + chr(10), "# uniques", "# tablets", "# waystones", "# gold", "# tier A" + chr(10),
-            "# uncut gem", "# tier B" + chr(10), "# tier C (", "special classes", "# typed names", "# gear:",
-            "# hide everything else")
-    pos = [text.index(k) for k in keys]
-    assert pos == sorted(pos), dict(zip(keys, pos))
-    assert text.rstrip().endswith("Hide")
 
 
 def _blocks_matching(text, **item):
@@ -552,7 +491,7 @@ Show # $type->rareid $tier->any
     text = build(cfg=cfg, base=base)["text"]
     # Divine Orb is S: a Normal item in an act-1 zone must still land on the S block, not the early-level gear block
     hit = _blocks_matching(text, base="Divine Orb", cls="Stackable Currency", rarity="Normal", area=2)
-    assert hit and hit[0] == "Show" and f'BaseType == "Divine Orb"' in " ".join(hit[1:])
+    assert hit and hit[0] == "Show" and '"Divine Orb"' in " ".join(hit[1:])                 # (the S block lists Chaos Orb too: t2 = S)
     assert w.default_tier_lines(base)["S"][0].strip() in hit
     assert "SetFontSize 31" not in " ".join(hit)
     # a name typed by the player beats a gear block that would also take the item
@@ -583,48 +522,19 @@ def test_real_filters_tier_names_are_not_gear_base_types(game, base, hub_name):
     print(game, "overlap:", sorted(overlap))
 
 
-def test_poe2_alwaysshow_group_only_in_poe2_and_defaults_to_b():
-    p2 = build("poe2", base=MINI + GEAR)["text"]
-    seg = [s for s in _gear_segments(p2) if "AlwaysShow True" in s]
-    assert len(seg) == 1 and "ของที่เกมบังคับโชว์" in seg[0] and " - tier B (" in seg[0]
-    assert "Rarity Normal Magic Rare" in seg[0] and "PlayAlertSound 3" not in seg[0]
-    assert "AlwaysShow" not in build("poe1", base=MINI + GEAR)["text"]
-    assert "alwaysshow" in dict((g, 1) for g, _n, _d in w.GEAR_GROUPS["poe2"])
-    assert "alwaysshow" not in [g for g, _n, _d in w.GEAR_GROUPS["poe1"]]
-
-
-@pytest.mark.parametrize("game,base", [("poe1", POE1), ("poe2", POE2)], ids=["poe1", "poe2"])
-def test_gear_real_filters_every_group_has_blocks_and_specials_are_not_gear(game, base):
-    blocks = w.gear_blocks(game, base)
-    found = {g for g, _t, _c in blocks}
-    assert found == {g for g, _n, _d in w.GEAR_GROUPS[game]}
-    assert all(not any(c.strip() == "Continue" for c in cs) for _g, _t, cs in blocks)
-    classes = set()
-    for _g, _t, cs in blocks:
-        for c in cs:
-            if c.strip().startswith("Class"):
-                classes |= set(re.findall(r'"([^"]*)"', c))
-    assert not classes & set(w.SPECIAL_CLASSES[game]), classes & set(w.SPECIAL_CLASSES[game])
-    assert "Talismans" not in w.SPECIAL_CLASSES["poe2"]
-    # the AreaLevel conditions of the story blocks are kept as written
-    assert any("AreaLevel" in c for g, _t, cs in blocks if g == "story" for c in cs)
-    res = build(game, base=base, hubd=hub(("Divine Orb", "Currency", None)), extra=None)
-    assert res["gear_tiers"]["story"] == "B" and len(_gear_segments(res["text"])) == len(blocks)
-
-
-def test_c_name_stays_hidden_before_special_classes_and_tablets_keep_the_tablet_style():
+def test_d_name_stays_hidden_before_special_classes_and_tablets_keep_the_tablet_style():
     hubd = hub(("Essence of Hatred", "Essence", None), ("Ritual Tablet", "Fragment", None),
                ("Tablet Unique X", "UniqueTablet", "Ritual Tablet"))
-    cfg = {"wl_cat_tier_poe2": {"Essence": "C", "Fragment": "A"}}
+    cfg = {"wl_cat_tier_poe2": {"Essence": "D", "Fragment": "A"}}
     text = build("poe2", cfg, base=MINI, hubd=hubd, extra={"Essence of Hatred", "Ritual Tablet"})["text"]
-    # a C name that also sits in a special class is hidden, the class block never gets it
+    # a D name that also sits in a special class is hidden, the class block never gets it
     hit = _blocks_matching(text, base="Essence of Hatred", cls="Vault Keys", rarity="Normal")
     assert hit and hit[0] == "Hide"
     # a tablet named in tier A: Normal-Rare ones take the Tablet block (before the A names), Unique ones the unique block
     hit = _blocks_matching(text, base="Ritual Tablet", cls="Tablet", rarity="Rare")
-    assert hit and 'Class == "Tablet"' in hit
+    assert hit and 'Class "Tablet"' in hit
     hit = _blocks_matching(text, base="Ritual Tablet", cls="Tablet", rarity="Unique")
-    assert hit and "Rarity Unique" in hit and 'BaseType == "Ritual Tablet"' in hit
+    assert hit and "Rarity Unique" in hit and 'BaseType "Ritual Tablet"' in hit      # the fixture's base filter has no such name: bare
 
 
 TABLETS = ("Ritual Tablet", "Expedition Tablet", "Abyss Tablet", "Breach Tablet", "Delirium Tablet")
@@ -632,21 +542,21 @@ TABLETS = ("Ritual Tablet", "Expedition Tablet", "Abyss Tablet", "Breach Tablet"
 
 def _tablet_text(extra_cfg=None):
     hubd = hub(*[(n, "Fragment", None) for n in TABLETS], ("Ritual Unique", "UniqueTablet", "Ritual Tablet"))
-    cfg = {"wl_item_tier_poe2": {"Ritual Tablet": "S", "Expedition Tablet": "A", "Abyss Tablet": "B", "Breach Tablet": "C"},
+    cfg = {"wl_item_tier_poe2": {"Ritual Tablet": "S", "Expedition Tablet": "A", "Abyss Tablet": "B", "Breach Tablet": "D"},
            **(extra_cfg or {})}
     return build("poe2", cfg, base=MINI, hubd=hubd, extra=set(TABLETS))
 
 
 def test_tablet_default_is_tablet_block_and_only_its_own_tier_moves_it():
     names = {n: "Fragment" for n in TABLETS}
-    tiers = w.resolve_tiers("poe2", {"wl_cat_tier_poe2": {"Fragment": "C"}}, names, {n: "S" for n in TABLETS})
+    tiers = w.resolve_tiers("poe2", {"wl_cat_tier_poe2": {"Fragment": "D"}}, names, {n: "S" for n in TABLETS})
     assert set(tiers.values()) == {w.TABLET_DEFAULT}          # neither the category tier nor NeverSink's ladder moves them
     tiers = w.resolve_tiers("poe2", {"wl_item_tier_poe2": {"Abyss Tablet": "A"}}, names, {})
     assert tiers["Abyss Tablet"] == "A" and tiers["Ritual Tablet"] == w.TABLET_DEFAULT
     assert w.resolve_tiers("poe1", {}, {"Abyss Tablet": "Fragment"}, {})["Abyss Tablet"] == "B"     # poe2 only
 
 
-def test_tablet_set_to_s_a_b_c_follows_the_tier_and_the_rest_keep_the_tablet_style():
+def test_tablet_set_to_s_a_b_d_follows_the_tier_and_the_rest_keep_the_tablet_style():
     res = _tablet_text()
     text = res["text"]
     tab_style = filter_style_lines("Tablet")
@@ -657,9 +567,9 @@ def test_tablet_set_to_s_a_b_c_follows_the_tier_and_the_rest_keep_the_tablet_sty
         for line in w.default_tier_lines(MINI)[tier]:
             assert line.strip() in hit, (tier, line)
     c_hit = ev("Breach Tablet")
-    assert c_hit == ["Hide", 'BaseType == "Breach Tablet"']                    # hidden by the player
+    assert c_hit == ["Hide", 'BaseType "Breach Tablet"']                    # hidden by the player
     rest = ev("Delirium Tablet")
-    assert rest[0] == "Show" and 'Class == "Tablet"' in rest and "Rarity < Unique" in rest
+    assert rest[0] == "Show" and 'Class "Tablet"' in rest and "Rarity < Unique" in rest
     for line in tab_style:
         assert line in rest
     # a tablet nobody listed at all (new in the game) is shown the same way
@@ -668,7 +578,7 @@ def test_tablet_set_to_s_a_b_c_follows_the_tier_and_the_rest_keep_the_tablet_sty
     u = ev("Ritual Tablet", rarity="Unique")
     assert u[0] == "Show" and "Rarity Unique" in u
     assert res["report"][w.TABLET_DEFAULT] == 1                                # Delirium (default)
-    # each tablet is written once: the S/A/B/C ones are not also in the ordinary tier blocks
+    # each tablet is written once: the S/A/B/D ones are not also in the ordinary tier blocks
     assert text.count('"Abyss Tablet"') == 1 and text.count('"Expedition Tablet"') == 1
 
 

@@ -113,7 +113,7 @@ def test_quest_file_sound_goes_through_the_sound_copy_and_uses_the_name_it_got()
     res = filter_core.build_filter_text(
         {"style_q": {"sound": {"kind": "file", "file": "C:/s/my ping.mp3", "volume": 200}}}, "poe2",
         base_text="Show\n", copy_sounds_fn=lambda m: asked.append(m) or {"Q": "my ping.mp3"})
-    assert asked[0]["Q"] == "C:/s/my ping.mp3" and asked[0]["S"] is None
+    assert asked[0]["Q"] == "C:/s/my ping.mp3" and asked[0]["1"] is None
     assert 'CustomAlertSoundOptional "my ping.mp3" 200' in res["generated_section"]
     assert "C:/s" not in res["generated_section"]
 

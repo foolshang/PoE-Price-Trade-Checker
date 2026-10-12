@@ -191,8 +191,11 @@ def _preset(**kw) -> dict:
 
 
 # What the whitelist tab starts from for the things NeverSink has no matching block for
-# (S / A / B start as copies of NeverSink's own tier 1 / 2 / 3 look, taken from its base filter).
+# (S / A / B start as copies of NeverSink's own tier 1 / 2 / 3 look, taken from its base filter; C is the faded preset).
 DEFAULT_STYLES = {
+    # tier C: shown, but fainter than B (small, muted text on a near-black background, no beam, a small grey icon)
+    "C": _preset(text=[190, 178, 135, 255], border=[120, 112, 85, 255], bg=[20, 20, 0, 255], size=36,
+                 icon={"size": 2, "color": "Grey", "shape": "Circle"}),
     "G": _preset(text=[255, 215, 0, 255], border=[255, 215, 0, 255], bg=[40, 30, 0, 255], size=40),
     "Tablet": _preset(text=[0, 230, 230, 255], border=[0, 230, 230, 255], bg=[0, 30, 40, 255], size=40,
                       icon={"size": 1, "color": "Cyan", "shape": "Square"}),

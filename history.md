@@ -5,6 +5,289 @@
 
 ---
 
+## 2026-10-13 (night, 8) — Thai prompt fell apart in a picked Combobox (v0.13.1, NOT committed / deployed / tagged)
+
+- **Symptom:** after picking a tier in a group header box of the equipment category ("ตั้งทั้งกลุ่ม…"), the box showed "ต◌ั◌้งทั้งกลุ่ม…".
+- **Cause (reproduced with a real screenshot before the fix):** a readonly ttk Combobox selects its whole text on a pick and keeps the
+  focus; the handler then puts the prompt back with `var.set`, the selection stays (`selection_present()` was True on the last picked
+  box only - the earlier two lost it when the focus moved), and Tk draws a selected Thai text cluster by cluster, so vowels / tone
+  marks lose their base letter.
+- **Fix:** `ui_theme.calm(widget)`: clear the selection after every pick (after the handlers ran) and on every FocusIn, move the focus
+  back to the window after a pick. Applied to EVERY Combobox (Whitelist panel, NeverSink tab, style editors, settings, league box)
+  and to the readonly sound-file Entries (their text may be a Thai path); `_refresh_equip` also clears the group boxes directly.
+- **Tests:** `tests/test_thai_combobox.py` (the three group boxes after a simulated pick, every Combobox / readonly Entry of the
+  window, the helper alone). Real screenshots after the fix: all three boxes (Normal / Magic / Rare) draw "ตั้งทั้งกลุ่ม…" intact.
+
+---
+
+## 2026-10-13 (night, 7) — sounds split per tab, six numbered NeverSink sounds, Whitelist sub tabs with inline styles (v0.13.0, NOT committed / deployed / tagged)
+
+Winai: tier mapping stays (t1-t2 S ... t7-t8 C, D = hidden; poe2 letters L1: s/a = S, b/c = A, d/e = B; special steps by number).
+- **NeverSink tab sounds:** six slots "เสียง 1" .. "เสียง 6", each bound to a NeverSink `PlayAlertSound` number: 1 <- 6, 2 <- 1,
+  3 <- 2, 4 <- 3, 5 <- 4, 6 <- 5. A slot with a file adds `CustomAlertSoundOptional` to EVERY Show block of that number (no ladder
+  allowlist any more: maps, waystones, heist, logbook, gear ... included); an empty slot writes nothing. Both real base filters use
+  only numbers 1-6 (nothing left alone). `filter_gen.apply_numbered_sounds` / `sound_block_counts`; config keys `sound_1..sound_6`.
+  Labels of the copy request are "1".."6" (+ "Q"). The old ladder helpers (`apply_ladder_sounds`, `_sound_type_ok` ...) are gone.
+- **Whitelist tab sounds:** no sharing with the NeverSink tab (only Q). S / A / B / C each have their own sound in the tier's style
+  (kept in `wl_tier_style`), Gold / Map / Tablet / Gem the same; the file's copied NeverSink blocks keep NeverSink's own sounds.
+- **Sub tabs (desktop + web):** [items / categories] [Gold] [Map / Waystone] [Tablet (poe2)] [Gem] [typed names]. Style editors are
+  inline (no pop-up): the tier's editor right under the tier buttons, Gold / Map / Tablet / Gem in their own sub tab. Desktop:
+  `StyleEditor(compact=True)` (sound on one row, one-line sample); web: `P.buildStyleEditor` (the dialog is a wrapper, still used for
+  Q). "Gem" is a new style label: nothing set = the gem tier's lines exactly (file identical to v0.12.0).
+- **Old data (once, `sound_format = 2`):** `filter_core.migrate_sounds`: sound_s / a / b -> sound_1 / 2 / 3, and the same files become
+  the tier sounds S / A / B (sound_c -> C) when the tier has none; Status note; old keys dropped. Runs in `WlModel.from_config`,
+  the window load, `build_filter_text` and the web `wl_init` (which also returns `moved`: the page copies the slot file S->1 ...).
+  Opening an old whitelist file puts its S / A / B sound files into the Whitelist tab's tier sounds (not the NeverSink tab).
+- **Tests:** `test_sound_split.py` (7), `test_filter_sounds_e2e.py` rewritten (block count per number, per game), `test_filter_gen.py`
+  sound tests, goldens regenerated, `ui.mjs` (inline editors, sub tabs, six sound rows).
+
+---
+
+## 2026-10-13 (night, 6) — tiers S / A / B / C / D: C is a shown tier, D hides (v0.12.0, NOT committed / deployed / tagged)
+
+Winai: SPEC_gear_sockets cancelled (rarity-first leaves no case where a socket changes the result - reported, nothing written).
+- **Meaning:** S / A / B / C = shown (own style, sound, stack minimum); **D = hidden** (was C). `w.TIERS = (S,A,B,C)`, `HIDE_TIER = "D"`,
+  `ALL_TIERS` adds D. Every place that had S/A/B/C now has S/A/B/C/D: items, category buttons ("ทั้งหมวด → D (ซ่อน)"), Unique,
+  Tablet, gems, typed names, Flask / Charm / Tincture rows, equipment rows + group headers, tier colours, per-tier stack minimum.
+- **Starting tiers (NeverSink s2):** t1-t2 = S, t3-t4 = A, t5-t6 = B, t7-t8 = C, a Hide block = D. Letter ladders (poe2 s a b c d e)
+  by position: s,a = S; b,c = A; d,e = B (`LADDER_LETTER_TIER`; no letter step is C - POSITION MAPPING WAITS FOR WINAI). Unnamed
+  steps / no ladder = B as before. Per-category before / after counts are in the report of this round.
+- **File order:** Q, S, uniques, tablets, maps, gold, A, gems, B, **C**, `# tier D (hidden ...)`, typed names, rarity rows, equipment
+  rows, NeverSink copies, wombgifts, final Hide. Rows: S/A/B/C = Show with that tier's style, D = Hide (same positions).
+- **Style / sound of C:** `DEFAULT_STYLES["C"]` (faded: muted text, near-black bg, size 36, small grey icon); editable like S/A/B.
+  `sound_c` slot on the NeverSink tab (shared) - used by the Whitelist tab only; the NeverSink tab's 6/1/2 -> S/A/B mapping is
+  untouched until Winai decides the sound table. `filter_whitelist.sound_requests` asks for C; `tier_sound_requests` does not.
+- **Old data:** `wl_tier_format = 2` is embedded + saved. A config / file without it has C = hidden: every C (item / category /
+  unique / block / rarity + equipment rows / gem tier / typed names) becomes D once, one Status note with the count; S/A/B kept;
+  nothing converted twice (`_migrate_hidden`). Importer (`wl_import`): an old file's `tier C (hidden` / `tablets - tier C` /
+  `gear ... tier C` = D; new `# tier C` blocks are read as shown C; a unique name that sits on two bases cannot get a tier per base -
+  those bases are named in the notes (`unique_mismatch`).
+- **Tests:** new `tests/test_wl_tier_d.py` (33); old tests moved from "C = hidden" to D (`test_wl_*`, `ui.mjs`); goldens regenerated
+  (only: `wl_tier_format` key, per-name tiers under the new mapping, the Status line of the converted legacy file).
+  `ui.mjs`: four tier buttons, C row ticks, `#btn-cat-d`, sound rows S/A/B/C.
+
+---
+
+## 2026-10-13 (night, 5) — "ตั้งค่าเอง" rows have no "NeverSink" choice: S / A / B / C, start at B (v0.11.8, NOT committed)
+
+Winai: NeverSink is the row's "ค่าเริ่มต้น" already, so inside "ตั้งค่าเอง" a rarity box offers only S / A / B / C.
+- **Model:** a row set "myself" (Flask / Charm / Tincture and the equipment classes) has a tier for EVERY rarity; first time it
+  is set every box is B (`DEFAULT_CUSTOM_TIER`, `_fill_custom`). `set_*_rarity(..., None)` is ignored. Back to "ค่าเริ่มต้น" keeps
+  the values (nothing written). Writers (`build_whitelist_filter`) write B for a missing value of a custom row, never "nothing".
+- **Old embedded values:** a custom row with a rarity left on "ตาม NeverSink" (missing key) is filled with B and ONE Status note is
+  added (`_AUTO_NOTE`); also for the old `wl_rarity_tier` flask conversion. Default rows are not converted; after saving the note
+  does not come back (tests).
+- **Group select (equipment):** options `ทั้งกลุ่ม…` (prompt) / `ค่าเริ่มต้น` / S / A / B / C. S/A/B/C = that rarity of every row
+  of the group, rows become "ตั้งค่าเอง" (other rarities keep their value, B when new); `ค่าเริ่มต้น` = every row of the group back
+  to default (values kept). The select goes back to its prompt.
+- **Layout:** desktop - tier boxes one width (rows 5, header 13), class name 25 wide, the C warning on its own line under the row;
+  checked by real screenshots at the window's width (730 px; widest row 608 px of 659 px canvas, no overflow, scrolls). Web - a CSS
+  grid `tier-grid` (3 equal columns, label above each select); at <= 640 px one column per row. Playwright checks at 900 and 360 px:
+  box widths equal in header and row, no element wider than the screen, no sideways scroll (screenshots `05b_equipment_by_class`,
+  `16b_mobile_equipment`).
+- Tests rewritten for the new semantics (`test_wl_rarity.py`, `test_wl_equip.py`, `ui.mjs`); golden unchanged.
+
+---
+
+## 2026-10-13 (night, 4) — `==` follows NeverSink + equipment by class (v0.11.7, NOT committed / deployed / tagged)
+
+**1) `==` rule (Winai: follow NeverSink):** `build_whitelist_filter` writes `BaseType == ...` only for names NeverSink itself writes
+with `==` (`known_names(base)` + Gold); every other name goes in a bare `BaseType "..."` line (`_bt_groups`, a second block with the
+same title). poe1 3 names + poe2 273 names are bare now (265 + 3 are unique bases under `Rarity Unique`; 8 poe2 non-unique:
+`Ancient/Faded/Weathered Crisis Fragment`, `Azmeri Reliquary Key`, `Expedition Logbook`, `Origin Core/Cradle`, `Zarokh's Reliquary Key:
+Against the Darkness`). poe2 `Class "Tablet"` is NeverSink's form now. Importer: `FBlock.names()` reads bare lines too.
+- Nested names (a name contained in a longer one, GGG + hub + NeverSink, 8009 poe1 / 4386 poe2 names): 3 poe1 / 265 poe2 of the
+  bare names sit inside longer names (all unique-item names such as `Saitha's Spear Runeforged Barbed Spear`; the base is
+  matched only with `Rarity Unique`); 0 pairs with a different tier; first-match over every name x Normal / Rare = identical to
+  the all-`==` file (test). The 8 non-unique bare names have no longer name containing them. Nothing to stop for.
+**2) Equipment by class** (category "อุปกรณ์ตาม class", both games, desktop + web): groups weapon (Quivers included) / armour /
+jewellery / other, one row per class (poe1 26, poe2 22 - from NeverSink's own gear `Class` lines). Default = NeverSink; "set
+myself" = Normal / Magic / Rare each NeverSink or S / A / B / C. Group header selects fill every row of the group (no separate
+group value). A set rarity is `Class == X` + `Rarity R` (Show style / Hide) written right after the flask rows = after quest /
+names / uniques / tablets / maps / gold / gems / typed names / C-hide and BEFORE every copied NeverSink block, so it wins over
+all of them (good ones, `ut->*`, exotic, influenced ...); Unique never matches. C warning next to the row. Config
+`wl_equip_rows_<game>` (embedded key added). Default rows write nothing.
+- Files: filter_whitelist (EQUIP_*, build), wl_model (equip_rows, groups, setters), wl_panel (scrolling box), wl_embed, web/glue.py,
+  web/js/tab_wl.js, web/style.css, release/README_public.md (draft, not pushed). Golden open-messages file regenerated: only
+  difference is `equipclass` in `wl_lists`.
+- Tests: `tests/test_wl_equip.py` (26), ui.mjs equipment checks + screenshot `05b_equipment_by_class`. pytest all green (see report).
+
+---
+
+## 2026-10-13 (night, 3) — `==` audit + B1 report (equipment by class); NO code change, still v0.11.6
+
+**`BaseType ==` / `Class ==` audit (whitelist file vs NeverSink s2, both games, default model + gold + map + uncut set):**
+- Names we write with `BaseType ==` that NeverSink writes ONLY without `==`: **0 in poe1, 0 in poe2** (the uncut gems were the only
+  ones and are fixed in v0.11.6). Names where NeverSink uses both forms: 0.
+- Names we write with `==` that NeverSink does not write at all (cannot be compared, same risk class as the uncut gem): poe1 3
+  (`Charan's Sword`, `Primordial Fragment`, `Vaal Aspect` - from GGG's list / hub), poe2 273 (`Runeforged ...` 47, `Runemastered ...`
+  ~200+, `Ancient/Faded Crisis Fragment`, `Azmeri Reliquary Key`, `Expedition Logbook`, `Glass Shank`, `Origin Core/Cradle` ...). 262 of
+  the poe2 ones are matched in NeverSink only by an accidental fragment (`BaseType "Rune"`), which is why NeverSink never needed `==`.
+- `Class ==` we write ourselves: poe2 `Class == "Tablet"` while NeverSink writes `Class "Tablet"` (no ==, 1 block). poe1 `Maps` and
+  poe2 `Waystones` are `==` in NeverSink too (55 / 45 blocks); `Wombgifts`, flask / charm classes `==` in NeverSink as well.
+- Why NeverSink avoids `==` for these: `==` is an exact match against the base type name the game gives; the substring form also
+  matches when the in-game name carries something extra (the uncut gem case) and it covers a whole family with one fragment.
+  Names confirmed by NeverSink's own `==` lines are safe.
+- Nothing fixed yet (Winai: report and wait).
+
+**B1 (equipment by class) report given to Winai; B2 NOT started (waiting for approval).** Summary: NeverSink s2 file order is
+good groups first (6l, influenced, exotic, rareid, craft, rare ilvl ...), then flasks / jewels / heist / gems / special classes, then
+ALL `leveling->*` blocks last (the "general" ones). poe2 also has `ut->rare` / `ut->magic` (zone bases) before the flasks.
+Proposal: one block per class + rarity placed right before the first `leveling->` block.
+
+---
+
+## 2026-10-13 (night, 2) — PoE2 uncut gem blocks: investigation + NeverSink's BaseType form, UI order (v0.11.6, NOT committed)
+
+**Report:** Winai set Uncut Skill 17 / Spirit 17 / Support 5; a level-18 uncut gem did not show in game.
+- Checked first that the file is the current build: `poe-checker-whitelist.filter` in the game folder embeds `app 0.11.5`
+  (written 19:15, after the v0.11.5 build), settings `{"Uncut Skill Gem": 17, "Uncut Spirit Gem": 17, "Uncut Support Gem": 5}`.
+- The file's uncut blocks: `BaseType == "Uncut <X> Gem"` + `GemLevel >= N` (lines 83-117, right after tier A, before tier B). Condition
+  is GemLevel, same keyword NeverSink uses for uncut gems (`GemLevel 18`, `>= 20`).
+- First-match run of the real file (tools/compare_neversink evaluator), levels 1-20 x 3 types: Skill / Spirit level >= 17 -> their Show
+  block (no earlier block matches, blocks before it are all Show with other BaseTypes), < 17 -> final Hide; Support >= 5 -> Show.
+  So by first-match the file already shows level 18 - **no block in the file hides it; the file logic is not the cause.**
+- Only difference from what is known to work in game: our block is `BaseType ==` (exact), NeverSink's uncut blocks are
+  `BaseType "Uncut Skill Gem"` (no ==, substring) and so are the tier tab's uncut blocks. If the game's name of the uncut gem is not
+  exactly "Uncut Skill Gem" (e.g. carries the level), `==` would never match. NOT proven (no in-game check possible from here).
+- **Change:** whitelist uncut blocks now `BaseType "<name>"` (NeverSink's form); `GemLevel >= N` unchanged. The `# uncut gem:` comment
+  (what the importer reads) is unchanged, so old files reopen. `WHITELIST_GEM_UNCUT["poe2"]` order = Skill, Spirit, Support
+  (desktop panel + web rows). The order of the blocks in the file was already Skill, Spirit, Support (sorted), the three BaseTypes
+  never overlap -> no first-match effect.
+- Tests: `tests/test_wl_a3.py` (levels N-1, N, N+1, 20 x 3 types for N in 1/5/17/18/20 by first-match; 17/17/5 levels 16-20;
+  reopen), `tests/web_ui/ui.mjs` (row order), constants test updated. pytest 523 passed, 1 skipped. Built v0.11.6, running.
+- **CONFIRMED in game (Winai, v0.11.6):** a level 18 uncut gem shows now. Root cause = `BaseType ==` (exact match) does not match the
+  uncut gem's name in game; NeverSink's `BaseType "Uncut Skill Gem"` (no ==) does. The file logic / first-match was never the problem.
+
+---
+
+## 2026-10-13 (night) — Wombgift class rule, no Rare box for Flask / Charm / Tincture (v0.11.5, NOT committed / deployed / tagged)
+
+Items 1-3 of "Decided by Winai, NOT done yet" below, desktop + web:
+- **Wombgifts (poe1 only):** `build_whitelist_filter` writes `# wombgifts: the whole class` = `Show` + `Class == "Wombgifts"` + tier B
+  style, after every copied NeverSink block (so after all blocks that list names) and right before the final Hide. A wombgift
+  set to C is hidden earlier (tier C Hide), a listed one keeps its name block. poe2 has no such rule.
+- **hidelayer Hide blocks:** NOT copied (verified: `gear_sequence` copies only blocks of gear groups / special classes / fallback
+  lists, no code path takes hidelayer). No change.
+- **Rare box removed** from the Flask / Charm / Tincture rows: `filter_whitelist.RARITY_CHOICES = ("Normal", "Magic")`
+  (desktop panel loops over it; web `tab_wl.js` list is now Normal / Magic). A saved / embedded `wl_rarity_rows_<game>` value for
+  Rare (and the old `wl_rarity_tier` flask box) is skipped on open with a Status note (`wl_model._RARE_NOTE`); not written back.
+- Tests: `test_wl_a3.py` (2 new: Wombgift class rule position / C stays hidden / poe2 none), `test_wl_rarity.py` (Rare ignored +
+  note, clean file has no note; the junk-config test and the old-flask test updated), `tests/web_ui/ui.mjs` (2 selects, not 3).
+- README draft (`release/README_public.md`) says Normal / Magic only.
+- Built + swapped into dist/: checker and filter generator both show v0.11.5 in the title bar. Web test server on http://localhost:8000
+  (web/py synced).
+
+---
+
+## 2026-10-13 (end of day) — STATUS + decisions for next session (v0.11.4, nothing committed / deployed / tagged)
+
+**State:** v0.11.4 built and running (dist/). Changes since v0.11.1, all uncommitted: known-bad name filter (`(Tier N)` removed from it),
+embedded `app` = `web-<version>` (shown in the web page header), equipment / special classes / Jewel / generic gems follow NeverSink's
+own blocks, new Flask / Charm (poe1: Flask / Tincture) category. See the entry below for the details.
+
+**Decided by Winai, NOT done yet (do next session, nothing before he says go):**
+- Wombgifts (poe1): add a class-wide Show (`Class == "Wombgifts"`, tier B style) placed AFTER the blocks that list names, so unknown
+  wombgifts (e.g. "Growing Wombgift") are shown again.
+- `hidelayer` Hide blocks (poe1 10, poe2 8): NOT copied (final: leave as is).
+- Hide the Rare box in Flask / Charm / Tincture rows (those are never Rare in game). An old embedded value that has a Rare tier is
+  skipped with a Status note.
+- Position of the copied NeverSink blocks in the file: stays as built (final).
+
+**Waiting for Winai:** test v0.11.4 in game; test the web page at http://localhost:8000 (game folder, permission re-ask after a reload,
+Firefox: folder button hidden + download / zip); read the README draft (`release/README_public.md`, not pushed); decide about the commit;
+only then B4 (deploy to GitHub Pages via CI, README link, CI runs `tools/refresh_web_names.py`).
+
+**Restart the web test server:** `python tools/sync_web_py.py` then `python -m http.server 8000 --directory web`; open
+http://localhost:8000 (not 127.0.0.1: the hub's CORS allows localhost only).
+
+## 2026-10-13 (late) — Whitelist: equipment / special classes / Jewel / generic gems follow NeverSink; new Flask / Charm category (v0.11.4, NOT committed)
+
+**Done (desktop + web, tests green: pytest 509 passed 1 skipped, browser 63 checks, parity byte-equal; built + running v0.11.4):**
+- The tab lists NO gear block any more (`filter_whitelist.GEAR_LISTED` empty for both games): story, 6-link, heist, influenced,
+  rare/magic with mods, jewels, rare by ilvl, craft, exotic, zone, jewellery, salvage, AlwaysShow, generic gems and the special
+  classes (keys, relics, contracts ...) are NeverSink s2's own blocks copied into the file as written (Show / Hide, conditions,
+  look, sound) by `gear_sequence` / `_copy_reason`, in NeverSink's order, at the old gear position (after typed names, before the
+  final Hide). NeverSink's fallback blocks of the name lists (`BaseType "Runegraft"` / `"Vial of"`) are copied too. S/A/B sounds are
+  laid over them with `filter_gen.apply_ladder_sounds` (same as the NeverSink tab). CR of a CRLF base filter is stripped (`rstrip`).
+- New category "Flask / Charm" (poe1 "Flask / Tincture"): rows Flask + Charm (poe1: Flask + Tincture), radio default (NeverSink's
+  blocks) / set myself (Normal, Magic each NeverSink / S / A / B / C; written ahead of every copied block; C = Hide + the old
+  warning). Back to default keeps the values (not written). Config `wl_rarity_rows_<game>` = {row: {"custom", "tiers"}} (embedded too).
+  Model: `flask_rows`, `set_flask_custom`, `set_flask_rarity`; panel `_flask_box`; web `#flask-box`, glue actions
+  `set_flask_custom` / `set_flask_rarity`.
+- Old settings: category / block / class tiers of the cut categories and the Jewel rarity are dropped with a Status note; the old
+  Flask / Charm rarity becomes "set myself" on every row; old files (v1 / v2 / embedded) still open (note names the cut categories).
+- Tests: `tests/test_wl_neversink_blocks.py` (line-for-line vs NeverSink, order, sounds, CRLF, categories left), `tests/test_wl_rarity.py`
+  rewritten for the Flask rows, obsolete gear / special-class / gem-list tests removed, golden + parity + `tests/web_ui/ui.mjs` updated.
+- `release/README_public.md` updated (draft, NOT pushed to the public repo).
+
+**Open questions for Winai (nothing decided without him):**
+1. poe1 Wombgifts: NeverSink has only name blocks (no class-wide block), so an unknown wombgift (e.g. "Growing Wombgift") is now hidden
+   by the final Hide (the tier tab shows it by the game default). Add a class-wide Show for it?
+2. NeverSink's `hidelayer` Hide blocks (poe1 10, poe2 8) are still not copied (earlier decision); only Hide blocks of copied groups /
+   classes are (poe1 5). Copy them to match the NeverSink tab exactly?
+3. Flask / Tincture / Charm never are Rare in game (NeverSink only has Normal / Magic blocks): the Rare box exists per the spec but never matches.
+4. In-game test still needed: Magic flask = C, Normal charm = B, unique flask / charm via Unique, poe1 gear / keys / gems like the NeverSink tab, old file with cut settings.
+
+**Also still open from phase 4:** nothing committed (desktop + web + tests + tools/refresh_web_names.py + tests/web_parity + tests/web_ui);
+web test server: `python tools/sync_web_py.py` then `python -m http.server 8000 --directory web`, open http://localhost:8000 (not 127.0.0.1);
+B4 deploy (Pages via CI, README link, CI runs refresh_web_names.py) not started; hub `trade_names` NOT built (names = snapshot only).
+
+## 2026-10-13 — Phase 4 (web = desktop v0.11.x): PROGRESS LOG (not committed; update as work goes)
+
+Winai's decisions: hub publishes `trade_names` (hub repo change reported, NOT done - wait for approval); the web
+bundles a names snapshot as backup (use it until the hub file exists); File System Access API in this round
+(Chrome/Edge: pick the game folder, write .filter + sounds with the desktop sound rules, remember the handle in
+IndexedDB, ask before overwriting); the 6-part plan; messages moved to shared Python; stop at localhost, no deploy,
+no commit of web.
+- [x] Part 1: `poe_price_trade/wl_session.py` (open-file / data-loaded messages + decisions, pure) and desktop
+  `filter_window` uses it. Pinned by `tests/test_wl_session_golden.py` (golden captured BEFORE the move from
+  `tests/sample_data/golden_open_messages.json`): same lines, sound vars, name, model for 11 scenarios.
+- [x] Part 1b: `web/glue.py` rewritten (stateful WlModel API, generate with FSA existing/decisions, zip, open) +
+  `tests/test_web_parity.py` (node + Pyodide via `tests/web_parity/run.mjs`; needs `npm i` in tests/web_parity): 9 tests
+  pass - whitelist + NeverSink-tab files byte-equal with desktop (both games, edited configs, sounds incl. `#` name,
+  ask / keep(-2) / overwrite / same-content reuse), same settings + rows after the same edits, same messages + cfg
+  when opening 6 files, zip bytes. `tools/sync_web_py.py` now also copies wl_model / wl_import / wl_session and
+  writes web/py/manifest.json (the page loads exactly those).
+- [x] Parts 2-5: the new page in `web/` (index.html, style.css, app.js, js/{util,store,data,files,style_dialog,tab_ns,tab_wl}.js):
+  NeverSink tab (name, strictness, Q style, S/A/B sound files, NeverSink tag, Generate / Refresh), Whitelist tab (tier first,
+  tier style dialog with opacity, categories + search + tier-after-name + "ตั้งเอง" marks, whole-category / move / reset,
+  gear blocks, rarity box + warning, Unique, Tablet, special classes, Gold / Map / Gem / typed names / stack minimums,
+  open filter, name), game folder via File System Access (handle in IndexedDB, permission re-ask, sound rules,
+  overwrite question), download / zip. Names: hub `{game}/trade_names.json` first, else `web/data/trade_names_<game>.json`
+  (snapshot made with `tools/refresh_web_names.py`). Settings in localStorage `poeFilterGen.cfg` (same keys as desktop).
+- [x] Part 6: `tests/web_ui/ui.mjs` (Playwright + Chromium, network answered from fixtures) 57 checks + 17 screenshots;
+  `tests/test_web_ui.py` wraps it and compares the page's file with the desktop's for the same settings (byte equal +
+  same embedded settings). Needs `npm i` in tests/web_parity and tests/web_ui (node_modules git-ignored).
+- Desktop: version bumped to 0.11.1 (wl_session + filter_window messages moved to Python; behaviour pinned by the golden
+  test); built and swapped into dist/ per the standing rule. pytest 475 passed, 1 skipped.
+- ROUND 2 (Winai: no hub change; names option a) - done, v0.11.2:
+  * Names: the page uses the snapshot only (no request to `{game}/trade_names.json`, no 404); desktop unchanged (GGG
+    direct -> disk cache). The hub option b is NOT built. If it is wanted later: hub repo gets `tools/refresh_trade_names.py`
+    (fetch `trade(2)/data/items` from the GitHub Actions job like `refresh_gems.py`, keep `name`/`type` strings, drop the display
+    `text` ones, refuse a list that shrank >20%), a step in `.github/workflows/refresh-stats.yml`, a `run_trade_names_once`
+    job in `src/main.py` copying `internal/trade_names_{game}.json` to `{game}/trade_names.json`
+    (`{"fetched_at","game","count","names":[...]}`, max-age 3600, SPEC 8.7) - and `P.getNames` in web/js/data.js tries it
+    first, desktop `trade_names.get_names` goes hub -> GGG -> cache.
+  * Known-bad names (`filter_whitelist.BAD_NAME_PATTERNS`, `bad_name`): `[DNT]`, `INCOMPLETE`,
+    `(not visible to players)`, numeric ids (`60634`, 145 in GGG poe1 types), leading/trailing space (`Blood Stasis `), and ids
+    glued together (`NonEleBowRangerPhysNoble`). Left out of every `BaseType ==` (even when GGG's list confirms them) and
+    reported in the Status + `res["bad_names"]`. v0.11.3: `(Tier N)` was REMOVED from the patterns - Winai's game-loaded files and
+    NeverSink's own filter contain `Map (Tier 14/16)` (unique-map bases: Cortex = 14; Hallowed Ground, Vaults of Atziri ... = 16;
+    shown by the Map rules either way) and `Thaumaturgic Flux (Level N)` (poe2) is kept too; Tier 1/7/10/13 stay skipped as unconfirmed names. Live data check (hub + GGG of 2026-10-12): whitelist names 1,927 and 0 flagged;
+    unique bases 1,161 and 6 flagged = poe1's pseudo `Map (Tier N)` (4 were skipped already, 2 - Tier 14 / 16 - were written
+    before because GGG lists them as types). Not filtered on purpose: `Thaumaturgic Flux (Level N)` (20 poe2 names written
+    today, GGG lists them) - Winai to say if they are real BaseTypes.
+  * The embedded `app` of the web page is `web-<__version__>` (the package `__init__.py` is synced into web/py), shown in the
+    page header ("เวอร์ชัน web-0.11.2"). Parity tests compare the settings lines byte for byte once both record the same version.
+  * B4 (not done): CI runs `tools/refresh_web_names.py` before every web deploy; a list that shrank >20% keeps the old snapshot
+    and says so in the log.
+- STATE: everything above is in the working tree, NOT committed (Winai: stop at localhost, no deploy, no commit of web).
+  Serve with `python -m http.server 8000 --directory web` after `python tools/sync_web_py.py`; open http://localhost:8000
+  (the hub allows CORS for localhost origins only - 127.0.0.1 is NOT allowed).
+- NOT DONE / waiting: hub repo change for `trade_names` (report sent, Winai must approve); desktop reading names from
+  the hub first (proposal only); B4 deploy (GitHub Pages via CI + README link) only when Winai says.
+
 ## 2026-10-12 (night, 6) — CI: public README ships with real releases; CI builds like the local machine
 
 - `release/README_public.md` = the README of foolshang/PoE-Filter-Generator (the version Winai confirmed);

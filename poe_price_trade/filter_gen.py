@@ -72,16 +72,18 @@ def _parse_blocks(lines: list) -> list:
 
 
 # ---------------------------------------------------------------------------
-# Custom sounds by NeverSink's own ladder (tier mode)
+# Custom sounds by NeverSink's own sound numbers (tier mode)
 # ---------------------------------------------------------------------------
-# NeverSink tags every block with "$type->category $tier->step" in its header comment.
+# NeverSink tags every block with "$type->category $tier->step" in its header comment (_header_tags is still used by the
+# whitelist engine). Its sounds are numbered 1-6 (`PlayAlertSound <id> <volume>`); the NeverSink tab has six slots, one
+# per number, in the order of NeverSink's own scale: slot 1 <- id 6 (the top), 2 <- 1, 3 <- 2, 4 <- 3, 5 <- 4, 6 <- 5.
+# A slot with a file puts `CustomAlertSoundOptional` next to the PlayAlertSound of EVERY Show block of that id (the
+# built-in sound stays as the fallback); an empty slot writes nothing.
 
 _TYPE_TAG = re.compile(r"\$type->(\S+)")
 _TIER_TAG = re.compile(r"\$tier->(\S+)")
-_STEP_TIER = re.compile(r"^(?:t\d+\w*|s|a|b|c|d|e)$")
-# NeverSink's sound numbers on its value ladders: 6 = top step, 1 = second, 2 = middle steps
-_SOUND_BY_NUMBER = {"6": "S", "1": "A", "2": "B"}
-_SOUND_TYPE_PREFIXES = ("currency", "fragments", "divination", "sockets->general", "xenotiering")
+SOUND_SLOT_OF_ID = {"6": "1", "1": "2", "2": "3", "3": "4", "4": "5", "5": "6"}
+SOUND_SLOTS = ("1", "2", "3", "4", "5", "6")
 
 
 def _header_tags(lines: list, block: "_Block") -> tuple:
@@ -90,67 +92,68 @@ def _header_tags(lines: list, block: "_Block") -> tuple:
     return (m_type.group(1) if m_type else None, m_tier.group(1) if m_tier else None)
 
 
-def _sound_type_ok(ty: str, tier_tag: Optional[str] = None) -> bool:
-    """Blocks that belong to a value ladder: currency*, fragments*, divination,
-    sockets->general (runes etc.), xenotiering; not leveling; for uniques only the
-    tier steps (t1, t2 ...), not the special per-item blocks (ex*, multispecial ...).
-    Gear, 6-link, chancing, jewels, gems and maps are never included."""
-    if "leveling" in ty:
-        return False
-    if ty.startswith("uniques"):
-        return bool(tier_tag and _STEP_TIER.match(tier_tag))
-    return ty.startswith(_SOUND_TYPE_PREFIXES)
+def _custom_sound_lines(style_lines: list, file_name: str, indent: str = "    ") -> list:
+    """`style_lines` with the custom sound added.
 
-
-def _override_sound(style_lines: list, tier_name: str, sound_map: Optional[dict],
-                    indent: str = "    ") -> list:
-    """Adds the user's own sound (S/A/B only) to `style_lines`.
-
-    Written as CustomAlertSoundOptional, not CustomAlertSound: with a missing
-    file the game refuses to load the whole filter for the plain form ("Invalid
-    sound filepath", verified in PoE1 + PoE2), while the Optional form is
-    skipped. The block's own PlayAlertSound stays as the fallback sound - it
-    plays when the custom file is absent and is overridden when it is present.
-    Any CustomAlertSound[Optional] line already in the style is replaced."""
-    custom = (sound_map or {}).get(tier_name) if tier_name in ("S", "A", "B") else None
-    if not custom:
-        return style_lines
+    Written as CustomAlertSoundOptional, not CustomAlertSound: with a missing file the game refuses to load the whole
+    filter for the plain form ("Invalid sound filepath", verified in PoE1 + PoE2), while the Optional form is skipped.
+    The block's own PlayAlertSound stays as the fallback sound - it plays when the custom file is absent and is
+    overridden when it is present. Any CustomAlertSound[Optional] line already in the style is replaced."""
     filtered = [l for l in style_lines
                 if not (l.split(None, 1) or [""])[0] in ("CustomAlertSound", "CustomAlertSoundOptional")]
-    filtered.append(f'{indent}CustomAlertSoundOptional "{custom}" {SOUND_VOLUME}')
+    filtered.append(f'{indent}CustomAlertSoundOptional "{file_name}" {SOUND_VOLUME}')
     return filtered
 
 
-def apply_ladder_sounds(base_text: str, sound_map: Optional[dict]) -> tuple:
-    """(new_text, blocks_changed). In every Show block of a value ladder (see
-    _sound_type_ok) whose PlayAlertSound is 6 / 1 / 2, add the user's S / A / B
-    sound - only for tiers that have one - through _override_sound. StackSize
-    blocks of those types are included. No sounds set -> (base_text, 0)."""
-    if not any((sound_map or {}).get(t) for t in ("S", "A", "B")):
-        return base_text, 0
+def sound_id_of(body: list) -> Optional[str]:
+    """The id of the first PlayAlertSound line of a block body, or None."""
+    for l in body:
+        m = _PLAY_ALERT_LINE.match(l)
+        if m and m.group(1).split():
+            return m.group(1).split()[0]
+    return None
+
+
+def sound_block_counts(base_text: str) -> dict:
+    """{PlayAlertSound id: number of Show blocks that play it} of a NeverSink filter."""
     lines = base_text.split("\n")
-    edits = []
+    out: dict = {}
     for b in _parse_blocks(lines):
         if b.block_type != "Show":
             continue
-        ty, tier_tag = _header_tags(lines, b)
-        if not ty or not _sound_type_ok(ty, tier_tag):
+        i = sound_id_of(lines[b.start + 1:b.end])
+        if i is not None:
+            out[i] = out.get(i, 0) + 1
+    return out
+
+
+def apply_numbered_sounds(base_text: str, sound_map: Optional[dict]) -> tuple:
+    """(new_text, {slot: blocks changed}). `sound_map` = {"1".."6": file name or None}. Every Show block whose
+    PlayAlertSound id belongs to a slot with a file gets that file as CustomAlertSoundOptional. No file set at all ->
+    (base_text, {}); an id outside 1-6 is left alone (sound_block_counts shows which ids a filter has)."""
+    files = {k: v for k, v in (sound_map or {}).items() if v and k in SOUND_SLOTS}
+    if not files:
+        return base_text, {}
+    lines = base_text.split("\n")
+    edits = []
+    done: dict = {}
+    for b in _parse_blocks(lines):
+        if b.block_type != "Show":
             continue
-        play = next((m.group(1) for m in map(_PLAY_ALERT_LINE.match, lines[b.start + 1:b.end]) if m), None)
-        if not play or not play.split():
-            continue
-        tier = _SOUND_BY_NUMBER.get(play.split()[0])
-        if not tier or not (sound_map or {}).get(tier):
+        body_all = lines[b.start + 1:b.end]
+        slot = SOUND_SLOT_OF_ID.get(sound_id_of(body_all) or "")
+        if slot is None or slot not in files:
             continue
         end = b.end
         while end - 1 > b.start and (not lines[end - 1].strip() or not lines[end - 1][:1].isspace()):
             end -= 1
         body = lines[b.start + 1:end]
         indent = next((re.match(r"\s*", l).group(0) for l in body if l.strip()), "    ")
-        edits.append((b.start + 1, end, _override_sound(body, tier, sound_map, indent=indent)))
+        edits.append((b.start + 1, end, _custom_sound_lines(body, files[slot], indent=indent)))
+        done[slot] = done.get(slot, 0) + 1
     for start, end, new in reversed(edits):
         lines[start:end] = new
-    return "\n".join(lines), len(edits)
+    return "\n".join(lines), done
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +164,7 @@ GOLD_BASETYPES = ["Gold"]   # BaseType == "Gold" (verified in NeverSink poe2 + p
 # Uncut gems (poe2 only) - BaseType as in the game; level gated by GemLevel >= N.
 # "Uncut Spirit Gem" is the source of meta gems (no separate 4th BaseType).
 WHITELIST_GEM_UNCUT = {
-    "poe2": ["Uncut Skill Gem", "Uncut Support Gem", "Uncut Spirit Gem"],
+    "poe2": ["Uncut Skill Gem", "Uncut Spirit Gem", "Uncut Support Gem"],      # UI order
     "poe1": [],
 }
 

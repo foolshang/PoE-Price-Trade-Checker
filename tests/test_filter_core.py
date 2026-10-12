@@ -133,11 +133,12 @@ def test_tier_mode_adds_custom_sounds_only_through_the_copied_names():
     base = ('Show # $type->currency $tier->t1\n\tBaseType == "Divine Orb"\n\tPlayAlertSound 6 300\n\n'
             'Show # $type->6l $tier->x\n\tLinkedSockets 6\n\tPlayAlertSound 6 300\n')
     res = filter_core.build_filter_text(
-        {"sound_s": "My Ping.MP3"}, "poe2", base_text=base, base_tag="t",
-        copy_sounds_fn=lambda m: asked.append(m) or {"S": "poe-checker-S.MP3"},
+        {"sound_1": "My Ping.MP3"}, "poe2", base_text=base, base_tag="t",
+        copy_sounds_fn=lambda m: asked.append(m) or {"1": "poe-checker-1.MP3"},
         log=lambda m, t="info": logs.append((t, m)))
-    assert asked == [{"S": "My Ping.MP3", "A": None, "B": None, "Q": None}]
-    assert res["base_text"].count('CustomAlertSoundOptional "poe-checker-S.MP3" 300') == 1    # not on the 6-link block
+    assert asked == [{"1": "My Ping.MP3", "2": None, "3": None, "4": None, "5": None, "6": None, "Q": None}]
+    # every Show block of NeverSink's number 6 (the ladder block and the 6-link block alike)
+    assert res["base_text"].count('CustomAlertSoundOptional "poe-checker-1.MP3" 300') == 2
     assert "My Ping" not in res["base_text"] and len(logs) == 1 and logs[0][0] == "ok"
     none = filter_core.build_filter_text({}, "poe2", base_text=base, base_tag="t", copy_sounds_fn=lambda m: {})
     assert none["base_text"] == base

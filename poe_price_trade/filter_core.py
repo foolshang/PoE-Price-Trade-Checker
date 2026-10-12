@@ -226,14 +226,54 @@ def build_quest_blocks(game: str, style, sound_file: Optional[str] = None, defau
 
 
 def tier_sound_requests(fg_cfg: dict) -> dict:
-    """{label: source file or None} the tier tab wants copied: S/A/B plus Q's file sound."""
-    sm = {
-        "S": fg_cfg.get("sound_s") or None,
-        "A": fg_cfg.get("sound_a") or None,
-        "B": fg_cfg.get("sound_b") or None,
-    }
+    """{label: source file or None} the NeverSink tab wants copied: its six numbered sounds ("1".."6", config keys
+    sound_1 .. sound_6) plus Q's file sound. The Whitelist tab has sounds of its own (filter_whitelist.sound_requests);
+    Q is the only one both tabs use."""
+    sm = {n: fg_cfg.get(f"sound_{n}") or None for n in filter_gen.SOUND_SLOTS}
     sm["Q"] = filter_style.uses_sound_file(fg_cfg.get("style_q")) if fg_cfg.get("style_q") else None
     return sm
+
+
+SOUND_FORMAT = 2        # `sound_format` of a config with sound_1 .. sound_6 (before: sound_s / sound_a / sound_b / sound_c)
+
+
+def migrate_sounds(fg: dict) -> tuple:
+    """(config, notes): a config from before the sounds were split has the NeverSink tab's S / A / B files in
+    sound_s / sound_a / sound_b (and v0.12.0's C in sound_c) and the Whitelist tab shared them. Converted once:
+      NeverSink tab: sound_s -> sound_1, sound_a -> sound_2, sound_b -> sound_3 (sound 4-6 empty; the old S / A / B were
+                     NeverSink's numbers 6 / 1 / 2 = slots 1 / 2 / 3, so every block sounds as it did);
+      Whitelist tab: the same files become the sound of its tiers S / A / B (sound_c -> C) when that tier has none.
+    The result carries `sound_format` = 2 so nothing is converted twice. Nothing to convert -> (fg, [])."""
+    if fg.get("sound_format") == SOUND_FORMAT:
+        return fg, []
+    out = dict(fg)
+    old = {t: (fg.get(f"sound_{t.lower()}") or "") for t in ("S", "A", "B", "C")}
+    moved = []
+    for t, n in (("S", "1"), ("A", "2"), ("B", "3")):
+        if old[t] and not out.get(f"sound_{n}"):
+            out[f"sound_{n}"] = old[t]
+            moved.append(t)
+    styles = {k: dict(v) if isinstance(v, dict) else v for k, v in (fg.get("wl_tier_style") or {}).items()}
+    for t in ("S", "A", "B", "C"):
+        if not old[t]:
+            continue
+        cur = styles.get(t) if isinstance(styles.get(t), dict) else {}
+        snd = cur.get("sound") if isinstance(cur.get("sound"), dict) else {}
+        if snd.get("kind") in ("file", "game"):
+            continue                                              # the tier already has a sound of its own
+        styles[t] = dict(cur, sound={"kind": "file", "id": 1, "file": old[t], "volume": filter_gen.SOUND_VOLUME})
+    if styles:
+        out["wl_tier_style"] = styles
+    for k in ("sound_s", "sound_a", "sound_b", "sound_c"):
+        out.pop(k, None)
+    out["sound_format"] = SOUND_FORMAT
+    notes = []
+    if any(old.values()):
+        notes.append("เสียงเดิม " + " / ".join(f"{t}: {old[t].replace(chr(92), '/').rsplit('/', 1)[-1]}"
+                                               for t in ("S", "A", "B", "C") if old[t])
+                     + " ถูกแปลงแล้ว — แท็บ NeverSink: เสียง 1 / 2 / 3 (= เสียง 6 / 1 / 2 ของ NeverSink) · "
+                       "แท็บ Whitelist: เสียงของ tier S / A / B (C) ชุดเดิม · สองแท็บแยกกันแล้ว")
+    return out, notes
 
 
 # ---------------------------------------------------------------------------
@@ -270,8 +310,9 @@ def build_filter_text(fg_cfg: dict, game: str, *,
     (None = hub unavailable, the caller logged why). Tier mode never uses prices: it is
     NeverSink's base filter for the chosen strictness, our header, and - for the tiers the
     user gave a sound - CustomAlertSoundOptional next to NeverSink's own sound numbers
-    (filter_gen.apply_ladder_sounds). No base filter -> nothing to write."""
+    (filter_gen.apply_numbered_sounds). No base filter -> nothing to write."""
     gv = game
+    fg_cfg, _moved = migrate_sounds(fg_cfg)       # a config that still has sound_s / sound_a / sound_b (read once)
     if fg_cfg.get("whitelist_enabled") and fg_cfg.get("wl_v2"):
         return _build_whitelist_v2(fg_cfg, gv, hub_data, base_text, copy_sounds_fn, extra_names, log, app_version)
     if fg_cfg.get("whitelist_enabled"):
@@ -280,18 +321,17 @@ def build_filter_text(fg_cfg: dict, game: str, *,
 
 
 _PLAY_ALERT = re.compile(r"^(\s*)PlayAlertSound\s+(\d+)")
-_SOUND_LABEL = {"6": "S", "1": "A", "2": "B"}      # NeverSink's sound numbers: top / second / middle
 
 
 def add_shared_tier_sounds(section: str, copied: dict) -> str:
-    """The user's S / A / B sound (shared with the NeverSink tab) next to the PlayAlertSound 6 / 1 / 2 of
-    the old whitelist's blocks, as filter_gen does for NeverSink's own blocks: the custom file plays when
-    it is there, the built-in sound is the fallback."""
+    """The NeverSink tab's numbered sound (slot per PlayAlertSound id, filter_gen.SOUND_SLOT_OF_ID) next to the
+    PlayAlertSound of the old whitelist's blocks, as filter_gen does for NeverSink's own blocks: the custom file plays
+    when it is there, the built-in sound is the fallback."""
     out = []
     for line in section.splitlines():
         out.append(line)
         m = _PLAY_ALERT.match(line)
-        f = copied.get(_SOUND_LABEL.get(m.group(2))) if m else None
+        f = copied.get(filter_gen.SOUND_SLOT_OF_ID.get(m.group(2))) if m else None
         if f:
             out.append(f'{m.group(1)}CustomAlertSoundOptional "{f}" {filter_gen.SOUND_VOLUME}')
     return "\n".join(out) + ("\n" if section.endswith("\n") else "")
@@ -362,9 +402,13 @@ def _build_whitelist_v2(fg_cfg, gv, hub_data, base_text, copy_sounds_fn, extra_n
         shown = ", ".join(f"{n} ({where})" for n, where in res["skipped"][:8])
         more = f" … +{len(res['skipped']) - 8}" if len(res["skipped"]) > 8 else ""
         log(f"⚠ ข้าม {len(res['skipped'])} ชื่อที่ไม่ยืนยันว่าเป็นชื่อจริงของเกม (ไม่เขียนลงไฟล์): {shown}{more}", "warn")
+    if res.get("bad_names"):
+        shown = ", ".join(f"{n} ({where})" for n, where in res["bad_names"][:8])
+        more = f" … +{len(res['bad_names']) - 8}" if len(res["bad_names"]) > 8 else ""
+        log(f"⚠ ข้าม {len(res['bad_names'])} ชื่อที่รู้ว่าไม่ใช่ชื่อไอเท็ม (เช่น [DNT], INCOMPLETE) ไม่เขียนลงไฟล์: {shown}{more}", "warn")
     # the settings go into the file too (comment lines), so the Whitelist tab can open and edit it again
     return {"mode": "whitelist", "generated_section": wl_embed.embed(res["text"], fg_cfg, gv, app_version),
-            "base_text": None, "count": res["count"], "report": res["report"], "skipped": res["skipped"]}
+            "base_text": None, "count": res["count"], "report": res["report"], "skipped": res["skipped"], "bad_names": res.get("bad_names", [])}
 
 
 def _build_tier(fg_cfg, gv, base_text, base_tag, copy_sounds_fn, log) -> dict:
@@ -372,10 +416,10 @@ def _build_tier(fg_cfg, gv, base_text, base_tag, copy_sounds_fn, log) -> dict:
         return {"mode": "tier", "generated_section": "", "base_text": None, "base_tag": base_tag}
     sound_map = tier_sound_requests(fg_cfg)
     copied = copy_sounds_fn(sound_map) if copy_sounds_fn else {}
-    base_text, n_blocks = filter_gen.apply_ladder_sounds(base_text, copied)
-    if n_blocks:
-        log(f"✓ ใส่เสียง custom ใน {n_blocks} block ตาม tier ของ NeverSink "
-            f"(S/A/B = เสียง 6/1/2 ของ NeverSink)", "ok")
+    base_text, done = filter_gen.apply_numbered_sounds(base_text, copied)
+    if done:
+        log(f"✓ ใส่เสียง custom ใน {sum(done.values())} block ตามเลขเสียงของ NeverSink "
+            f"({', '.join(f'เสียง {k}: {v}' for k, v in sorted(done.items()))})", "ok")
     quest = build_quest_blocks(gv, fg_cfg.get("style_q"), copied.get("Q")) if fg_cfg.get("style_q") else ""
     section = TIER_HEADER + ("\n" + quest if quest else "")
     return {"mode": "tier", "generated_section": section, "base_text": base_text, "base_tag": base_tag}

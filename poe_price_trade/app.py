@@ -169,6 +169,7 @@ class App:
         self._league_cb = ttk.Combobox(frame, textvariable=self._league_var,
                                        values=self._profile.default_leagues,
                                        width=20, font=FONT, style="League.TCombobox")
+        ui_theme.calm(self._league_cb)
         self._league_cb.grid(row=2, column=1, sticky="w")
         self._league_var.trace_add("write", lambda *_: self._load_prices_async())
         self._league_cb.bind("<Return>", lambda _: self._load_prices_async())

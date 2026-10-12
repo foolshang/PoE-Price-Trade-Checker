@@ -23,11 +23,11 @@ def test_named_categories_and_starting_tiers():
     cats = {c for c, _l in m.categories()}
     assert set(NAMED) <= cats
     tier = {r.key: r.tier for c in NAMED for r in m.rows(c)}
-    assert tier["Runegraft of Gemcraft"] == "S" and tier["Runegraft of Bellows"] == "A"       # t1 / t2
-    assert tier["Vial of Sacrifice"] == "S" and tier["Vial of Summoning"] == "A"
-    assert tier["Perfect Warlord"] == "S" and tier["Perfect Hydra"] == "A"
-    assert tier["Imperfect Blasphemer"] == "B"                                               # t4
-    assert tier["Ancient Wombgift"] == "A" and tier["Lavish Wombgift"] == "B"
+    assert tier["Runegraft of Gemcraft"] == "S" and tier["Runegraft of Bellows"] == "S"       # t1 / t2 = S
+    assert tier["Vial of Sacrifice"] == "S" and tier["Vial of Summoning"] == "S"
+    assert tier["Perfect Warlord"] == "S" and tier["Perfect Hydra"] == "S"
+    assert tier["Imperfect Blasphemer"] == "A"                                               # t4 = A
+    assert tier["Ancient Wombgift"] == "A" and tier["Lavish Wombgift"] == "A"                # t3 / t4
     assert tier["Candlestick Relic"] == "B"
     assert "Relic" in {c for c, _l in model("poe2").categories()}
 
@@ -43,7 +43,7 @@ def test_a_named_item_follows_its_tier(game, name, cls, cat):
     m = model(game)
     text = m.build()["text"]
     assert shown(text, name, cls)
-    m.set_row(cat, name, "C")
+    m.set_row(cat, name, "D")
     hidden = m.build()["text"]
     assert not shown(hidden, name, cls) and lint(hidden, data(game)[1]) == []
     m.set_row(cat, name, "S")
@@ -53,63 +53,6 @@ def test_a_named_item_follows_its_tier(game, name, cls, cat):
 def block(text, header):
     i = text.index(header)
     return text[i:text.find("\n\n", i)]
-
-
-def test_category_tier_hides_a_whole_list():
-    m = model("poe1")
-    m.set_category("Runegraft", "C")
-    text = m.build()["text"]
-    assert not shown(text, "Runegraft of Gemcraft", "Stackable Currency")
-    # a name no list has yet still follows the fragment rule (shown by default, hidden by its own row)
-    assert shown(text, "Runegraft of Zzz Not Yet Listed", "Stackable Currency")
-    m.set_row("Special", w.BASE_PREFIX + "Runegraft", "C")
-    assert not shown(m.build()["text"], "Runegraft of Zzz Not Yet Listed", "Stackable Currency")
-
-
-def test_whole_class_fallbacks_stay():
-    m = model("poe1")
-    text = m.build()["text"]
-    assert shown(text, "Zzz Not Yet Listed", "Corpses") and shown(text, "Zzz Not Yet Listed Wombgift", "Wombgifts")
-    assert shown(text, "Vial of Zzz Not Yet Listed", "Stackable Currency")
-    rows = {r.key: r for r in m.rows("Special")}
-    assert w.BASE_PREFIX + "Vial of" in rows and "Corpses" in rows
-    m.set_category("Special", "C")
-    off = m.build()["text"]
-    assert not shown(off, "Zzz Not Yet Listed", "Corpses") and not shown(off, "Vial of Zzz Not Yet Listed", "Stackable Currency")
-
-
-def test_generic_gems_are_listed_block_by_block():
-    m = model("poe1")
-    rows = m.rows("gear:gems")
-    assert len(rows) >= 25 and all(r.label.startswith("Gem") for r in rows)
-    assert any("GemLevel" in r.label for r in rows) and any("Quality" in r.label for r in rows)
-    assert len({r.key for r in rows}) == len(rows)
-    base = data("poe1")[1]
-    text = m.build()["text"]
-    assert lint(text, base) == []
-    gem = lambda t: shown(t, "Fireball", "Skill Gems", stack=1)
-    # the whole category hidden: no gem block is written as Show any more
-    m.set_category("gear:gems", "C")
-    assert "# gear: Gem ทั่วไป" in m.build()["text"]
-    assert not gem(m.build()["text"])
-    # one block of the category on its own
-    key = next(r.key for r in rows if r.label.startswith("Gem  Quality ≥ 20   "))
-    m.set_row("gear:gems", key, "S")
-    out = m.build()["text"]
-    assert "tier S (gems->generic)" in out and lint(out, base) == []
-    assert "gear:gems" not in {c for c, _l in model("poe2").categories()}
-
-
-def test_a3_survives_the_embedded_settings():
-    m = model("poe1")
-    m.set_row("Vial", "Vial of Fate", "C")
-    m.set_category("Runegraft", "A")
-    m.set_row("gear:gems", m.rows("gear:gems")[3].key, "C")
-    m.set_row("Special", w.BASE_PREFIX + "Vial of", "C")
-    text = wl_embed.embed(m.build()["text"], m.cfg(), "poe1")
-    again = WlModel.from_config(wl_embed.extract(text)["cfg"], "poe1")
-    again.set_data(*data("poe1"))
-    assert again.build()["text"] == m.build()["text"]
 
 
 @pytest.mark.parametrize("game", ["poe1", "poe2"])
@@ -132,3 +75,89 @@ def test_stack_defaults_are_the_names_hidden_alone_but_shown_as_a_stack(game, ex
             found.add(n)
     defaults = w.stack_info(base)[0]
     assert set(defaults) == found and len(found) == expected
+
+
+def test_fallback_blocks_of_neversink_still_show_unlisted_names_of_the_lists():
+    """The class / name-fragment fallbacks are NeverSink's own blocks now (copied as they are)."""
+    m = model("poe1")
+    text = m.build()["text"]
+    assert shown(text, "Zzz Not Yet Listed", "Corpses")
+    assert shown(text, "Vial of Zzz Not Yet Listed", "Stackable Currency")
+    assert shown(text, "Runegraft of Zzz Not Yet Listed", "Stackable Currency")
+    m.set_category("Runegraft", "D")
+    off = m.build()["text"]
+    assert not shown(off, "Runegraft of Gemcraft", "Stackable Currency")            # a name of the list: hidden first
+    assert shown(off, "Runegraft of Zzz Not Yet Listed", "Stackable Currency")      # a new one: NeverSink's fallback
+
+
+def test_a3_survives_the_embedded_settings():
+    m = model("poe1")
+    m.set_row("Vial", "Vial of Fate", "D")
+    m.set_category("Runegraft", "A")
+    text = wl_embed.embed(m.build()["text"], m.cfg(), "poe1")
+    again = WlModel.from_config(wl_embed.extract(text)["cfg"], "poe1")
+    again.set_data(*data("poe1"))
+    assert again.build()["text"] == m.build()["text"]
+
+
+def test_poe1_class_wide_wombgift_show_comes_after_the_name_blocks_and_before_the_final_hide():
+    m = model("poe1")
+    text = m.build()["text"]
+    assert shown(text, "Growing Wombgift", "Wombgifts")                       # a name no list has: the class rule shows it
+    assert shown(text, "Ancient Wombgift", "Wombgifts")
+    blocks = text.split("\n\n")
+    i = next(k for k, b in enumerate(blocks) if b.startswith("# wombgifts"))
+    j = next(k for k, b in enumerate(blocks) if b.startswith("# hide everything else"))
+    named = [k for k, b in enumerate(blocks) if '"Ancient Wombgift"' in b and b.splitlines()[0] != "# wombgifts"]
+    assert named and max(named) < i < j                                       # after every block that lists names
+    assert "SetFontSize" in blocks[i] and 'Class == "Wombgifts"' in blocks[i] and "BaseType" not in blocks[i]
+    m.set_row("Wombgift", "Ancient Wombgift", "D")                            # a named wombgift set to D stays hidden
+    assert not shown(m.build()["text"], "Ancient Wombgift", "Wombgifts")
+    m.set_row("Wombgift", "Ancient Wombgift", "S")
+    assert f'"Ancient Wombgift"' in block(m.build()["text"], "# tier S")      # a named one keeps its own (name) block
+
+
+def test_poe2_has_no_wombgift_rule():
+    assert "# wombgifts" not in model("poe2").build()["text"]
+
+
+UNCUT = ("Uncut Skill Gem", "Uncut Spirit Gem", "Uncut Support Gem")
+
+
+def _uncut(text, base, level):
+    item = {"base": base, "cls": "Uncut Gems", "rarity": "Normal", "stack": 1, "area": 80, "ilvl": 80, "quality": 0,
+            "drop": 80, "gem": level}
+    return cmp.visible(cmp.parse_blocks(text), item)
+
+
+@pytest.mark.parametrize("n", [1, 5, 17, 18, 20])
+def test_uncut_gem_shows_from_N_up_first_match_for_all_three_types(n):
+    cfg = {"whitelist_gem_uncut_poe2": {b: n for b in UNCUT}}
+    text = model("poe2", cfg).build()["text"]
+    for base in UNCUT:
+        for lv in sorted({max(1, n - 1), n, min(20, n + 1), 20}):
+            shown_, i = _uncut(text, base, lv)
+            if lv >= n:
+                assert shown_ and i >= 0, (base, lv, n)
+                blk = cmp.parse_blocks(text)[i]
+                assert any(c[0] == "GemLevel" for c in blk[1]), (base, lv, n)     # our uncut block, nothing earlier
+            else:
+                assert not shown_, (base, lv, n)
+
+
+def test_uncut_levels_16_to_20_per_type_with_the_players_17_17_5():
+    cfg = {"whitelist_gem_uncut_poe2": {"Uncut Skill Gem": 17, "Uncut Spirit Gem": 17, "Uncut Support Gem": 5}}
+    text = model("poe2", cfg).build()["text"]
+    for base, need in zip(UNCUT, (17, 17, 5)):
+        for lv in range(16, 21):
+            assert _uncut(text, base, lv)[0] is (lv >= need), (base, lv)
+    assert '    BaseType "Uncut Skill Gem"' in text and 'BaseType == "Uncut' not in text
+    heads = [l for l in text.splitlines() if l.startswith("# uncut gem:")]
+    assert [h.split(":")[1].split(" (")[0].strip() for h in heads] == list(UNCUT)       # Skill, Spirit, Support
+
+
+def test_uncut_gems_reopen_from_the_new_block_form():
+    cfg = {"whitelist_gem_uncut_poe2": {"Uncut Skill Gem": 17, "Uncut Spirit Gem": 17, "Uncut Support Gem": 5}}
+    m = model("poe2", cfg)
+    assert m.build()["text"].count("# uncut gem:") == 3
+    assert WlModel.from_config(m.to_config({}), "poe2").gem_uncut == cfg["whitelist_gem_uncut_poe2"]

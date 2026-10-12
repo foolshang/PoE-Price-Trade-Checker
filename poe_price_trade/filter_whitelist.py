@@ -4,10 +4,11 @@ starting tier of every item comes from NeverSink's strictness-2 base filter.
 Pure (stdlib + filter_gen + filter_style): runs in Pyodide, no I/O. Everything it needs comes in as
 text / dicts; filter_core.build_filter_text wires it to the fetched base filter and hub payload.
 
-Tiers: S, A, B are shown with their style; C = hidden (simply not written - the file ends with
-Hide). Default tier of a name = the first Show / Hide block in the base filter that lists it (blocks with
-StackSize / AreaLevel / Rarity ... conditions are skipped):
-    S = t1 / s     A = t2-t3 / a-b     B = t4-t8 / c-e     C = a Hide block
+Tiers: S, A, B, C are shown, each with its own style; D = hidden (the file ends with Hide). Default tier of a
+name = the first Show / Hide block in the base filter that lists it (blocks with StackSize / AreaLevel / Rarity ...
+conditions are skipped):
+    S = t1-t2   A = t3-t4   B = t5-t6   C = t7-t8   D = a Hide block
+    letter ladders (s a b c d e): by position - see LADDER_LETTER_TIER
     B = any other tag (supply*, any ...: NeverSink shows it, but not as a step of its ladder)
 A name the base filter does not tier (hub-only names, names only in special blocks) starts at B.
 A name NeverSink hides when it is alone but shows as a stack (its own block or a whole-class rule such as
@@ -18,9 +19,10 @@ Config keys read here (all optional):
     wl_item_tier_<game>   {name: tier}          wl_cat_tier_<game>   {category: tier}
     wl_class_tier_<game>  {class: tier}         wl_unique_tier_<game> {unique name: tier}
     wl_block_tier_<game>  {gear block key: tier}  (wl_cat_tier_<game>["gear:<group id>"] = a whole gear category)
-    wl_tier_stack         {"S"|"A"|"B": N}      show only stacks of N or more (stackable names only)
+    wl_tier_stack         {"S"|"A"|"B"|"C": N}  show only stacks of N or more (stackable names only)
     wl_item_stack_<game>  {name: N}             per-name stack minimum (default: NeverSink's own)
-    wl_tier_style         {"S"|"A"|"B"|"G"|"Tablet"|"Map": style}  (filter_style dicts)
+    wl_tier_style         {"S"|"A"|"B"|"C"|"G"|"Tablet"|"Map"|"Gem": style}  (filter_style dicts, sound included)
+    wl_tier_format        2 = D is hidden and C is a shown tier (a config without it still has C = hidden: wl_model converts)
     whitelist_gold / whitelist_gold_min
     wl_map_on / wl_map_tier_min / wl_map_rarity_min
     whitelist_gem_uncut_<game> / whitelist_gem_names_<game> / whitelist_gem_tier
@@ -33,9 +35,14 @@ from typing import Optional
 
 from . import filter_gen, filter_style
 
-TIERS = ("S", "A", "B")
-ALL_TIERS = ("S", "A", "B", "C")
-_RANK = {"S": 0, "A": 1, "B": 2, "C": 3}
+TIERS = ("S", "A", "B", "C")               # the shown tiers (each has a style)
+HIDE_TIER = "D"                            # hidden
+ALL_TIERS = TIERS + (HIDE_TIER,)
+TIER_FORMAT = 2                            # wl_tier_format of a config that knows C is shown and D is hidden
+_RANK = {"S": 0, "A": 1, "B": 2, "C": 3, "D": 4}
+# NeverSink's letter ladders (poe2 currency / runes / ...: s a b c d e) have no number, so they go by position: the
+# 1st-2nd step = S, 3rd-4th = A, 5th-6th = B, like t1-t2 / t3-t4 / t5-t6 of the numbered ladders (no letter step is C).
+LADDER_LETTER_TIER = {"s": "S", "a": "S", "b": "A", "c": "A", "d": "B", "e": "B"}
 _STYLE_TOKENS = {"SetFontSize", "SetTextColor", "SetBorderColor", "SetBackgroundColor", "PlayAlertSound",
                  "PlayEffect", "MinimapIcon"}
 _SPECIAL_CONDITIONS = ("StackSize", "AreaLevel", "Rarity", "ItemLevel", "Quality", "DropLevel",
@@ -74,7 +81,7 @@ HUB_EXCLUDED = ("UncutGem", "SkillGem", "BaseType", "ClusterJewel", "Map", "Prec
 # Equipment ("อุปกรณ์"): NeverSink's gear Show blocks copied with ALL their conditions (AreaLevel included -
 # the game checks it), grouped by their `$type` tag. The player picks one tier per group; the block's own
 # look is replaced by that tier's style. NeverSink's Hide blocks of gear are not copied (more shows than
-# NeverSink is accepted); a group set to C is written as `Hide` with the same conditions, so first-match
+# NeverSink is accepted); a group set to D is written as `Hide` with the same conditions, so first-match
 # order (an item belongs to the first gear block it fits) stays what NeverSink had.
 # ---------------------------------------------------------------------------
 
@@ -100,17 +107,67 @@ GEAR_GROUPS = {
         ("salvage", "Salvage (Quality/Sockets)", "B"), ("alwaysshow", "ของที่เกมบังคับโชว์ (AlwaysShow)", "B"),
     ],
 }
-# Categories the player can also tier by rarity (Normal / Magic / Rare): category id -> the item classes it is
-# about (checked against NeverSink s2 of both games: every class below is one its gear blocks use). A rarity
-# set to a tier is written as `Class == <classes>` + `Rarity X` ahead of the category's own blocks (it wins over
-# one block, the whole category and NeverSink); Unique is not offered - uniques go by the Unique category.
-# Key in the config: wl_rarity_tier_<game> {category id: {rarity: S|A|B|C}}.
-RARITY_CHOICES = ("Normal", "Magic", "Rare")
-RARITY_CATEGORIES = {
-    "poe1": {"gear:jewel": ["Jewels", "Abyss Jewels"],
-             "gear:flask": ["Life Flasks", "Mana Flasks", "Hybrid Flasks", "Utility Flasks", "Tinctures"]},
-    "poe2": {"gear:jewel": ["Jewels"], "gear:flask": ["Life Flasks", "Mana Flasks", "Charms"]},
+# The tab lists no gear block any more (GEAR_LISTED is empty; the "listed" branch of gear_sequence stays for a future
+# list). Every gear group (story / levelling, 6-link, heist, influenced, rare / magic with mods, jewels, rare by ilvl,
+# craft bases, exotic, zone, jewellery, salvage, AlwaysShow, generic gems ...) and the special classes (keys, relics,
+# contracts ...) are NeverSink strictness-2's own blocks, copied into the file as NeverSink wrote them (Show / Hide,
+# conditions, look, sound) - see gear_sequence. Flasks / charms / tinctures are NeverSink's too, plus the
+# "Flask / Tincture" / "Flask / Charm" category: per row the default is NeverSink's blocks, or the player sets Normal /
+# Magic / Rare to S / A / B / C / D. Such a rarity is written as `Class == <classes>` + `Rarity X` ahead of every copied
+# block (it wins over them), `Hide` for D; Unique is not offered - uniques go by the Unique category.
+# Classes checked against NeverSink s2 of both games (every class below is one of its flask / charm blocks).
+# Config: wl_rarity_rows_<game> {row id: {"custom": bool, "tiers": {Normal|Magic|Rare: S|A|B|C|D}}}.
+GEAR_LISTED = {"poe1": (), "poe2": ()}          # no block list in the tab any more: every group is NeverSink's own blocks
+FLASK_GROUP = "flask"
+FLASK_CATEGORY = "flaskcharm"
+RARITY_CHOICES = ("Normal", "Magic")        # flasks / charms / tinctures are never Rare in game (NeverSink has no Rare block)
+RARITY_REMOVED = "Rare"                     # an old value for it is skipped with a Status note (wl_model)
+# (row id, Thai label, classes) per game; the category label comes from FLASK_LABEL
+RARITY_ROWS = {
+    "poe1": [("Flask", "Flask", ["Life Flasks", "Mana Flasks", "Hybrid Flasks", "Utility Flasks"]),
+             ("Tincture", "Tincture", ["Tinctures"])],
+    "poe2": [("Flask", "Flask", ["Life Flasks", "Mana Flasks"]), ("Charm", "Charm", ["Charms"])],
 }
+FLASK_LABEL = {"poe1": "Flask / Tincture", "poe2": "Flask / Charm"}
+
+# Equipment by class ("อุปกรณ์ตาม class"): one row per item class, grouped. A row set "myself" gives Normal / Magic / Rare each
+# S / A / B / C / D (all start at B; NeverSink is the row's default mode, nothing written); a set one is written as `Class == <class>` + `Rarity X` AHEAD of every
+# block NeverSink wrote (after the quest / name / unique / tablet / map / gold / gem / typed-name blocks, so none of those is
+# taken from its own block), so it wins for every piece of that class + rarity, the good ones NeverSink shows included.
+# Unique is not offered (the Unique category); flasks / charms / tinctures have their own category. Classes are the ones
+# NeverSink's own gear blocks name (checked against s2 of both games). Config: wl_equip_rows_<game>
+# {class: {"custom": bool, "tiers": {Normal|Magic|Rare: S|A|B|C|D}}}.
+EQUIP_CATEGORY = "equipclass"
+EQUIP_LABEL = "อุปกรณ์ตาม class"
+EQUIP_CHOICES = ("Normal", "Magic", "Rare")
+EQUIP_GROUPS = {
+    "poe1": [
+        ("weapon", "อาวุธ", ["Bows", "Claws", "Daggers", "One Hand Axes", "One Hand Maces", "One Hand Swords",
+                            "Thrusting One Hand Swords", "Rune Daggers", "Two Hand Axes", "Two Hand Maces",
+                            "Two Hand Swords", "Staves", "Warstaves", "Wands", "Sceptres", "Quivers"]),
+        ("armour", "เกราะ", ["Body Armours", "Boots", "Gloves", "Helmets", "Shields"]),
+        ("jewellery", "เครื่องประดับ", ["Amulets", "Rings", "Belts"]),
+        ("other", "อื่นๆ", ["Jewels", "Abyss Jewels"]),
+    ],
+    "poe2": [
+        ("weapon", "อาวุธ", ["Bows", "Crossbows", "Quarterstaves", "Staves", "Talismans", "Spears", "One Hand Maces",
+                            "Two Hand Maces", "Wands", "Sceptres", "Quivers"]),
+        ("armour", "เกราะ", ["Body Armours", "Boots", "Gloves", "Helmets", "Shields", "Bucklers", "Foci"]),
+        ("jewellery", "เครื่องประดับ", ["Amulets", "Rings", "Belts"]),
+        ("other", "อื่นๆ", ["Jewels"]),
+    ],
+}
+
+
+def equip_groups(game: str) -> list:
+    """[(group id, Thai name, [class])] of the equipment-by-class category."""
+    return [(g, n, list(c)) for g, n, c in EQUIP_GROUPS.get(game, [])]
+
+
+def equip_classes(game: str) -> list:
+    return [c for _g, _n, cs in EQUIP_GROUPS.get(game, []) for c in cs]
+# old (v0.11.0 - v0.11.3) keys / ids the tab no longer has: read once, dropped with a Status note
+LEGACY_RARITY_KEY = "wl_rarity_tier"
 # `$type` tags that are not equipment (other categories / classes own them)
 _GEAR_NOT = ("exoticmap", "exotic->wombgifts", "currency")      # currency->leveling* is currency, not gear
 _GEAR_RULES = {
@@ -159,22 +216,55 @@ def gear_group_of(game: str, ty: Optional[str]) -> Optional[str]:
     return None
 
 
-def gear_block_items(game: str, base_text: str) -> list:
-    """[(block key, group id, `$type` tag, tier tag, condition lines)] of NeverSink's gear Show blocks, in
-    file order. Block key = "<type>|<tier tag>|<n>" (n = nth block with the same type + tag), what
-    wl_block_tier_<game> is keyed by."""
+def listed_gear_groups(game: str) -> list:
+    """[(id, Thai name, default tier)] of the gear groups the tab lists block by block."""
+    return [g for g in GEAR_GROUPS.get(game, []) if g[0] in GEAR_LISTED.get(game, ())]
+
+
+def rarity_rows(game: str) -> list:
+    return list(RARITY_ROWS.get(game, []))
+
+
+_FALLBACK_TYPES = ("runesgrafts", "vials")          # NeverSink's `BaseType "Runegraft"` / `"Vial of"` fallback blocks
+
+
+def _copy_reason(game: str, ty: Optional[str], classes: list, has_names: bool) -> Optional[str]:
+    """Why a NeverSink block is copied as it is (None = not copied): a gear group the tab does not list, a special
+    class (keys, relics, contracts ... - SPECIAL_CLASSES), or the fallback block of a name list."""
+    gid = gear_group_of(game, ty)
+    if gid and gid not in GEAR_LISTED.get(game, ()):
+        return gid
+    if set(classes) & set(SPECIAL_CLASSES.get(game, [])):
+        return "special"
+    if (ty or "").startswith(_FALLBACK_TYPES) and not has_names:
+        return "special"
+    return None
+
+
+def gear_sequence(game: str, base_text: str) -> list:
+    """NeverSink's blocks the whitelist file takes over, in file order:
+        ("listed", (block key, group id, `$type`, tier tag, condition lines))   - a Show block of a listed gear group
+        ("copy", reason, `$type`, tier tag, "Show" | "Hide", [body lines])      - copied as it is
+    Block key = "<type>|<tier tag>|<n>" (n = nth block with the same type + tag), what wl_block_tier_<game> is keyed by."""
     lines, blocks = scan(base_text)
     out = []
     seen: dict = {}
     for b in blocks:
-        if b.block_type != "Show":
-            continue
         ty, tag = filter_gen._header_tags(lines, b)
+        body = lines[b.start + 1:b.end]
+        classes = [c for l in body if re.match(r"\s*Class\b", l) for c in re.findall(r'"([^"]*)"', l)]
+        reason = _copy_reason(game, ty, classes, bool(exact_names(lines, b)))
+        if reason:
+            end = len(body)
+            while end and (not body[end - 1].strip() or body[end - 1].lstrip().startswith("#")):
+                end -= 1                      # blank lines and the section comments that belong to the next block
+            out.append(("copy", reason, ty, tag, b.block_type, [l.rstrip() for l in body[:end]]))     # no CR of a CRLF base filter
+            continue
         gid = gear_group_of(game, ty)
-        if not gid:
+        if not gid or b.block_type != "Show":
             continue
         conds = []
-        for l in lines[b.start + 1:b.end]:
+        for l in body:
             t = l.strip()
             if t and not t.startswith("#") and t.split(None, 1)[0] not in _NOT_CONDITION:
                 conds.append("    " + t)
@@ -182,8 +272,14 @@ def gear_block_items(game: str, base_text: str) -> list:
         if conds and not any(c.strip() == "Continue" for c in conds):
             k = (ty, tag or "")
             seen[k] = seen.get(k, 0) + 1
-            out.append((f"{ty}|{tag or ''}|{seen[k]}", gid, ty, tag, conds))
+            out.append(("listed", (f"{ty}|{tag or ''}|{seen[k]}", gid, ty, tag, conds)))
     return out
+
+
+def gear_block_items(game: str, base_text: str) -> list:
+    """[(block key, group id, `$type` tag, tier tag, condition lines)] of NeverSink's Show blocks of the gear groups the
+    tab lists, in file order (see gear_sequence)."""
+    return [e[1] for e in gear_sequence(game, base_text) if e[0] == "listed"]
 
 
 def gear_blocks(game: str, base_text: str) -> list:
@@ -278,7 +374,7 @@ def gear_tiers(game: str, cfg: dict) -> dict:
     wl_gear_tier_ / "Gear" keys still count) > the group's default. A block set alone beats this."""
     cats = cfg.get(f"wl_cat_tier_{game}") or {}
     return {gid: _valid(cats.get(gear_cat(gid))) or _legacy_gear_tier(game, cfg, gid) or default
-            for gid, _name, default in GEAR_GROUPS.get(game, [])}
+            for gid, _name, default in listed_gear_groups(game)}
 
 
 def gear_block_tiers(game: str, cfg: dict, items: list) -> dict:
@@ -302,14 +398,14 @@ def neversink_quest_lines(base_text: str) -> list:
 
 
 def tier_of_step(tag: Optional[str]) -> Optional[str]:
-    """S = t1 / s, A = t2-t3 / a-b, B = t4-t8 / c-e; any other tag is not a step."""
+    """S = t1-t2, A = t3-t4, B = t5-t6, C = t7-t8; letter steps by LADDER_LETTER_TIER; any other tag is not a step."""
     m = re.match(r"^(?:t(\d+)\w*|(s|a|b|c|d|e))$", tag or "")
     if not m:
         return None
     if m.group(1):
         n = int(m.group(1))
-        return "S" if n == 1 else "A" if n in (2, 3) else "B" if 4 <= n <= 8 else None
-    return {"s": "S", "a": "A", "b": "A", "c": "B", "d": "B", "e": "B"}[m.group(2)]
+        return "S" if n <= 2 else "A" if n <= 4 else "B" if n <= 6 else "C" if n <= 8 else None
+    return LADDER_LETTER_TIER[m.group(2)]
 
 
 _EXACT_LINE = re.compile(r'^\s*BaseType\s*==\s*((?:"[^"]*"\s*)+)$')
@@ -360,7 +456,7 @@ def default_tiers(base_text: str) -> dict:
         if conds & set(_SPECIAL_CONDITIONS) or "Continue" in conds:
             continue
         if b.block_type == "Hide":
-            tier = "C"
+            tier = HIDE_TIER
         else:               # a Show with a tag that is no ladder step (supply*, any ...) is shown as B
             tier = tier_of_step(filter_gen._header_tags(lines, b)[1]) or "B"
         for n in names:
@@ -380,7 +476,8 @@ def ladder_names(base_text: str) -> set:
 
 
 def default_tier_lines(base_text: str) -> dict:
-    """{"S"|"A"|"B": style lines} - copies of the look of NeverSink's currency ladder steps 1, 2, 3."""
+    """{"S"|"A"|"B"|"C": style lines} - S / A / B copy the look of NeverSink's currency ladder steps 1, 2, 3; C is the
+    faded preset (DEFAULT_STYLES["C"]): NeverSink has no step that is "its" look."""
     lines, blocks = scan(base_text)
     steps = []
     for b in blocks:
@@ -389,9 +486,10 @@ def default_tier_lines(base_text: str) -> dict:
                 and tier_of_step(tag) and not (_conds(lines, b) & set(_SPECIAL_CONDITIONS)):
             steps.append(b)
     out = {}
-    for tier, b in zip(TIERS, steps[:3]):
+    for tier, b in zip(TIERS[:3], steps[:3]):
         out[tier] = ["    " + l.strip() for l in lines[b.start + 1:b.end]
                      if l.strip() and l.split(None, 1)[0] in _STYLE_TOKENS]
+    out["C"] = filter_style.style_lines(filter_style.DEFAULT_STYLES["C"])
     for tier in TIERS:           # a base filter without that ladder: a plain readable fallback
         out.setdefault(tier, filter_style.style_lines(filter_style.DEFAULT_STYLES["Map"]))
     return out
@@ -421,7 +519,7 @@ def _stack_blocks(lines: list, blocks: list) -> list:
         ns = [int(m.group(1)) for m in (_STACK_GE.match(l) for l in body) if m]
         tag = filter_gen._header_tags(lines, b)[1]
         out.append((i, b.block_type, classes, names, subs, ns[0] if ns else 1,
-                    "C" if b.block_type == "Hide" else (tier_of_step(tag) or "B")))
+                    HIDE_TIER if b.block_type == "Hide" else (tier_of_step(tag) or "B")))
     return out
 
 
@@ -487,11 +585,11 @@ def stack_info(base_text: str) -> tuple:
 
 def start_tiers(base_text: str) -> tuple:
     """(tiers, stack_defaults): NeverSink's starting tier of every name. A name NeverSink hides alone but
-    shows as a stack (default_tiers says C) starts at the tier it shows as, with its stack minimum."""
+    shows as a stack (default_tiers says D) starts at the tier it shows as, with its stack minimum."""
     tiers = default_tiers(base_text)
     stack_defaults, _stackable = stack_info(base_text)
     for n, (_k, t) in stack_defaults.items():
-        if tiers.get(n) in (None, "C"):
+        if tiers.get(n) in (None, HIDE_TIER):
             tiers[n] = t
     return tiers, stack_defaults
 
@@ -617,6 +715,27 @@ def universe(game: str, hub_data: Optional[dict], base_text: str) -> dict:
     return out
 
 
+# Names that are known to be no item name, whatever list they came from (GGG's trade data and the hub both carry
+# a few): never written into `BaseType ==` (the game rejects the whole filter for a name it does not know) and
+# reported in the Status. Checked against the live GGG + hub data of both games: no real name used by the program
+# matches. NOT a pattern on purpose: "(Tier N)" ("Map (Tier 14)" / "Map (Tier 16)" are in NeverSink's own filter and in
+# a whitelist the game loaded; the unconfirmed ones - Tier 1 / 7 / 10 / 13 - are skipped as unconfirmed names) and
+# "(Level N)" ("Thaumaturgic Flux (Level N)" is in NeverSink's poe2 filter and in whitelists the game loaded).
+BAD_NAME_PATTERNS = (
+    re.compile(r"\[DNT\]", re.I),                      # "[DNT] Incursion Gemcutter's Prism ..." (do not translate: unused)
+    re.compile(r"\bINCOMPLETE\b"),                      # placeholder uniques
+    re.compile(r"\(not visible to players\)", re.I),
+    re.compile(r"^\d+$"),                              # numeric ids ("60634") GGG lists as the type of some currency / maps
+    re.compile(r"^\s|\s$"),                            # stray spaces ("Blood Stasis ")
+    re.compile(r"^(?:[A-Z][a-z]+){3,}$"),               # internal ids glued together ("NonEleBowRangerPhysNoble")
+)
+
+
+def bad_name(name: str) -> bool:
+    """True for a name that cannot be an item's BaseType (see BAD_NAME_PATTERNS)."""
+    return any(p.search(name or "") for p in BAD_NAME_PATTERNS)
+
+
 def _valid(t) -> Optional[str]:
     return t if t in ALL_TIERS else None
 
@@ -681,17 +800,9 @@ def resolve_unique_tiers(game: str, cfg: dict, entries: list, base_defaults: dic
 # ---------------------------------------------------------------------------
 
 def effective_style(cfg: dict, key: str) -> Optional[dict]:
-    """The user's style for a label. S / A / B sounds are shared with the NeverSink tab: its sound_s /
-    sound_a / sound_b file wins over a sound kept in this tab's own style (everything else - colours,
-    icon ... - stays separate per tab)."""
-    style = (cfg.get("wl_tier_style") or {}).get(key)
-    shared = cfg.get(f"sound_{key.lower()}") if key in TIERS else None
-    if not shared:
-        return style
-    style = filter_style.normalize_style(style)
-    style["sound"] = {"kind": "file", "id": style["sound"]["id"], "file": shared,
-                      "volume": style["sound"]["volume"]}
-    return style
+    """The user's style for a label (S / A / B / C / G / Tablet / Map / Gem), sound included: every label has its own
+    sound, the Whitelist tab shares none with the NeverSink tab (only Q is common, and Q is not a label here)."""
+    return (cfg.get("wl_tier_style") or {}).get(key)
 
 
 def sound_requests(cfg: dict, game: Optional[str] = None) -> dict:
@@ -705,8 +816,10 @@ def sound_requests(cfg: dict, game: Optional[str] = None) -> dict:
             unused.add("G")
         if not cfg.get("wl_map_on"):
             unused.add("Map")
+        if cfg.get("whitelist_gem_tier") == HIDE_TIER:
+            unused.add("Gem")
     out = {}
-    for k in ("S", "A", "B", "G", "Tablet", "Map"):
+    for k in ("S", "A", "B", "C", "G", "Tablet", "Map", "Gem"):
         st = effective_style(cfg, k)
         out[k] = filter_style.uses_sound_file(st) if st and k not in unused else None
     return out
@@ -714,6 +827,16 @@ def sound_requests(cfg: dict, game: Optional[str] = None) -> dict:
 
 def _quote(names) -> str:
     return " ".join(f'"{n}"' for n in names)
+
+
+def _bt_groups(names, exact_ok) -> list:
+    """The `BaseType` condition lines for these names: `BaseType == ...` for the names NeverSink itself writes with `==`
+    (the game knows them exactly), then a bare `BaseType ...` line (substring match, as NeverSink writes its other names)
+    for the rest - a name NeverSink never lists is not known to match exactly in game (the uncut gem case)."""
+    names = list(names)
+    exact = [n for n in names if n in exact_ok]
+    rest = [n for n in names if n not in exact_ok]
+    return ([f"BaseType == {_quote(exact)}"] if exact else []) + ([f"BaseType {_quote(rest)}"] if rest else [])
 
 
 _STYLE_ORDER = ("SetFontSize", "SetTextColor", "SetBorderColor", "SetBackgroundColor", "PlayAlertSound",
@@ -775,29 +898,35 @@ def build_whitelist_filter(game: str, cfg: dict, base_text: str, hub_data: Optio
     """The whole whitelist file. Returns {"text", "count", "tiers": {name: tier}, "categories",
     "unique_conflicts", "report": {tier: n}}. count = what the file shows (names + unique bases +
     special classes). Order, specific before general (first match wins):
-    Q, uniques, tablet, maps, gold, gems, S / A / B (names, then special classes), typed names, Hide."""
+    Q, S, uniques, tablet, maps, gold, A, gems, B, C, D (names hidden), typed names, rarity / equipment rows,
+    NeverSink's copied blocks, Hide."""
     cfg = cfg or {}
     sound_names = sound_names or {}
     # a single unknown name in a `BaseType ==` line makes the game reject the whole filter, so only
     # names the base filter itself uses (or `extra_names`, e.g. GGG's item list) are ever written
     real = known_names(base_text) | set(extra_names or ()) | set(filter_gen.GOLD_BASETYPES) | set(filter_gen.WHITELIST_GEM_UNCUT.get(game, []))
     skipped: dict = {}
+    bad: dict = {}
+
+    def usable(n, where) -> bool:
+        if bad_name(n):
+            bad.setdefault(n, where)
+            return False
+        if n in real:
+            return True
+        skipped.setdefault(n, where)
+        return False
 
     def keep(names, where):
-        good = []
-        for n in names:
-            if n in real:
-                good.append(n)
-            else:
-                skipped.setdefault(n, where)
-        return good
+        return [n for n in names if usable(n, where)]
 
+    exact_ok = known_names(base_text) | set(filter_gen.GOLD_BASETYPES)
     default_lines = default_tier_lines(base_text)
     names = universe(game, hub_data, base_text)
     start, stack_defaults = start_tiers(base_text)
     stackable = stack_info(base_text)[1]
     tiers = resolve_tiers(game, cfg, names, start)
-    tiers = {n: t for n, t in tiers.items() if n in real or skipped.setdefault(n, "item") is None}
+    tiers = {n: t for n, t in tiers.items() if usable(n, "item")}
     stack_min = stack_minimums(cfg, game, tiers, stack_defaults, stackable)
     # tablets the player gave a tier leave the Tablet block and follow that tier like any other item
     tablet_tier = {n: t for n, t in tiers.items() if is_tablet(game, n) and t != TABLET_DEFAULT}
@@ -805,7 +934,7 @@ def build_whitelist_filter(game: str, cfg: dict, base_text: str, hub_data: Optio
     tiers = {n: t for n, t in tiers.items() if n not in tablet_tier}
     entries = unique_entries(hub_data)
     base_tier, conflicts = resolve_unique_tiers(game, cfg, entries, unique_base_defaults(base_text))
-    style = {k: _style_for(k, cfg, default_lines, sound_names) for k in ("S", "A", "B", "G", "Tablet", "Map")}
+    style = {k: _style_for(k, cfg, default_lines, sound_names) for k in ("S", "A", "B", "C", "G", "Tablet", "Map")}
     out = ["# === PoE Checker - Whitelist (own tiers, starting tiers from NeverSink strictness 2) ===", ""]
     count = 0
     if quest_text:
@@ -821,32 +950,35 @@ def build_whitelist_filter(game: str, cfg: dict, base_text: str, hub_data: Optio
         for n in shown:
             groups.setdefault(stack_min.get(n, 1), []).append(n)
         for need in sorted(groups):
-            if need == 1:
-                out.extend([f"# tier {t}", "Show", f"    BaseType == {_quote(groups[need])}"] + style[t] + [""])
-                continue
-            # a stack under the minimum is hidden right here, so no later (broader) block can show it
-            out.extend([f"# tier {t} - stack >= {need}", "Show", f"    BaseType == {_quote(groups[need])}",
-                        f"    StackSize >= {need}"] + style[t] + [""])
-            out.extend([f"# tier {t} - smaller stacks hidden", "Hide", f"    BaseType == {_quote(groups[need])}", ""])
+            for bt in _bt_groups(groups[need], exact_ok):
+                if need == 1:
+                    out.extend([f"# tier {t}", "Show", f"    {bt}"] + style[t] + [""])
+                    continue
+                # a stack under the minimum is hidden right here, so no later (broader) block can show it
+                out.extend([f"# tier {t} - stack >= {need}", "Show", f"    {bt}",
+                            f"    StackSize >= {need}"] + style[t] + [""])
+                out.extend([f"# tier {t} - smaller stacks hidden", "Hide", f"    {bt}", ""])
 
     names_block("S")
 
     for t in TIERS:                                                   # uniques, by base
         bases = keep(sorted(b for b, bt in base_tier.items() if bt == t), "unique base")
         if bases:
-            out += [f"# uniques - tier {t} (by base type)", "Show", "    Rarity Unique",
-                    f"    BaseType == {_quote(bases)}"] + style[t] + [""]
+            for bt in _bt_groups(bases, exact_ok):
+                out += [f"# uniques - tier {t} (by base type)", "Show", "    Rarity Unique", f"    {bt}"] + style[t] + [""]
             count += len(bases)
 
     if game == "poe2":                                                # tablets
         for t in ALL_TIERS:             # the ones with their own tier come first, then the generic Tablet block
             own = keep(sorted(n for n, nt in tablet_tier.items() if nt == t), "tablet")
-            if own and t == "C":
-                out += ["# tablets - tier C (hidden by the player)", "Hide", f"    BaseType == {_quote(own)}", ""]
+            if own and t == HIDE_TIER:
+                for bt in _bt_groups(own, exact_ok):
+                    out += [f"# tablets - tier {t} (hidden by the player)", "Hide", f"    {bt}", ""]
             elif own:
-                out += [f"# tablets - tier {t}", "Show", f"    BaseType == {_quote(own)}"] + style[t] + [""]
+                for bt in _bt_groups(own, exact_ok):
+                    out += [f"# tablets - tier {t}", "Show", f"    {bt}"] + style[t] + [""]
                 count += len(own)
-        out += ["# tablets", "Show", '    Class == "Tablet"', "    Rarity < Unique"] + style["Tablet"] + [""]
+        out += ["# tablets", "Show", '    Class "Tablet"', "    Rarity < Unique"] + style["Tablet"] + [""]
     out += _map_blocks(game, cfg, style["Map"], base_text)
 
     if cfg.get("whitelist_gold"):                                     # gold
@@ -864,7 +996,10 @@ def build_whitelist_filter(game: str, cfg: dict, base_text: str, hub_data: Optio
     names_block("A")
 
     gem_tier = _valid(cfg.get("whitelist_gem_tier")) or "B"
-    if gem_tier != "C":
+    if gem_tier != HIDE_TIER:
+        # the Gem sub tab's own look: the chosen tier's style, with what the player set for "Gem" on top (nothing set =
+        # the tier's lines exactly)
+        gem_style = _style_for("Gem", cfg, {"Gem": style[gem_tier]}, sound_names)
         for base, lvl in sorted((cfg.get(f"whitelist_gem_uncut_{game}") or {}).items()):
             if not keep([base], "uncut gem"):
                 continue
@@ -872,37 +1007,28 @@ def build_whitelist_filter(game: str, cfg: dict, base_text: str, hub_data: Optio
                 lvl = max(1, int(lvl))
             except (TypeError, ValueError):
                 lvl = 1
-            out += [f"# uncut gem: {base} (GemLevel >= {lvl})", "Show", f'    BaseType == "{base}"',
-                    f"    GemLevel >= {lvl}"] + style[gem_tier] + [""]
+            out += [f"# uncut gem: {base} (GemLevel >= {lvl})", "Show", f'    BaseType "{base}"',     # as NeverSink writes it (no ==)
+                    f"    GemLevel >= {lvl}"] + gem_style + [""]
             count += 1
         gem_names = keep([g for g in (cfg.get(f"whitelist_gem_names_{game}") or []) if g], "gem")
         if gem_names:
-            out += ["# gems", "Show", f"    BaseType == {_quote(sorted(set(gem_names)))}"] + style[gem_tier] + [""]
+            for bt in _bt_groups(sorted(set(gem_names)), exact_ok):
+                out += ["# gems", "Show", f"    {bt}"] + gem_style + [""]
             count += len(set(gem_names))
 
     names_block("B")
+    names_block("C")
 
-    hidden = keep(sorted(n for n, nt in tiers.items() if nt == "C"), "item")
-    if hidden:      # tier C names are hidden before a broader block (special classes) below can show them
-        out += ["# tier C (hidden before the class blocks below can show it)", "Hide",
-                f"    BaseType == {_quote(hidden)}", ""]
-
-    class_tiers = cfg.get(f"wl_class_tier_{game}") or {}
-    for t in TIERS:                                                   # special classes, S then A then B
-        classes = [c for c in SPECIAL_CLASSES.get(game, []) if (_valid(class_tiers.get(c)) or "B") == t]
-        if classes:
-            out += [f"# tier {t} - special classes", "Show", f"    Class == {_quote(classes)}"] + style[t] + [""]
-            count += len(classes)
-        frags = [f for f in SPECIAL_BASE.get(game, []) if (_valid(class_tiers.get(BASE_PREFIX + f)) or "B") == t]
-        if frags:       # names no list has yet (a new Runegraft / Vial): shown by a fragment of the name
-            out += [f"# tier {t} - names by fragment", "Show", f"    BaseType {_quote(frags)}"] + style[t] + [""]
-            count += len(frags)
+    hidden = keep(sorted(n for n, nt in tiers.items() if nt == HIDE_TIER), "item")
+    if hidden:      # tier D names are hidden before a broader block (special classes) below can show them
+        for bt in _bt_groups(hidden, exact_ok):
+            out += ["# tier D (hidden before the class blocks below can show it)", "Hide", f"    {bt}", ""]
 
     by_rar: dict = {}                                                 # typed names (contains)
     for entry in cfg.get(f"whitelist_custom_{game}") or []:
         nm, rar = (filter_gen._normalize_custom([entry]) or [(None, None)])[0]
         t = _valid(entry.get("tier") if isinstance(entry, dict) else None) or "B"
-        if nm and t != "C":
+        if nm and t != HIDE_TIER:
             by_rar.setdefault((t, rar), set()).add(nm)
     for (t, rar), nms in sorted(by_rar.items(), key=lambda kv: (_RANK[kv[0][0]], kv[0][1])):
         tag = "any rarity" if len(rar) == 4 else "/".join(rar)
@@ -914,33 +1040,61 @@ def build_whitelist_filter(game: str, cfg: dict, base_text: str, hub_data: Optio
 
     gear_t = gear_tiers(game, cfg)
     gear_names = {gid: name for gid, name, _d in GEAR_GROUPS.get(game, [])}
-    rarity_cfg = cfg.get(f"wl_rarity_tier_{game}") or {}
-    for cat, classes in RARITY_CATEGORIES.get(game, {}).items():       # rarity first: it beats every block of the category
+    # NeverSink's blocks are copied as NeverSink wrote them (its own sounds: the NeverSink tab's numbered sounds are that
+    # tab's alone)
+    copy_text = base_text
+    rows_cfg = cfg.get(f"wl_rarity_rows_{game}") or {}
+    for row_id, row_label, classes in rarity_rows(game):               # rarity first: it beats every block copied below
+        row = rows_cfg.get(row_id) or {}
+        if not row.get("custom"):
+            continue
         for rar in RARITY_CHOICES:
-            t = _valid((rarity_cfg.get(cat) or {}).get(rar))
-            if not t:
-                continue
-            title = f"# rarity: {gear_names.get(cat[len(GEAR_PREFIX):], cat)} - {rar} - tier {t}"
-            if t == "C":
+            t = _valid((row.get("tiers") or {}).get(rar)) or "B"          # a row set myself: every rarity has a tier
+            title = f"# rarity: {row_label} - {rar} - tier {t}"
+            if t == HIDE_TIER:
                 out += [title, "Hide", f"    Class == {_quote(classes)}", f"    Rarity {rar}", ""]
             else:
                 out += [title, "Show", f"    Class == {_quote(classes)}", f"    Rarity {rar}"] + style[t] + [""]
                 count += 1
-
-    gear_items = gear_block_items(game, base_text)
+    eq_cfg = cfg.get(f"wl_equip_rows_{game}") or {}
+    for _gid, _gname, classes in equip_groups(game):                  # equipment by class: ahead of NeverSink's gear blocks too
+        for cls in classes:
+            row = eq_cfg.get(cls) or {}
+            if not row.get("custom"):
+                continue
+            for rar in EQUIP_CHOICES:
+                t = _valid((row.get("tiers") or {}).get(rar)) or "B"      # a row set myself: every rarity has a tier
+                title = f"# equipment: {cls} - {rar} - tier {t}"
+                if t == HIDE_TIER:
+                    out += [title, "Hide", f'    Class == "{cls}"', f"    Rarity {rar}", ""]
+                else:
+                    out += [title, "Show", f'    Class == "{cls}"', f"    Rarity {rar}"] + style[t] + [""]
+                    count += 1
+    seq = gear_sequence(game, copy_text)
+    gear_items = [e[1] for e in seq if e[0] == "listed"]
     block_t = gear_block_tiers(game, cfg, gear_items)
-    for key, gid, ty, _tag, conds in gear_items:
+    for e in seq:
+        if e[0] == "copy":                                  # NeverSink's block as it wrote it (Show / Hide)
+            _k, reason, ty, tag, kind, body = e
+            out += [f"# neversink ({reason}): {ty} {tag or ''}".rstrip(), kind] + body + [""]
+            count += kind == "Show"
+            continue
+        key, gid, ty, _tag, conds = e[1]
         t = block_t[key]
-        if t == "C":        # a Hide copy keeps NeverSink's first-match order (the names above already matched)
-            out += [f"# gear: {gear_names[gid]} - tier C ({ty})", "Hide"] + conds + [""]
+        if t == HIDE_TIER:  # a Hide copy keeps NeverSink's first-match order (the names above already matched)
+            out += [f"# gear: {gear_names[gid]} - tier D ({ty})", "Hide"] + conds + [""]
             continue
         out += [f"# gear: {gear_names[gid]} - tier {t} ({ty})", "Show"] + conds + style[t] + [""]
         count += 1
 
-    out += ["# hide everything else (tier C)", "Hide", ""]
+    if game == "poe1":     # NeverSink lists wombgifts by name only: a new one (Growing Wombgift) would reach the final Hide
+        out += ["# wombgifts: the whole class (names above first), tier B", "Show", '    Class == "Wombgifts"'] + style["B"] + [""]
+        count += 1
+
+    out += ["# hide everything else", "Hide", ""]
     skipped_list = sorted(skipped.items())
     report = {t: sum(1 for v in all_tiers.values() if v == t) for t in ALL_TIERS}
     report[TABLET_DEFAULT] = sum(1 for v in all_tiers.values() if v == TABLET_DEFAULT)
     return {"text": "\n".join(out), "count": count, "tiers": all_tiers, "categories": names,
-            "unique_conflicts": conflicts, "report": report, "skipped": skipped_list,
+            "unique_conflicts": conflicts, "report": report, "skipped": skipped_list, "bad_names": sorted(bad.items()),
             "gear_tiers": gear_t, "block_tiers": block_t, "stack_min": stack_min}

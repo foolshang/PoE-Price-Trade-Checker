@@ -57,8 +57,8 @@ class SettingsWindow:
     def _combo(self, parent, key: str, values: list[str], row, col, width=22):
         var = tk.StringVar()
         self._vars[key] = var
-        cb = ttk.Combobox(parent, textvariable=var, values=values, width=width,
-                          state="readonly", font=_PANEL_FONT)
+        cb = ui_theme.calm(ttk.Combobox(parent, textvariable=var, values=values, width=width,
+                                        state="readonly", font=_PANEL_FONT))
         cb.grid(row=row, column=col, sticky="w", padx=6, pady=3)
         return cb
 

@@ -24,12 +24,14 @@ class StyleEditor(tk.Frame):
     """get_style() / set_style() work on filter_style dicts; on_change() fires after every edit."""
 
     def __init__(self, parent, style=None, on_change: Optional[Callable[[], None]] = None,
-                 allow_file_sound: bool = True, sample_text: str = "Quest Item", show_sound: bool = True):
+                 allow_file_sound: bool = True, sample_text: str = "Quest Item", show_sound: bool = True,
+                 compact: bool = False):
         super().__init__(parent, bg=_BG)
         ui_theme.apply(self)
         self._on_change = on_change
         self._allow_file = allow_file_sound
-        self._show_sound = show_sound        # False: the sound is set elsewhere (shared S / A / B sounds)
+        self._show_sound = show_sound        # False: no sound part (kept for callers that set it elsewhere)
+        self._compact = compact              # inline use: the sound on one row, a one-line sample
         self._sample = sample_text
         self._color: dict = {"text": [255, 255, 255, 255], "border": [255, 255, 255, 255], "bg": [0, 0, 0, 255]}
         self._on: dict = {}
@@ -49,7 +51,8 @@ class StyleEditor(tk.Frame):
                               activebackground=_BG, font=_FONT, command=command or self._changed)
 
     def _combo(self, parent, values, var, width=10):
-        cb = ttk.Combobox(parent, textvariable=var, values=values, width=width, state="readonly", font=_FONT)
+        cb = ui_theme.calm(ttk.Combobox(parent, textvariable=var, values=values, width=width, state="readonly",
+                                        font=_FONT))
         cb.bind("<<ComboboxSelected>>", lambda _e: self._changed())
         return cb
 
@@ -130,26 +133,45 @@ class StyleEditor(tk.Frame):
         rb = lambda text, val: tk.Radiobutton(box, text=text, variable=self._snd_kind, value=val, bg=_BG, fg=_FG,
                                               selectcolor="#2A2020", activebackground=_BG, font=_FONT,
                                               command=self._changed)
-        rb("ไม่มี", "none").grid(row=0, column=0, sticky="w")
-        rb("เสียงเกม", "game").grid(row=1, column=0, sticky="w")
-        self._combo(box, [str(i) for i in filter_style.SOUND_IDS], self._snd_id, 4).grid(row=1, column=1, padx=4)
-        if self._allow_file:
-            rb("ไฟล์เสียง", "file").grid(row=2, column=0, sticky="w")
-            tk.Entry(box, textvariable=self._snd_file, width=26, state="readonly", bg=_INPUT_BG, fg=_FG,
-                     readonlybackground=_INPUT_BG, disabledforeground=_FG,
-                     relief=tk.FLAT, font=_FONT).grid(row=2, column=1, columnspan=2, padx=4, sticky="w")
-            tk.Button(box, text="Browse…", command=self._browse, bg=_BUTTON_BG, fg=_FG, relief=tk.FLAT, font=_FONT,
-                      cursor="hand2").grid(row=2, column=3)
-        tk.Label(box, text="volume", bg=_BG, fg=_FG, font=_SMALL).grid(row=3, column=0, sticky="e")
-        ve = tk.Entry(box, textvariable=self._snd_vol, width=5, bg=_INPUT_BG, fg=_FG, insertbackground=_FG,
-                      relief=tk.FLAT, font=_FONT)
-        ve.grid(row=3, column=1, sticky="w", padx=4)
-        ve.bind("<KeyRelease>", lambda _e: self._changed())
+        if self._compact:                    # one row: none | game [id] | file [path] [Browse] | volume
+            rb("ไม่มี", "none").grid(row=0, column=0, sticky="w")
+            rb("เสียงเกม", "game").grid(row=0, column=1, sticky="w")
+            self._combo(box, [str(i) for i in filter_style.SOUND_IDS], self._snd_id, 3).grid(row=0, column=2, padx=2)
+            fcol = 3
+            if self._allow_file:
+                rb("ไฟล์", "file").grid(row=0, column=3, sticky="w")
+                ui_theme.calm(tk.Entry(box, textvariable=self._snd_file, width=16, state="readonly", bg=_INPUT_BG, fg=_FG,
+                         readonlybackground=_INPUT_BG, disabledforeground=_FG,
+                         relief=tk.FLAT, font=_FONT)).grid(row=0, column=4, padx=2)
+                tk.Button(box, text="Browse…", command=self._browse, bg=_BUTTON_BG, fg=_FG, relief=tk.FLAT, font=_FONT,
+                          cursor="hand2").grid(row=0, column=5)
+                fcol = 6
+            tk.Label(box, text="volume", bg=_BG, fg=_FG, font=_SMALL).grid(row=0, column=fcol, padx=(8, 2))
+            ve = tk.Entry(box, textvariable=self._snd_vol, width=5, bg=_INPUT_BG, fg=_FG, insertbackground=_FG,
+                          relief=tk.FLAT, font=_FONT)
+            ve.grid(row=0, column=fcol + 1, sticky="w")
+            ve.bind("<KeyRelease>", lambda _e: self._changed())
+        else:
+            rb("ไม่มี", "none").grid(row=0, column=0, sticky="w")
+            rb("เสียงเกม", "game").grid(row=1, column=0, sticky="w")
+            self._combo(box, [str(i) for i in filter_style.SOUND_IDS], self._snd_id, 4).grid(row=1, column=1, padx=4)
+            if self._allow_file:
+                rb("ไฟล์เสียง", "file").grid(row=2, column=0, sticky="w")
+                ui_theme.calm(tk.Entry(box, textvariable=self._snd_file, width=26, state="readonly", bg=_INPUT_BG, fg=_FG,
+                         readonlybackground=_INPUT_BG, disabledforeground=_FG,
+                         relief=tk.FLAT, font=_FONT)).grid(row=2, column=1, columnspan=2, padx=4, sticky="w")
+                tk.Button(box, text="Browse…", command=self._browse, bg=_BUTTON_BG, fg=_FG, relief=tk.FLAT, font=_FONT,
+                          cursor="hand2").grid(row=2, column=3)
+            tk.Label(box, text="volume", bg=_BG, fg=_FG, font=_SMALL).grid(row=3, column=0, sticky="e")
+            ve = tk.Entry(box, textvariable=self._snd_vol, width=5, bg=_INPUT_BG, fg=_FG, insertbackground=_FG,
+                          relief=tk.FLAT, font=_FONT)
+            ve.grid(row=3, column=1, sticky="w", padx=4)
+            ve.bind("<KeyRelease>", lambda _e: self._changed())
         r += 1
 
-        self._preview = tk.Label(self, text=self._sample, width=26, height=2, font=("Segoe UI", 12, "bold"),
-                                 bd=0, highlightthickness=3)
-        self._preview.grid(row=r, column=0, columnspan=4, pady=(8, 4))
+        self._preview = tk.Label(self, text=self._sample, width=26, height=1 if self._compact else 2,
+                                 font=("Segoe UI", 12, "bold"), bd=0, highlightthickness=3)
+        self._preview.grid(row=r, column=0, columnspan=4, pady=(4, 2) if self._compact else (8, 4))
 
     # -- events -----------------------------------------------------------
 

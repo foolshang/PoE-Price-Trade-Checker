@@ -9,7 +9,7 @@ The file is read by the comment line above each block (`# tier S`, `# gold (stac
 onto a WlModel: whatever the file says wins, whatever it cannot say (a look no block carries, a tier nobody is in)
 keeps the value the program remembered, and every such part is named in `notes` so the player knows it was guessed.
 
-A name the file does not list is hidden (tier C) - that is what the file did - so the settings written back
+A name the file does not list is hidden (tier D) - that is what the file did - so the settings written back
 reproduce what the old file showed, not what the newest NeverSink defaults would show.
 
 Pure (stdlib + the whitelist modules): runs in the web build too.
@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Optional
 
 from . import filter_gen, filter_style, filter_whitelist as w
-from .wl_model import WlModel
+from .wl_model import HIDE, WlModel
 
 V1_HEADER = "# === PoE Checker - Whitelist (show only)"
 V2_HEADER = "# === PoE Checker - Whitelist (own tiers"
@@ -53,11 +53,11 @@ class FBlock:
         return [r for k, r in self.conds if k == kw]
 
     def names(self) -> list:
-        """BaseType == "a" "b" ... (exact names)."""
+        """BaseType == "a" "b" ... (exact names), and the bare `BaseType "a"` lines our own blocks use for the names
+        NeverSink never writes with == (the title says what the block is; typed names read fragments())."""
         out = []
         for r in self.values("BaseType"):
-            if r.startswith("=="):
-                out += re.findall(r'"([^"]*)"', r)
+            out += re.findall(r'"([^"]*)"', r)
         return out
 
     def fragments(self) -> list:
@@ -125,13 +125,14 @@ def _cond_key(conds: list) -> tuple:
 class Summary:
     version: str
     shown: dict = field(default_factory=dict)          # name -> (tier, stack minimum)   (S/A/B blocks)
+    # (an old file's "tier C" is the hidden tier: it is D here - these files were written before C was a shown tier)
     tier_lines: dict = field(default_factory=dict)     # tier -> style lines of its first block
     tier_sound: dict = field(default_factory=dict)     # tier -> shared sound file name
     quest_sound: str = ""
     names_v1: set = field(default_factory=set)         # v1: the one block of names
     unique_bases: dict = field(default_factory=dict)   # base -> tier
     unique_all: bool = False
-    tablet_own: dict = field(default_factory=dict)     # tablet name -> tier (S/A/B/C)
+    tablet_own: dict = field(default_factory=dict)     # tablet name -> tier (S/A/B/D)
     tablet_block: Optional[FBlock] = None
     map_on: Optional[bool] = None
     map_tier: int = 1
@@ -164,7 +165,7 @@ def summarize(text: str) -> Optional[Summary]:
             if sound and not sm.quest_sound:
                 sm.quest_sound = sound[0]
             continue
-        m = re.match(r"^# tier ([SAB])(?: - stack >= (\d+))?$", t)
+        m = re.match(r"^# tier ([SABC])(?: - stack >= (\d+))?$", t)       # (an old file's hidden "tier C (hidden" never matches)
         if m and b.kind == "Show":
             tier, need = m.group(1), int(m.group(2) or 1)
             for n in names:
@@ -173,7 +174,7 @@ def summarize(text: str) -> Optional[Summary]:
             if sound:
                 sm.tier_sound.setdefault(tier, sound[0])
             continue
-        if t.startswith("# tier C (hidden"):
+        if t.startswith(("# tier C (hidden", "# tier D (hidden")):      # C = an old file's hidden tier, D = the new one's
             sm.hidden_c.update(names)
             continue
         m = re.match(r"^# tier ([SAB]) - special classes", t)
@@ -186,7 +187,7 @@ def summarize(text: str) -> Optional[Summary]:
             for f in b.fragments():
                 sm.fragments[f] = m.group(1)
             continue
-        m = re.match(r"^# uniques - tier ([SAB])", t)
+        m = re.match(r"^# uniques - tier ([SABC])", t)
         if m:
             for n in names:
                 sm.unique_bases[n] = m.group(1)
@@ -198,10 +199,11 @@ def summarize(text: str) -> Optional[Summary]:
         if t.startswith("# all uniques"):
             sm.unique_all = True
             continue
-        m = re.match(r"^# tablets - tier ([SAB]|C)", t)
+        m = re.match(r"^# tablets - tier ([SABCD])( \(hidden)?", t)
         if m:
+            hide = m.group(1) == "D" or bool(m.group(2))                # "tier C (hidden by the player)" of an old file = hidden
             for n in names:
-                sm.tablet_own[n] = m.group(1)
+                sm.tablet_own[n] = HIDE if hide else m.group(1)
             continue
         if t == "# tablets":
             sm.tablet_block = b
@@ -230,15 +232,15 @@ def summarize(text: str) -> Optional[Summary]:
             sm.gem_names += names
             sm.gem_blocks.append(b)
             continue
-        m = re.match(r"^# typed names \(contains(?:,| match,) ?([^)]*)\)(?: - tier ([SAB]))?", t)
+        m = re.match(r"^# typed names \(contains(?:,| match,) ?([^)]*)\)(?: - tier ([SABC]))?", t)
         if m:
             rar = [r for r in _ALL_RAR if any(r in " ".join(x.split()) for x in b.values("Rarity"))] or list(_ALL_RAR)
             for n in b.fragments():
                 sm.custom.append((n, rar, m.group(2) or "B"))
             continue
-        m = re.match(r"^# gear: .+ - tier ([SABC]) \((.+)\)$", t)
-        if m:
-            sm.gear.append((m.group(2), _cond_key(b.conds), m.group(1)))
+        m = re.match(r"^# gear: .+ - tier ([SABCD]) \((.+)\)$", t)
+        if m:                                                           # (gear groups are never listed: C / D = hidden)
+            sm.gear.append((m.group(2), _cond_key(b.conds), HIDE if m.group(1) in "CD" else m.group(1)))
             continue
         if t.startswith("# hide everything"):
             continue
@@ -281,9 +283,9 @@ def read(text: str, game: str, current: WlModel, folder: Optional[Path] = None) 
     base_cfg = current.cfg()
     wm = WlModel.from_config(base_cfg, game)
     wm.set_data(current.hub, current.base_text, current.extra_names)
-    wm.item_tier, wm.cat_tier, wm.class_tier, wm.unique_tier, wm.block_tier = {}, {}, {}, {}, {}
+    wm.item_tier, wm.cat_tier, wm.unique_tier, wm.block_tier = {}, {}, {}, {}
     wm.item_stack, wm.tier_stack = {}, {}
-    wm.rarity_tier = {}                                     # no old file has them
+    wm.rarity_rows = {}                                     # no old file has them
     v1 = sm.version == "v1"
     stackable = wm._stackable
     # ---- names
@@ -296,24 +298,24 @@ def read(text: str, game: str, current: WlModel, folder: Optional[Path] = None) 
                 if sm.tablet_own[n] != "T":
                     wm.item_tier[n] = sm.tablet_own[n]
             elif v1 and n not in sm.names_v1:
-                wm.item_tier[n] = "C"
+                wm.item_tier[n] = HIDE
             elif not v1 and sm.tablet_block is None:
-                wm.item_tier[n] = "C"
+                wm.item_tier[n] = HIDE
             continue
         default = wm._defaults.get(n) or "B"
         if v1:
-            tier, need = (default if default != "C" else "B") if n in sm.names_v1 else "C", 1
+            tier, need = (default if default != HIDE else "B") if n in sm.names_v1 else HIDE, 1
         else:
-            tier, need = sm.shown.get(n, ("C", 1))
+            tier, need = sm.shown.get(n, (HIDE, 1))
         if tier != default:
             wm.item_tier[n] = tier
-        if tier != "C" and n in stackable:
+        if tier != HIDE and n in stackable:
             dflt = (wm._stack_defaults.get(n) or (1,))[0]
             if need != dflt:
                 wm.item_stack[n] = need
     # ---- uniques
     if not sm.unique_bases and not sm.unique_all:
-        wm.cat_tier[w.UNIQUE_CATEGORY] = "C"
+        wm.cat_tier[w.UNIQUE_CATEGORY] = HIDE
     elif not (v1 and sm.unique_all):
         by_base: dict = {}
         for name, base in wm._entries:
@@ -321,12 +323,21 @@ def read(text: str, game: str, current: WlModel, folder: Optional[Path] = None) 
         hidden = sum(1 for b in by_base if b not in sm.unique_bases)
         whole_c = hidden > len(by_base) / 2          # mostly hidden: one category tier + the few shown ones by name
         if whole_c:
-            wm.cat_tier[w.UNIQUE_CATEGORY] = "C"
+            wm.cat_tier[w.UNIQUE_CATEGORY] = HIDE
         for base, names in by_base.items():
-            tier = sm.unique_bases.get(base, "C")
-            if (whole_c and tier != "C") or (not whole_c and tier != (wm._unique_defaults.get(base) or "B")):
+            tier = sm.unique_bases.get(base, HIDE)
+            if (whole_c and tier != HIDE) or (not whole_c and tier != (wm._unique_defaults.get(base) or "B")):
                 for nm in names:
                     wm.unique_tier[nm] = tier
+    # a unique's tier is set by its name, so a name that sits on two bases cannot be given a different tier for each
+    # one: the bases whose tier then differs from the file are named (new defaults make this show up now and then)
+    unique_mismatch: set = set()
+    if not v1 and sm.unique_bases:
+        got, _c = w.resolve_unique_tiers(game, wm.cfg(), wm._entries, wm._unique_defaults)
+        unique_mismatch = {b for b, t in sm.unique_bases.items() if b in got and got[b] != t}
+        if unique_mismatch:
+            notes.append(f"unique {len(unique_mismatch)} ฐานได้ tier ไม่ตรงไฟล์เดิม (ชื่อ unique ชื่อเดียวกันอยู่หลายฐาน "
+                         f"ตั้ง tier ได้ทีละชื่อ — ตรวจที่หมวด Unique)")
     # ---- gear blocks (a block the file does not have was hidden by it)
     queues: dict = {}
     for ty, conds, tier in sm.gear:
@@ -341,7 +352,7 @@ def read(text: str, game: str, current: WlModel, folder: Optional[Path] = None) 
         if q and not v1:
             per_group.setdefault(gid, []).append((key, q.pop(0)))
         else:
-            per_group.setdefault(gid, []).append((key, "C"))
+            per_group.setdefault(gid, []).append((key, HIDE))
             missing += 1
     for gid, items in per_group.items():
         tiers = [t for _k, t in items]
@@ -354,18 +365,21 @@ def read(text: str, game: str, current: WlModel, folder: Optional[Path] = None) 
                 wm.block_tier[key] = t
     if missing and not v1:
         notes.append(f"อุปกรณ์ {missing} block ที่ไฟล์เก่าไม่มี (NeverSink รุ่นใหม่กว่าไฟล์) "
-                     f"ตั้งเป็น C (ซ่อน) ตามไฟล์เดิม")
-    # ---- special classes / fragments
-    for c in w.SPECIAL_CLASSES.get(game, []):
-        tier = sm.classes.get(c, "C")
-        if tier != "B":
-            wm.class_tier[c] = tier
-    # (the name-fragment rows are new too: they keep B)
+                     f"ตั้งเป็น D (ซ่อน) ตามไฟล์เดิม")
+    # ---- what the tab does not set any more: NeverSink's own blocks (equipment groups, keys / special classes)
+    names = {gid: n for gid, n, _d in w.GEAR_GROUPS.get(game, [])}
+    cut = []
+    for ty, _conds, _tier in sm.gear:
+        gid = w.gear_group_of(game, ty)
+        if gid and gid not in w.GEAR_LISTED.get(game, ()) and names.get(gid) not in cut:
+            cut.append(names[gid] if gid != w.FLASK_GROUP else "Flask / Charm")
+    if sm.classes or sm.fragments:
+        cut.append("กุญแจ/ของพิเศษ (class)")
+    if cut:
+        notes.append("หมวดที่ตัดออกแล้ว ไฟล์ใหม่ใช้ block ของ NeverSink แทนค่าในไฟล์เก่า: " + ", ".join(cut))
     fresh = [c for c, _p in w.NAMED_CATEGORIES.get(game, [])]
-    fresh += [name for gid, name, _d in w.GEAR_GROUPS.get(game, []) if gid in NEW_GEAR_GROUPS]
-    fresh += [f'ชื่อที่มีคำว่า "{f}"' for f in w.SPECIAL_BASE.get(game, [])]
     if fresh:
-        notes.append("หมวดที่ไฟล์รุ่นนั้นยังไม่มี ใช้ค่าเริ่มต้นของ NeverSink (ไม่ใช่ C): " + ", ".join(fresh))
+        notes.append("หมวดที่ไฟล์รุ่นนั้นยังไม่มี ใช้ค่าเริ่มต้นของ NeverSink (ไม่ใช่ D): " + ", ".join(fresh))
     # ---- gold / map / gems / typed names
     wm.gold = bool(sm.gold_on)
     if sm.gold_on:
@@ -383,10 +397,10 @@ def read(text: str, game: str, current: WlModel, folder: Optional[Path] = None) 
     wm.custom = [{"name": n, "rarities": list(r), "tier": t} for n, r, t in sm.custom]
     # ---- looks
     tier_lines = dict(sm.tier_lines)
-    for tier in _TIERS:
+    for tier in _TIERS + ("C",):
         if tier in tier_lines:
             wm.set_style_from_editor(tier, _lines_style(tier_lines[tier], folder))
-        else:
+        elif tier != "C":                                   # (a file from before tier C has no C look: nothing to guess)
             guessed.append(f"สไตล์ tier {tier}")
     if sm.gold_block is not None:
         wm.set_style_from_editor("G", _lines_style(sm.gold_block.style, folder))
@@ -403,7 +417,7 @@ def read(text: str, game: str, current: WlModel, folder: Optional[Path] = None) 
         guessed.append("สไตล์ Map/Waystone")
     if sm.gem_blocks:
         gem_lines = sm.gem_blocks[0].style
-        hit = next((t for t in _TIERS if t in tier_lines and _same_look(tier_lines[t], gem_lines)), None)
+        hit = next((t for t in _TIERS + ("C",) if t in tier_lines and _same_look(tier_lines[t], gem_lines)), None)
         if hit:
             wm.gem_tier = hit
         else:
@@ -411,8 +425,8 @@ def read(text: str, game: str, current: WlModel, folder: Optional[Path] = None) 
             guessed.append("tier ของ Gem")
     if v1:
         guessed = [g for g in guessed if g.startswith("สไตล์")]
-        notes.append("ไฟล์ v1 ไม่มี tier: ชื่อที่โชว์ใช้ tier เริ่มต้นของ NeverSink (ถ้าเริ่มที่ C ใช้ B), ชื่ออื่นเป็น C, "
-                     "อุปกรณ์/ของพิเศษทั้งหมด C เหมือนที่ไฟล์เดิมไม่มี")
+        notes.append("ไฟล์ v1 ไม่มี tier: ชื่อที่โชว์ใช้ tier เริ่มต้นของ NeverSink (ถ้าเริ่มที่ D ใช้ B), ชื่ออื่นเป็น D, "
+                     "อุปกรณ์/ของพิเศษทั้งหมด D เหมือนที่ไฟล์เดิมไม่มี")
     if guessed:
         notes.append("ส่วนที่อ่านกลับจากไฟล์ไม่ได้ ใช้ค่าที่โปรแกรมจำไว้ล่าสุด: " + ", ".join(guessed))
     stack_off = [n for n in wm.item_stack if wm.item_stack[n] == 1]
@@ -425,4 +439,4 @@ def read(text: str, game: str, current: WlModel, folder: Optional[Path] = None) 
     listed = set(sm.shown) | sm.names_v1
     overlap = len(listed & set(wm._names)) / len(listed) if listed else 1.0
     return {"model": wm, "notes": notes, "sounds": sounds, "version": sm.version, "summary": sm,
-            "overlap": overlap}
+            "overlap": overlap, "unique_mismatch": unique_mismatch}

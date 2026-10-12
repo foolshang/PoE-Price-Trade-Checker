@@ -80,7 +80,7 @@ def file_sha256(path: Path) -> str:
 
 
 def copy_sounds(dir_: Path, sound_map: dict, decide=None, notify=None) -> dict:
-    """sound_map: {label: source file or None} (labels: S/A/B and Q). Copies each chosen sound
+    """sound_map: {label: source file or None} (labels: S/A/B/C/Q ...). Copies each chosen sound
     into the filter folder under its ORIGINAL file name (a "#" or ";" in it becomes "_", see
     filter_core.safe_sound_name) and returns {label: name written}.
 

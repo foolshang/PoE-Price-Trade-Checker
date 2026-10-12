@@ -34,7 +34,7 @@ _DEFAULTS: dict = {
     "f4_mode": "price",   # "price" (เดิม, default) | "skill_ref" (ใหม่, prep เฉยๆ — ดู skill_ref.py)
     "filter_gen": {
         "strictness_poe1": 2, "strictness_poe2": 2,
-        "sound_s": "", "sound_a": "", "sound_b": "",
+        "sound_s": "", "sound_a": "", "sound_b": "", "sound_c": "",
         "game_dir_poe1": "", "game_dir_poe2": "",
         "staleness_hours": 24, "regen_cooldown_min": 60, "auto_regen": True,
     },

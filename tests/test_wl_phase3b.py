@@ -11,7 +11,7 @@ from unittest import mock
 import pytest
 
 from tests import tkutil
-from poe_price_trade import filter_core, filter_service, filter_style, filter_whitelist as w, wl_embed
+from poe_price_trade import filter_core, filter_gen, filter_service, filter_style, filter_whitelist as w, wl_embed
 from poe_price_trade.config import AppConfig
 from poe_price_trade.filter_style_editor import StyleEditor
 from poe_price_trade.filter_window import FilterGenWindow
@@ -223,13 +223,15 @@ def test_reset_row_and_category_clear_the_names_own_minimum():
 # ---------------------------------------------------------------------------- B: block labels
 
 def test_gear_block_labels_read_like_the_condition_summaries():
-    m = model("poe1")
-    labels = [r.label for c in dict(m.categories()) if c.startswith("gear:") for r in m.rows(c)]
-    assert any(l.startswith("Rare แหวน") or "แหวน" in l for l in labels)
-    assert any("Rare อาวุธ" in l and "AreaLevel ≤" in l for l in labels)
-    assert any("ilvl ≥" in l for l in labels)
+    """block_label is no longer shown (the tab lists no block), but it still sums a block up for whoever lists one."""
+    base = data("poe1")[1]
+    lines, blocks = w.scan(base)
+    labels = []
+    for e in w.gear_sequence("poe1", base):
+        if e[0] == "copy" and e[4] == "Show":
+            labels.append(w.block_label(e[2], ["    " + l.strip() for l in e[5] if l.strip() and l.split()[0] not in w._NOT_CONDITION]))
+    assert any("แหวน" in l for l in labels) and any("ilvl ≥" in l for l in labels)
     assert not any(l.startswith("   ") or l.strip() == "" for l in labels)
-    assert len({r.key for c in dict(m.categories()) if c.startswith("gear:") for r in m.rows(c)}) == len(labels)
 
 
 # ---------------------------------------------------------------------------- D1: opacity controls
@@ -270,15 +272,21 @@ def test_the_opacity_hint_is_on_screen(root):
     assert "ความทึบ (255 = ทึบ, 0 = โปร่งใส)" in texts
 
 
+def inline_editor(p, label):
+    """The style editor the panel shows for a label: the tier editor (tier picked) or the Gold / Map / Tablet / Gem one."""
+    if label in ("S", "A", "B", "C"):
+        p.active.set(label)
+        p._on_tier_picked()
+        return p._tier_editor
+    return p._style_eds[label]
+
+
 def test_transparent_colours_reach_the_file(root, cfg):
     win = make_window(root, cfg)
     p = win._panel
-    p._edit_style("G", "Gold")
-    top = p._style_dialog
-    ed = top._style_editor
+    ed = inline_editor(p, "G")                  # the Gold sub tab's own editor, no pop-up
     ed._clear["bg"].set(True); ed._clear_toggled("bg")
     ed._slider["text"].set(100); ed._alpha_slid("text", 100)
-    click(top, "บันทึก")
     p.v_gold.set(True); p._parts_changed()
     text = win._model.build()["text"]
     seg = block(text, "# gold")
@@ -335,25 +343,20 @@ def test_unticked_parts_of_a_tier_stay_off_and_leave_the_file(root, cfg):
     p = win._panel
     base = win._model.base_style("S")
     assert base["text"] and base["border"] and base["bg"] and base["size"] and base["icon"] and base["effect"]
-    p._edit_style("S", "tier S", show_sound=False)
-    top = p._style_dialog
-    ed = top._style_editor
+    ed = inline_editor(p, "S")
     ed._on["text"].set(False); ed._on["border"].set(False); ed._icon_on.set(False); ed._eff_on.set(False)
-    ed._changed()
-    click(top, "บันทึก")
+    ed._changed()                                # every edit reaches the model at once (no save button)
     assert sorted(win._model.tier_style["S"]["off"]) == ["border", "effect", "icon", "text"]
-    # reopen: still unticked (this is what used to jump back to NeverSink's values)
-    p._edit_style("S", "tier S", show_sound=False)
-    ed2 = p._style_dialog._style_editor
-    got = ed2.get_style()
+    # redraw (what happens when the lists arrive / a file is opened): still unticked
+    p.refresh_styles()
+    got = inline_editor(p, "S").get_style()
     assert got["text"] is None and got["border"] is None and got["icon"] is None and got["effect"] is None
     assert got["bg"] == base["bg"] and got["size"] == base["size"]
-    p._style_dialog.destroy()
     text = win._model.build()["text"]
     seg = block(text, "# tier S\n")
     assert "SetTextColor" not in seg and "SetBorderColor" not in seg and "MinimapIcon" not in seg
     assert "PlayEffect" not in seg
-    assert "SetBackgroundColor" in seg and "SetFontSize" in seg and "PlayAlertSound" in seg   # the rest + shared sound
+    assert "SetBackgroundColor" in seg and "SetFontSize" in seg and "PlayAlertSound" in seg   # the rest + NeverSink's sound
     # and the same through save -> new window -> reopen
     fg = win._save("whitelist")
     m2 = WlModel.from_config(json.loads(json.dumps(fg)), "poe1")
@@ -368,77 +371,72 @@ def test_unticked_parts_of_a_tier_stay_off_and_leave_the_file(root, cfg):
 
 
 @pytest.mark.parametrize("game", ["poe1", "poe2"])
-@pytest.mark.parametrize("label", ["S", "A", "B", "G", "Tablet", "Map"])
-def test_every_style_field_of_every_whitelist_style_round_trips_through_the_dialog(root, cfg, game, label):
+@pytest.mark.parametrize("label", ["S", "A", "B", "C", "G", "Tablet", "Map", "Gem"])
+def test_every_style_field_of_every_whitelist_style_round_trips_through_its_editor(root, cfg, game, label):
     if label == "Tablet" and game == "poe1":
         pytest.skip("no tablets in poe1")
     win = make_window(root, cfg, game)
     p = win._panel
     p.v_gold.set(True); p.v_map.set(True); p._parts_changed()
-    shared = label in ("S", "A", "B")
+    if label == "Gem":
+        win._model.gem_tier = "A"
+        if filter_gen.WHITELIST_GEM_UNCUT.get(game):
+            win._model.gem_uncut = {filter_gen.WHITELIST_GEM_UNCUT[game][0]: 3}
+        else:
+            win._model.gem_names = ["Fireball"]
 
-    def open_editor():
-        p._edit_style(label, label, show_sound=not shared)
-        return p._style_dialog
+    def editor():
+        return inline_editor(p, label)
 
     def assert_matches_file(style):
         win._model.gold, win._model.map_on = True, True
         text = win._model.build()["text"]
-        head = {"S": "# tier S\n", "A": "# tier A\n", "B": "# tier B\n", "G": "# gold", "Tablet": "# tablets\n",
-                "Map": "# maps" if game == "poe1" else "# waystones"}[label]
+        head = {"S": "# tier S" + '\n', "A": "# tier A" + '\n', "B": "# tier B" + '\n', "C": "# tier C" + '\n', "G": "# gold",
+                "Tablet": "# tablets" + '\n', "Map": "# maps" if game == "poe1" else "# waystones",
+                "Gem": "# uncut gem" if filter_gen.WHITELIST_GEM_UNCUT.get(game) else "# gems"}[label]
+        if label in ("S", "A", "B", "C") and head not in text:
+            return                                   # nothing of this tier in the file: nothing to compare
         seg = block(text, head)
-        lines = {l.split(None, 1)[0]: l.strip() for l in seg.splitlines() if l.startswith("    ")
-                 and l.split(None, 1)[0] in filter_style.PART_KEYWORDS["text"] + filter_style.PART_KEYWORDS["border"]
-                 + filter_style.PART_KEYWORDS["bg"] + filter_style.PART_KEYWORDS["size"]
-                 + filter_style.PART_KEYWORDS["icon"] + filter_style.PART_KEYWORDS["effect"] + ("PlayAlertSound",)}
+        keys = (filter_style.PART_KEYWORDS["text"] + filter_style.PART_KEYWORDS["border"] + filter_style.PART_KEYWORDS["bg"]
+                + filter_style.PART_KEYWORDS["size"] + filter_style.PART_KEYWORDS["icon"] + filter_style.PART_KEYWORDS["effect"]
+                + ("PlayAlertSound",))
+        lines = {l.split(None, 1)[0]: l.strip() for l in seg.splitlines() if l.startswith("    ") and l.split(None, 1)[0] in keys}
         want = {l.split(None, 1)[0]: l.strip() for l in filter_style.style_lines(style, indent="")
                 if l.split(None, 1)[0] != "CustomAlertSoundOptional"}
-        if shared:      # the sound is the shared NeverSink one
-            want.pop("PlayAlertSound", None)
-            lines.pop("PlayAlertSound", None)
         assert lines == want, (label, lines, want)
 
-    # 1) set every field to a value of our own
-    top = open_editor()
-    ed = top._style_editor
-    ed.set_style(dict(_full_style(), sound=_full_style()["sound"]))
+    # 1) set every field to a value of our own (the sound included: every style has its own)
+    ed = editor()
+    ed.set_style(_full_style())
     ed._changed()
     expect = ed.get_style()
-    click(top, "บันทึก")
-    top = open_editor()
-    assert top._style_editor.get_style() == (expect if not shared else dict(expect, sound=top._style_editor.get_style()["sound"]))
-    top.destroy()
+    p.refresh_styles()
+    assert editor().get_style() == expect
     assert_matches_file(win._model.effective_style(label))
-    # 2) untick every part one by one: each stays off after save / reopen, and is gone from the file
+    # 2) untick every part one by one: each stays off after a redraw, and is gone from the file
     for part, var in (("text", "_on"), ("border", "_on"), ("bg", "_on"), ("size", "_size_on"), ("icon", "_icon_on"),
                       ("effect", "_eff_on")):
-        top = open_editor()
-        ed = top._style_editor
+        ed = editor()
         (ed._on[part] if var == "_on" else getattr(ed, var)).set(False)
         ed._changed()
         saved = ed.get_style()
-        click(top, "บันทึก")
-        top = open_editor()
-        reopened = top._style_editor.get_style()
-        top.destroy()
+        p.refresh_styles()
+        reopened = editor().get_style()
         assert reopened[part] is None, (label, part)
         for k in ("text", "border", "bg", "size", "icon", "effect"):
             assert reopened[k] == saved[k], (label, part, k)
         assert_matches_file(win._model.effective_style(label))
-    # 3) everything off, and the sound off where this tab owns it
-    top = open_editor()
-    ed = top._style_editor
+    # 3) everything off, the sound off too
+    ed = editor()
     for k in ("text", "border", "bg"):
         ed._on[k].set(False)
     ed._size_on.set(False); ed._icon_on.set(False); ed._eff_on.set(False)
     ed._snd_kind.set("none")
     ed._changed()
-    click(top, "บันทึก")
-    top = open_editor()
-    got = top._style_editor.get_style()
-    top.destroy()
+    p.refresh_styles()
+    got = editor().get_style()
     assert all(got[k] is None for k in ("text", "border", "bg", "size", "icon", "effect")), got
-    assert got["sound"]["kind"] == "none" or shared
+    assert got["sound"]["kind"] == "none"
     seg_style = win._model.effective_style(label)
     assert all(seg_style[k] is None for k in ("text", "border", "bg", "size", "icon", "effect"))
     # 4) the whole thing survives the config file
@@ -453,15 +451,13 @@ def test_a_sound_switched_off_on_g_tablet_map_stays_off(root, cfg):
     p = win._panel
     m = win._model
     m.set_style_from_editor("G", dict(m.base_style("G"), sound={"kind": "game", "id": 4, "file": "", "volume": 100}))
-    p._edit_style("G", "Gold")
-    ed = p._style_dialog._style_editor
+    p.refresh_styles()
+    ed = inline_editor(p, "G")
     assert ed.get_style()["sound"]["kind"] == "game"
     ed._snd_kind.set("none"); ed._changed()
-    click(p._style_dialog, "บันทึก")
     assert m.tier_style.get("G", {}).get("sound", {}).get("kind", "none") == "none"
-    p._edit_style("G", "Gold")
-    assert p._style_dialog._style_editor.get_style()["sound"]["kind"] == "none"
-    p._style_dialog.destroy()
+    p.refresh_styles()
+    assert inline_editor(p, "G").get_style()["sound"]["kind"] == "none"
     m.gold = True
     assert "PlayAlertSound" not in block(m.build()["text"], "# gold")
 
@@ -472,10 +468,14 @@ def test_the_reset_button_gives_neversinks_values_back(root, cfg):
     m = win._model
     m.set_style_from_editor("A", dict(m.effective_style("A"), text=None, size=None))
     assert m.tier_style["A"]["off"]
-    p._edit_style("A", "tier A", show_sound=False)
-    click(p._style_dialog, "รีเซ็ตเป็นค่า NeverSink")
+    inline_editor(p, "A")
+    p._reset_tier_style()
     assert "A" not in m.tier_style
     assert m.effective_style("A") == filter_style.merge_styles(m.base_style("A"), None)
+    # the Gold / Map / Tablet / Gem editors have their own reset
+    m.set_style_from_editor("G", dict(m.effective_style("G"), size=None))
+    p._reset_part_style("G")
+    assert "G" not in m.tier_style
 
 
 # ---- the quest-items (Q) style of the NeverSink tab
@@ -537,7 +537,7 @@ def _generate(cfg_dict, game, tmp_path, name="wl-test"):
 
 def test_embedded_settings_round_trip_and_stay_valid_filter_comments(tmp_path):
     m = model("poe2")
-    m.set_row("Currency", "Chaos Orb", "S"); m.set_category(w.gear_cat("story"), "C"); m.set_tier_stack("B", 4)
+    m.set_row("Currency", "Chaos Orb", "S"); m.set_flask_custom("Charm", True); m.set_flask_rarity("Charm", "Magic", "C"); m.set_tier_stack("B", 4)
     m.set_style_from_editor("A", dict(m.effective_style("A"), text=None))
     m.gold, m.gold_min = True, 12
     m.custom = [{"name": "ไทย", "rarities": ["Rare"], "tier": "A"}]          # non-ASCII must survive as ASCII

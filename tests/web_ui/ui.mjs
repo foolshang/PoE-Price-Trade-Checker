@@ -1,0 +1,375 @@
+// Browser test of the web page (Chromium via Playwright): drives every part of the UI, writes screenshots, prints one
+// JSON summary line. Usage: node ui.mjs <screenshot dir>
+import { chromium } from "playwright";
+import fs from "fs";
+import os from "os";
+import path from "path";
+import zlib from "zlib";
+import { HERE, REPO, startServer, routeNetwork, wait } from "./harness.mjs";
+
+const OUT = path.resolve(process.argv[2] || path.join(os.tmpdir(), "web-ui-shots"));
+fs.mkdirSync(OUT, { recursive: true });
+const results = [];
+const check = (name, ok, detail = "") => { results.push({ name, ok: !!ok, detail: ok ? "" : String(detail).slice(0, 300) }); };
+const { srv, url } = await startServer();
+const calls = [];
+const consoleErrors = [];
+
+// the Chromium Playwright downloaded (any version: the page only needs a current Chrome); PW_CHROME overrides
+function findChrome() {
+  if (process.env.PW_CHROME) return process.env.PW_CHROME;
+  const base = path.join(process.env.LOCALAPPDATA || os.homedir(), "ms-playwright");
+  if (!fs.existsSync(base)) return undefined;
+  const dirs = fs.readdirSync(base).filter((d) => /^chromium-\d+$/.test(d)).sort().reverse();
+  for (const d of dirs) {
+    for (const sub of ["chrome-win64/chrome.exe", "chrome-win/chrome.exe"]) {
+      const f = path.join(base, d, sub);
+      if (fs.existsSync(f)) return f;
+    }
+  }
+  return undefined;
+}
+const browser = await chromium.launch({ executablePath: findChrome(), headless: true });
+const context = await browser.newContext({ viewport: { width: 900, height: 1100 }, acceptDownloads: true });
+await routeNetwork(context, calls);
+await context.addInitScript(() => {            // a real directory handle (origin private file system) stands in for the folder picker
+  window.showDirectoryPicker = async () => (await navigator.storage.getDirectory()).getDirectoryHandle("game", { create: true });
+});
+const page = await context.newPage();
+page.on("console", (m) => { if (m.type() === "error" && !/favicon|Failed to load resource/.test(m.text())) consoleErrors.push(m.text()); });
+page.on("pageerror", (e) => consoleErrors.push("pageerror: " + e.message));
+page.on("dialog", (d) => d.accept());
+
+const shot = (name) => page.screenshot({ path: path.join(OUT, name + ".png"), fullPage: true });
+const logText = () => page.locator("#log").innerText();
+const waitLog = async (needle, ms = 60000) => {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) { if ((await logText()).includes(needle)) return true; await wait(150); }
+  return false;
+};
+const model = (fn, ...args) => page.evaluate(([f, a]) => JSON.parse(window.PFG.glue[f](...a)), [fn, args]);
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "webui-"));
+
+// ---------------------------------------------------------------- boot + the NeverSink tab
+await page.goto(url + "/");
+await page.waitForSelector("#app:not([hidden])", { timeout: 120000 });
+check("page boots (Pyodide + glue)", true);
+check("lists load (hub + NeverSink + names)", await waitLog("โหลดรายการ whitelist แล้ว"), await logText());
+check("names come from the snapshot while the hub has no file", (await logText()).includes("snapshot"), await logText());
+check("the hub is never asked for a names file (snapshot only)", !calls.some((c) => c.includes("trade_names")));
+check("the version is shown for bug reports", /^เวอร์ชัน web-\d+\.\d+\.\d+$/.test(await page.locator("#ver").innerText()), await page.locator("#ver").innerText());
+await shot("01_neversink_tab");
+check("strictness has 7 levels", (await page.locator("#pane-tier select option").count()) === 7);
+check("six numbered sound rows on the NeverSink tab", (await page.locator("#pane-tier label.l").evaluateAll((l) => l.map((x) => x.textContent).filter((t) => /^เสียง \d$/.test(t)).join("|"))) === "เสียง 1|เสียง 2|เสียง 3|เสียง 4|เสียง 5|เสียง 6" && !(await page.locator("#pane-tier").innerText()).includes("Tier S sound"));
+
+// ---------------------------------------------------------------- the Whitelist tab
+await page.click("#tab-wl");
+await shot("02_whitelist_start");
+check("nothing works before a tier is picked", await page.locator("#tier-style").isHidden() && await page.locator("#btn-move").isDisabled());
+await page.click(".tier-btns button[data-t=B]");
+check("picking a tier shows its style right there (no pop-up) and enables the rest", await page.locator("#tier-style-editor").isVisible() && !(await page.locator("#btn-move").isDisabled()) && !(await page.locator("#dlg-style[open]").count()));
+await page.selectOption("#pane-whitelist select[aria-label=หมวด]", { label: "Currency" });
+const chaos = page.locator('table.items tr[data-key="Chaos Orb"]');
+await chaos.waitFor();
+const tierOf = async (key) => page.locator(`table.items tr[data-key="${key}"]`).getAttribute("data-tier");
+const before = await tierOf("Chaos Orb");
+await chaos.locator("input[type=checkbox]").click();
+const after = await tierOf("Chaos Orb");
+check("ticking a row off hides it (D)", before !== "D" && after === "D", `${before} -> ${after}`);
+await chaos.locator("input[type=checkbox]").click();
+check("ticking it again puts it in the active tier", (await tierOf("Chaos Orb")) === "B", await tierOf("Chaos Orb"));
+// select two rows, move them to tier A
+await page.click(".tier-btns button[data-t=A]");
+await page.locator('table.items tr[data-key="Divine Orb"] td.name .txt').click();
+await page.keyboard.down("Control");
+await chaos.locator("td.name .txt").click();
+await page.keyboard.up("Control");
+await page.click("#btn-move");
+check("move selected rows to the active tier", (await tierOf("Divine Orb")) === "A" && (await tierOf("Chaos Orb")) === "A",
+  `${await tierOf("Divine Orb")} ${await tierOf("Chaos Orb")}`);
+check("rows moved by hand are marked", (await chaos.locator("td.mark").innerText()).includes("ตั้งเอง"));
+// tier C is a shown tier of its own, D hides
+check("four tier buttons: S A B C", (await page.locator(".tier-btns button").evaluateAll((b) => b.map((x) => x.dataset.t).join(""))) === "SABC");
+check("the whole-category hide button says D", (await page.locator("#btn-cat-d").innerText()).includes("D (ซ่อน)"));
+await page.click(".tier-btns button[data-t=C]");
+check("tier C has its own inline style editor with its sample", (await page.locator("#tier-style-editor .style-preview").innerText()).includes("ตัวอย่าง C"));
+await chaos.locator("td.name .txt").click();
+await page.click("#btn-move");
+check("a row moved to tier C is shown (ticked) as C", (await tierOf("Chaos Orb")) === "C" && (await chaos.locator("input[type=checkbox]").isChecked()));
+await chaos.locator("input[type=checkbox]").click();
+check("ticking a C row off hides it as D", (await tierOf("Chaos Orb")) === "D");
+await chaos.locator("input[type=checkbox]").click();
+check("ticking it on again puts it in the active tier C", (await tierOf("Chaos Orb")) === "C");
+await page.click(".tier-btns button[data-t=A]");
+await chaos.locator("td.name .txt").click();
+await page.click("#btn-move");
+check("back to A for the rest of the run", (await tierOf("Chaos Orb")) === "A");
+await page.fill("#pane-whitelist input[type=search]", "chaos");
+await wait(400);
+check("search narrows the list", (await page.locator("table.items tbody tr").count()) < 10);
+await page.fill("#pane-whitelist input[type=search]", "");
+await wait(300);
+await shot("03_currency_list");
+
+// the tier's style editor, inline, with opacity: every edit reaches the model at once
+await page.click(".tier-btns button[data-t=B]");
+await page.waitForSelector("#tier-style-editor");
+await page.locator('#tier-style-editor input[aria-label="ความทึบ พื้นหลัง"]').fill("120");
+await page.locator('#tier-style-editor input[aria-label="ความทึบ พื้นหลัง"]').dispatchEvent("input");
+check("opacity slider follows the number", (await page.locator('#tier-style-editor input[aria-label="แถบความทึบ พื้นหลัง"]').inputValue()) === "120");
+await page.locator('#tier-style-editor input[aria-label="โปร่งใส ตัวอักษร"]').check();
+check("'โปร่งใส' sets opacity 0", (await page.locator('#tier-style-editor input[aria-label="ความทึบ ตัวอักษร"]').inputValue()) === "0");
+await page.locator('#tier-style-editor input[aria-label="โปร่งใส ตัวอักษร"]').uncheck();
+check("un-ticking restores the old opacity", (await page.locator('#tier-style-editor input[aria-label="ความทึบ ตัวอักษร"]').inputValue()) !== "0");
+await shot("04_tier_style_inline_opacity");
+const effB = (await model("wl_style", "B")).effective;
+check("style reached the model with the opacity (no save button)", effB.bg && effB.bg[3] === 120, JSON.stringify(effB.bg));
+check("the tier editor has a sound field of its own", (await page.locator('#tier-style-editor select[aria-label="ชนิดเสียง"]').count()) === 1);
+// round trip: pick the tier again, the value is still there
+await page.click(".tier-btns button[data-t=A]");
+await page.click(".tier-btns button[data-t=B]");
+check("style shows the saved opacity again", (await page.locator('#tier-style-editor input[aria-label="ความทึบ พื้นหลัง"]').inputValue()) === "120");
+await page.locator('#tier-style-editor input[type=checkbox][aria-label="ใช้ส่วนนี้"]').nth(2).uncheck();      // bg off
+await page.click(".tier-btns button[data-t=A]");
+await page.click(".tier-btns button[data-t=B]");
+check("an unticked part stays unticked after re-picking the tier", !(await page.locator('#tier-style-editor input[type=checkbox][aria-label="ใช้ส่วนนี้"]').nth(2).isChecked()));
+await page.click("#btn-style-reset-B");
+check("reset gives NeverSink's look back", ((await model("wl_style", "B")).effective.bg || [0, 0, 0, 0])[3] === 255 && !(((await model("wl_config")).wl_tier_style || {}).B));
+
+// stack minimum + rarity
+await page.fill('#pane-whitelist input[aria-label="โชว์เมื่อจำนวน ≥ (tier)"]', "5");
+await page.locator('#pane-whitelist input[aria-label="โชว์เมื่อจำนวน ≥ (tier)"]').dispatchEvent("input");
+check("tier stack minimum reaches the model", ((await model("wl_parts")).tier_stack || {}).B === 5);
+// the categories the page still offers: no equipment block lists, no keys / special classes, no Jewel
+const catsNow = await page.locator("#pane-whitelist select[aria-label=หมวด] option").allInnerTexts();
+check("the cut categories are gone", !catsNow.some((c) => /เนื้อเรื่อง|6-link|Heist|Influenced|Gem ทั่วไป|กุญแจ|Jewel|เครื่องประดับ|Craft|Exotic|Salvage|AlwaysShow|Rare ตาม|Magic\/Rare/.test(c)), catsNow.join("|"));
+check("PoE2 ends with the Flask / Charm and the equipment-by-class categories", catsNow[catsNow.length - 2] === "Flask / Charm" && catsNow[catsNow.length - 1] === "อุปกรณ์ตาม class", catsNow.join("|"));
+await page.selectOption("#pane-whitelist select[aria-label=หมวด]", { label: "Flask / Charm" });
+await page.waitForSelector("#flask-box:not([hidden])");
+check("no block list under Flask / Charm", await page.locator("#list-box").isHidden());
+check("two rows: Flask and Charm, both default", (await page.locator("#flask-box .rarity-box").count()) === 2 &&
+  (await page.locator('#flask-box input[type=radio][value=default]:checked').count()) === 2);
+check("no rarity boxes before 'set myself'", (await page.locator("#flask-box select").count()) === 0);
+await page.locator('input[aria-label="Flask ตั้งค่าเอง"]').check();
+check("'set myself' shows Normal / Magic (no Rare), S / A / B / C / D only, all start at B", (await page.locator('#flask-box [data-row=Flask] select').count()) === 2 &&
+  (await page.locator('#flask-box [data-row=Flask] select').evaluateAll((els) => els.every((e) => e.value === "B" &&
+    JSON.stringify([...e.options].map((o) => o.value)) === JSON.stringify(["S", "A", "B", "C", "D"])))));
+check("the warning is shown with the rarity boxes", (await page.locator("#flask-box .rarity-warning").innerText()).includes("ตั้ง D = ซ่อนทุกชิ้นของ rarity นั้น"));
+await page.selectOption('select[aria-label="Flask rarity Magic"]', "D");
+await page.selectOption('select[aria-label="Flask rarity Normal"]', "B");
+check("rarity D / B reach the model", JSON.stringify(((await model("wl_config")).wl_rarity_rows_poe2 || {}).Flask) === JSON.stringify({ custom: true, tiers: { Normal: "B", Magic: "D" } }));
+await shot("05_flask_charm_rows");
+await page.locator('input[aria-label="Flask ค่าเริ่มต้น (block ของ NeverSink ทั้งหมดของแถวนี้)"]').check();
+check("back to the default keeps the values but writes nothing", ((await model("wl_config")).wl_rarity_rows_poe2.Flask.custom === false) &&
+  ((await model("wl_config")).wl_rarity_rows_poe2.Flask.tiers.Magic === "D"));
+await page.locator('input[aria-label="Flask ตั้งค่าเอง"]').check();       // custom again for the generated file below
+// ---- equipment by class
+await page.selectOption("#pane-whitelist select[aria-label=หมวด]", { label: "อุปกรณ์ตาม class" });
+await page.waitForSelector("#equip-box:not([hidden])");
+check("equipment: no block list, flask box hidden", await page.locator("#list-box").isHidden() && await page.locator("#flask-box").isHidden());
+check("equipment: four groups in order", JSON.stringify(await page.locator("#equip-box .equip-head .t").allInnerTexts()) === JSON.stringify(["อาวุธ", "เกราะ", "เครื่องประดับ", "อื่นๆ"]));
+const eqClasses = await page.locator("#equip-box .equip-row .cls").allInnerTexts();
+check("equipment: Quivers are in the weapons group, 22 classes in poe2", eqClasses.length === 22 && (await page.locator('#equip-box [data-group=weapon] [data-class=Quivers]').count()) === 1, String(eqClasses.length));
+check("equipment: every row starts as the default", (await page.locator('#equip-box input[type=radio][value=default]:checked').count()) === 22 &&
+  (await page.locator('#equip-box .equip-row select:not([disabled])').count()) === 0);
+check("equipment: the row boxes offer S / A / B / C / D only", await page.locator('#equip-box .equip-row select').first().evaluate((e) => JSON.stringify([...e.options].map((o) => o.value)) === JSON.stringify(["S", "A", "B", "C", "D"])));
+await page.locator('input[aria-label="Boots ตั้งค่าเอง"]').check();
+check("equipment: set myself starts every rarity at B", (await page.locator('#equip-box [data-class=Boots] select').evaluateAll((els) => els.length === 3 && els.every((e) => e.value === "B" && !e.disabled))));
+await page.selectOption('select[aria-label="Boots rarity Rare"]', "D");
+check("equipment: Boots Rare D reaches the model + shows the warning", JSON.stringify(((await model("wl_config")).wl_equip_rows_poe2 || {}).Boots) === JSON.stringify({ custom: true, tiers: { Normal: "B", Magic: "B", Rare: "D" } }) &&
+  (await page.locator('#equip-box [data-class=Boots] .equip-warning').innerText()).includes("ซ่อนทุกชิ้นของ class+rarity นี้ รวมของดีที่ NeverSink โชว์"));
+await page.selectOption('select[aria-label="เกราะ ตั้งทั้งกลุ่ม Magic"]', "A");
+const eqCfg = (await model("wl_config")).wl_equip_rows_poe2 || {};
+const ARMOUR = ["Body Armours", "Boots", "Gloves", "Helmets", "Shields", "Bucklers", "Foci"];
+check("equipment: the group select makes each armour row 'set myself' with that tier (no separate group value)", ARMOUR.every((c) => eqCfg[c] && eqCfg[c].custom && eqCfg[c].tiers.Magic === "A") &&
+  eqCfg.Boots.tiers.Rare === "D" && !eqCfg.Wands);
+check("equipment: the header select goes back to its prompt, the rows show the value", (await page.locator('select[aria-label="เกราะ ตั้งทั้งกลุ่ม Magic"]').inputValue()) === "ทั้งกลุ่ม…" &&
+  (await page.locator('select[aria-label="Gloves rarity Magic"]').inputValue()) === "A" && await page.locator('input[aria-label="Gloves ตั้งค่าเอง"]').isChecked());
+const hdrWidths = await page.locator('#equip-box [data-group=armour] .equip-head select').evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().width)));
+const rowWidths = await page.locator('#equip-box [data-class=Boots] .tier-grid select').evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().width)));
+check("equipment: Normal / Magic / Rare boxes have one width (header and row)", new Set(hdrWidths).size === 1 && new Set(rowWidths).size === 1 && rowWidths[0] >= 40, JSON.stringify([hdrWidths, rowWidths]));
+await shot("05b_equipment_by_class");
+await page.selectOption('select[aria-label="เกราะ ตั้งทั้งกลุ่ม Normal"]', "ค่าเริ่มต้น");
+const eqCfg2 = (await model("wl_config")).wl_equip_rows_poe2 || {};
+check("equipment: 'ค่าเริ่มต้น' at the header puts every armour row back to the default (values kept)", ARMOUR.every((c) => eqCfg2[c] && eqCfg2[c].custom === false) &&
+  (await page.locator('#equip-box [data-group=armour] input[type=radio][value=default]:checked').count()) === 7);
+await page.locator('input[aria-label="Boots ตั้งค่าเอง"]').check();
+await page.locator('input[aria-label="Boots ค่าเริ่มต้น"]').check();
+check("equipment: back to the default keeps the values", (await model("wl_config")).wl_equip_rows_poe2.Boots.custom === false && (await model("wl_config")).wl_equip_rows_poe2.Boots.tiers.Rare === "D");
+await page.locator('input[aria-label="Boots ตั้งค่าเอง"]').check();
+await page.selectOption("#pane-whitelist select[aria-label=หมวด]", { label: "Currency" });
+check("the list is back for Currency", await page.locator("#list-box").isVisible() && await page.locator("#flask-box").isHidden());
+await shot("06_currency_after_flask");
+
+// the other parts: one sub tab each, each with its own style editor (no pop-up)
+check("PoE2 sub tabs: items, Gold, Waystone, Tablet, Gem, typed names", JSON.stringify(await page.locator(".subtabs button").allInnerTexts()) ===
+  JSON.stringify(["ไอเท็ม / หมวด", "Gold", "Waystone", "Tablet", "Gem", "พิมพ์เอง"]));
+await page.click("#subtab-gem");
+{
+  const labels = await page.locator("#pane-sub-gem .box label:has(input[type=checkbox])").allInnerTexts();
+  const uncut = labels.map((t) => t.trim()).filter((t) => t.startsWith("Uncut"));
+  check("PoE2 uncut gem rows: Skill, Spirit, Support", JSON.stringify(uncut) === JSON.stringify(["Uncut Skill Gem", "Uncut Spirit Gem", "Uncut Support Gem"]), uncut.join("|"));
+  check("the Gem sub tab shows its own style editor", await page.locator('#pane-sub-gem [data-style="Gem"] .style-grid').isVisible());
+}
+await page.click("#subtab-gold");
+await page.check("#chk-gold");
+await page.locator('input[aria-label="จำนวนขั้นต่ำของ Gold"]').fill("25");
+await page.locator('input[aria-label="จำนวนขั้นต่ำของ Gold"]').dispatchEvent("input");
+check("gold style editor is inline with a sound field", (await page.locator('#pane-sub-gold [data-style="G"] select[aria-label="ชนิดเสียง"]').count()) === 1 && !(await page.locator("#dlg-style[open]").count()));
+await shot("07_parts_gold_style");
+await page.click("#subtab-map");
+await page.check("#chk-map");
+await page.click("#subtab-tablet");
+check("the Tablet sub tab has its own editor", await page.locator('#pane-sub-tablet [data-style="Tablet"] .style-grid').isVisible());
+await page.click("#subtab-custom");
+await page.fill("#custom-input", "heavy belt");
+await page.click("#custom-add");
+check("typed name added", (await page.locator("#custom-chips li").count()) === 1);
+check("gold + map in the model", (await model("wl_parts")).gold === true && (await model("wl_parts")).map_on === true && (await model("wl_parts")).gold_min === 25);
+await shot("08_parts");
+
+// ---------------------------------------------------------------- generate: whitelist -> download
+await page.fill('#pane-whitelist input[aria-label="ชื่อ filter"]', "my-wl");
+await page.click("#btn-generate-wl");
+await page.waitForSelector("#result:not([hidden])", { timeout: 60000 });
+check("whitelist generate says how many", (await logText()).includes("โหมดโชว์เฉพาะ"), await logText());
+const [dl] = await Promise.all([page.waitForEvent("download"), page.click("#btn-download")]);
+const wlFile = path.join(tmp, dl.suggestedFilename());
+await dl.saveAs(wlFile);
+const wlText = fs.readFileSync(wlFile, "utf-8");
+// kept for the desktop parity test: the file the page made and the settings it made it from
+fs.mkdirSync(path.join(OUT, "parity"), { recursive: true });
+fs.copyFileSync(wlFile, path.join(OUT, "parity", "wl.filter"));
+fs.writeFileSync(path.join(OUT, "parity", "wl_cfg.json"), await page.evaluate(() => localStorage.getItem("poeFilterGen.cfg")));
+check("download is <name>.filter with CRLF", dl.suggestedFilename() === "my-wl.filter" && wlText.includes("\r\n"), dl.suggestedFilename());
+check("file has the embedded settings, version 'web'", wlText.includes("# poe-checker-config:"));
+check("file has the rarity block, NeverSink's copied blocks and the Q block", wlText.includes("# rarity: Flask - Magic - tier D") && wlText.includes("# neversink (") && wlText.includes("# quest items"));
+check("file has the typed name and the gold stack", wlText.includes('"heavy belt"') && wlText.includes("StackSize >= 25") && wlText.includes("# gold (stack >= 25)"));
+await shot("09_result");
+
+// ---------------------------------------------------------------- sounds: zip
+await page.click("#tab-ns");
+const mp3 = Buffer.from("ID3-fake-sound-bytes");
+await page.locator('#pane-tier input[type=file]').first().setInputFiles({ name: "snd#1.mp3", mimeType: "audio/mpeg", buffer: mp3 });
+await wait(300);
+check("sound name shown", (await page.locator("#pane-tier").innerText()).includes("snd#1.mp3"));
+await page.fill('#pane-tier input[aria-label="ชื่อ filter"]', "my-ns");
+await page.selectOption('#pane-tier select[aria-label="NeverSink Strictness"]', "3");
+await page.click("#btn-generate-tier");
+await page.waitForFunction(() => document.querySelector("#btn-download") && /zip/.test(document.querySelector("#btn-download").textContent), null, { timeout: 60000 });
+const [dl2] = await Promise.all([page.waitForEvent("download"), page.click("#btn-download")]);
+const zipFile = path.join(tmp, dl2.suggestedFilename());
+await dl2.saveAs(zipFile);
+const zbytes = fs.readFileSync(zipFile);
+check("sounds -> a zip named after the filter", dl2.suggestedFilename() === "my-ns.zip");
+check("zip holds the filter and the renamed sound (# -> _)", zbytes.includes(Buffer.from("my-ns.filter")) && zbytes.includes(Buffer.from("snd_1.mp3")));
+check("the log says why the name changed", (await logText()).includes("#"), await logText());
+await shot("10_ns_zip");
+
+// ---------------------------------------------------------------- open a filter
+await page.click("#tab-wl");
+await page.setInputFiles("#open-filter-input", wlFile);
+check("opening our own file loads the settings", await waitLog("ค่าฝังจากรุ่น web"), await logText());
+check("the name follows the file", (await page.inputValue('#pane-whitelist input[aria-label="ชื่อ filter"]')) === "my-wl");
+check("opened settings keep the Flask rarity rows", ((await model("wl_config")).wl_rarity_rows_poe2 || {}).Flask?.tiers?.Magic === "D");
+const oldTxt = zlib.gunzipSync(fs.readFileSync(path.join(REPO, "tests", "sample_data", "old_filters", "v2_poe2_bus.filter.gz")));
+const oldFile = path.join(tmp, "old-bus.filter");
+fs.writeFileSync(oldFile, oldTxt);
+await page.setInputFiles("#open-filter-input", oldFile);
+check("an old file without settings is read back", await waitLog("ไฟล์รุ่น v2"), await logText());
+check("what was guessed is named", (await logText()).includes("เดา/ปรับ"));
+const foreign = path.join(tmp, "foreign.filter");
+fs.writeFileSync(foreign, 'Show\n    Class "Gems"\n');
+await page.setInputFiles("#open-filter-input", foreign);
+check("a foreign file is refused", await waitLog("ไม่ได้สร้างจากแท็บ Whitelist"));
+await shot("11_after_open");
+
+// ---------------------------------------------------------------- the game folder (File System Access)
+check("folder box is shown (browser supports it)", await page.locator("#folder-box").isVisible());
+await page.click("#btn-folder");
+await wait(500);
+check("folder connected", (await page.locator("#folder-name").innerText()).includes("game"), await page.locator("#folder-name").innerText());
+await page.evaluate(async () => {               // the folder already holds a DIFFERENT file with the sound's name
+  const d = await (await navigator.storage.getDirectory()).getDirectoryHandle("game", { create: true });
+  const w = await (await d.getFileHandle("snd_1.mp3", { create: true })).createWritable();
+  await w.write(new Uint8Array([1, 2, 3])); await w.close();
+});
+await page.click("#tab-ns");
+await page.fill('#pane-tier input[aria-label="ชื่อ filter"]', "my-ns");
+await page.click("#btn-generate-tier");
+await page.waitForSelector("#dlg-ask[open]", { timeout: 60000 });
+check("same name, other content -> asks", (await page.locator("#dlg-ask").innerText()).includes("snd_1.mp3"));
+await shot("12_ask_conflict");
+await page.click("#ask-ok");                    // default: keep the old file, new one gets -2
+await waitLog("เขียนลงโฟลเดอร์");
+const listing = await page.evaluate(async () => {
+  const d = await (await navigator.storage.getDirectory()).getDirectoryHandle("game");
+  const out = {};
+  for await (const [n, h] of d.entries()) out[n] = (await (await h.getFile()).size);
+  return out;
+});
+check("filter written straight into the folder", "my-ns.filter" in listing, JSON.stringify(listing));
+check("old sound kept, new one saved as -2", listing["snd_1.mp3"] === 3 && "snd_1-2.mp3" in listing, JSON.stringify(listing));
+check("no download offered when written", await page.locator("#btn-download").isHidden());
+await page.click("#btn-generate-tier");         // second run: the same sounds are reused, the filter is asked about (confirm accepted)
+await waitLog("เขียนลงโฟลเดอร์");
+await shot("13_written");
+// the folder is remembered after a reload
+await page.reload();
+await page.waitForSelector("#app:not([hidden])", { timeout: 120000 });
+check("folder remembered after reload", (await page.locator("#folder-name").innerText()).includes("game"), await page.locator("#folder-name").innerText());
+// open the file from the folder's content: sound found next to it
+await page.click("#tab-wl");
+const written = await page.evaluate(async () => {
+  const d = await (await navigator.storage.getDirectory()).getDirectoryHandle("game");
+  return await (await (await d.getFileHandle("my-ns.filter")).getFile()).text();
+});
+check("the file written to the folder is a complete filter", written.length > 100000 && written.includes("\r\n"));
+
+// ---------------------------------------------------------------- PoE1
+await page.click("#game-poe1");
+check("lists load for PoE1", await waitLog("โหลดรายการ whitelist แล้ว"));
+await page.click("#tab-wl");
+const cats = await page.locator("#pane-whitelist select[aria-label=หมวด] option").allInnerTexts();
+check("PoE1 has the name lists and Flask / Tincture, no gem group", ["Runegraft", "Vial", "Corpse", "Wombgift", "Relic", "Flask / Tincture"].every((c) => cats.includes(c)) && !cats.some((c) => c.startsWith("Gem ทั่วไป")), cats.join("|"));
+await page.click(".tier-btns button[data-t=S]");
+await page.selectOption("#pane-whitelist select[aria-label=หมวด]", { label: "Runegraft" });
+check("Runegraft rows start at NeverSink's tiers", (await page.locator('table.items tr[data-key="Runegraft of Gemcraft"]').getAttribute("data-tier")) === "S");
+await page.selectOption("#pane-whitelist select[aria-label=หมวด]", { label: "Unique" });
+check("Unique list is big and renders", (await page.locator("table.items tbody tr").count()) > 1000);
+check("PoE1 has no Tablet sub tab", JSON.stringify(await page.locator(".subtabs button").allInnerTexts()) ===
+  JSON.stringify(["ไอเท็ม / หมวด", "Gold", "Map", "Gem", "พิมพ์เอง"]));
+await page.click("#subtab-gem");
+check("PoE1 gem names input + autocomplete", await page.locator("#gem-input").isVisible());
+await shot("14_poe1_parts");
+await page.click("#subtab-items");
+await shot("15_poe1_unique");
+
+// ---------------------------------------------------------------- a phone-sized screen
+await page.setViewportSize({ width: 360, height: 780 });
+await page.click("#tab-wl");
+await shot("16_mobile_whitelist");
+await page.selectOption("#pane-whitelist select[aria-label=หมวด]", { label: "อุปกรณ์ตาม class" });
+await page.waitForSelector("#equip-box:not([hidden])");
+await page.locator('input[aria-label="Boots ตั้งค่าเอง"]').check();
+await page.selectOption('select[aria-label="Boots rarity Rare"]', "D");
+await page.locator('#equip-box [data-class=Boots]').scrollIntoViewIfNeeded();
+await shot("16b_mobile_equipment");
+const eqOver = await page.evaluate(() => {
+  const box = document.querySelector("#equip-box");
+  const wide = [...box.querySelectorAll("*")].filter((e) => e.getBoundingClientRect().right > window.innerWidth + 1 || e.getBoundingClientRect().left < -1);
+  return { boxScroll: box.scrollWidth > box.clientWidth + 1, page: document.documentElement.scrollWidth > window.innerWidth + 1, wide: wide.length };
+});
+check("equipment at 360 px: no row wider than the screen, no sideways scroll", !eqOver.boxScroll && !eqOver.page && eqOver.wide === 0, JSON.stringify(eqOver));
+const mw = await page.locator('#equip-box [data-class=Boots] .tier-grid select').evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().width)));
+check("equipment at 360 px: Normal / Magic / Rare boxes one width", new Set(mw).size === 1 && mw[0] >= 60, JSON.stringify(mw));
+await page.selectOption("#pane-whitelist select[aria-label=หมวด]", { index: 0 });
+await page.click("#tab-ns");
+await shot("17_mobile_neversink");
+const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
+check("no sideways scroll on a phone", !overflow);
+
+check("no console errors", consoleErrors.length === 0, consoleErrors.join(" | "));
+await browser.close();
+srv.close();
+console.log(JSON.stringify({ results, calls: calls.filter((c) => !c.startsWith("pyodide")), out: OUT }));

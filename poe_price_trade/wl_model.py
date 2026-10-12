@@ -4,10 +4,16 @@ generator will write, never a second opinion.
 
 Only changes are stored (an item / category / block / class the player did not touch keeps NeverSink's
 starting tier). Config keys (all per game where it matters), read by filter_whitelist:
-    wl_item_tier_<g> {name: S|A|B|C}      wl_cat_tier_<g> {category: S|A|B|C}   (Unique / Tablet / "gear:<id>" too)
-    wl_block_tier_<g> {gear block key: tier}   wl_rarity_tier_<g> {jewel/flask category: {rarity: tier}}   wl_class_tier_<g> {class: tier}   wl_unique_tier_<g> {name: tier}
-    wl_tier_stack {S|A|B: N}              wl_item_stack_<g> {name: N}           (stack-size minimums)
-    wl_tier_style {S|A|B|G|Tablet|Map: style}
+    wl_item_tier_<g> {name: S|A|B|C|D}    wl_cat_tier_<g> {category: S|A|B|C|D} (Unique / Tablet / "gear:<id>" too)
+        (S / A / B / C are shown, each with a style; D = hidden. `wl_tier_format` = 2 says so: a config without it
+        was written when C was the hidden tier, so its C values become D on load - see _migrate_hidden)
+    wl_block_tier_<g> {gear block key: tier}   wl_unique_tier_<g> {name: tier}
+    wl_rarity_rows_<g> {"Flask" | "Charm": {"custom": bool, "tiers": {Normal|Magic|Rare: S|A|B|C|D}}}
+        (equipment NeverSink writes - story, rare by ilvl, craft, exotic, jewels, keys / special classes ... - is not a
+        setting any more: the file carries NeverSink's own blocks; keys of the old layout are dropped on load with a note)
+    wl_equip_rows_<g> {item class: {"custom": bool, "tiers": {Normal|Magic|Rare: S|A|B|C|D}}}   (equipment by class)
+    wl_tier_stack {S|A|B|C: N}            wl_item_stack_<g> {name: N}           (stack-size minimums)
+    wl_tier_style {S|A|B|C|G|Tablet|Map|Gem: style}   (a style's sound is its own: the tabs share only Q)
     whitelist_gold / whitelist_gold_min, wl_map_on / wl_map_tier_min / wl_map_rarity_min,
     whitelist_gem_uncut_<g> / whitelist_gem_names_<g> / whitelist_gem_tier, whitelist_custom_<g>
 """
@@ -16,16 +22,25 @@ import copy
 from dataclasses import dataclass
 from typing import Optional
 
-from . import filter_gen, filter_style, filter_whitelist as w
+from . import filter_core, filter_gen, filter_style, filter_whitelist as w
 
-TIER_CHOICES = ("S", "A", "B")
-ALL_CHOICES = ("S", "A", "B", "C")
+TIER_CHOICES = w.TIERS                 # the shown tiers (S A B C): each has a style, a stack minimum, a sound
+ALL_CHOICES = w.ALL_TIERS              # ... and D, hidden
+HIDE = w.HIDE_TIER
 TABLET_CATEGORY = w.TABLET_CATEGORY
-SPECIAL_CATEGORY = "Special"
+FLASK_CATEGORY = w.FLASK_CATEGORY
+EQUIP_CATEGORY = w.EQUIP_CATEGORY
 UNIQUE = w.UNIQUE_CATEGORY
 GEAR_PREFIX = w.GEAR_PREFIX
-STYLE_LABELS = ("S", "A", "B", "G", "Tablet", "Map")
+STYLE_LABELS = ("S", "A", "B", "C", "G", "Tablet", "Map", "Gem")
 RARITIES = ("Normal", "Magic", "Rare", "Unique")
+DEFAULT_CUSTOM_TIER = "B"      # a row set "myself" starts every rarity at B (NeverSink is the "default" mode, not a choice)
+_AUTO_NOTE = ("ช่อง \"ตาม NeverSink\" ของแถวที่ตั้งค่าเอง (Flask/Charm/Tincture หรืออุปกรณ์ตาม class) ถูกแปลงเป็น B แล้ว "
+              "— ถ้าต้องการ NeverSink ให้เลือก \"ค่าเริ่มต้น\" ของแถวนั้น")
+_HIDDEN_NOTE = ("tier C เดิม (ซ่อน) {n} ค่า ถูกแปลงเป็น D (ซ่อน) แล้ว — tier C ใหม่คือ tier ที่โชว์ด้วยสไตล์ของตัวเอง "
+                "(จางกว่า B) · S/A/B ที่ตั้งไว้คงเดิม")
+_RARE_NOTE = ("ข้ามค่า Rare ของ Flask / Charm / Tincture ที่เคยตั้งไว้ (ในเกมของพวกนี้ไม่มี Rare — "
+              "ใช้ block ของ NeverSink ตามเดิม)")
 
 
 def _count(v) -> int:
@@ -36,7 +51,7 @@ def _count(v) -> int:
 
 
 def tier_label(tier: str) -> str:
-    """What the list shows after a name: S / A / B, nothing-shown C, and Tablet for a tablet nobody tiered."""
+    """What the list shows after a name: S / A / B / C, D for hidden, and Tablet for a tablet nobody tiered."""
     return "Tablet" if tier == w.TABLET_DEFAULT else tier
 
 
@@ -44,7 +59,7 @@ def tier_label(tier: str) -> str:
 class Row:
     key: str             # what the setters take (item name / unique name / class / group id)
     label: str           # text shown
-    tier: str            # effective S / A / B / C / T
+    tier: str            # effective S / A / B / C / D / T
     default: str         # NeverSink's starting tier for this row
     user_set: bool       # the player changed it (item / unique / class / block level)
     note: str = ""       # warning / hint shown next to the row
@@ -53,15 +68,67 @@ class Row:
     stack_set: bool = False   # the player set this name's own minimum
 
 
+def _migrate_hidden(fg: dict, game: str) -> tuple:
+    """(config, n): a config written before tier D has no `wl_tier_format`, and its C is the hidden tier. C is a shown
+    tier now, so every C of that config (item / category / unique / block tiers, rarity and equipment rows, the gem
+    tier, typed names) becomes D - once: the config is saved with wl_tier_format = 2, and the file / config that has
+    it is never converted again. S / A / B values the player set stay as they are. n = how many values became D."""
+    if fg.get("wl_tier_format") == w.TIER_FORMAT:
+        return fg, 0
+    out = dict(fg)
+    n = 0
+
+    def conv(v):
+        nonlocal n
+        if v == "C":
+            n += 1
+            return HIDE
+        return v
+
+    def tiers_of(d):
+        return {k: conv(v) for k, v in d.items()} if isinstance(d, dict) else d
+
+    for key in (f"wl_item_tier_{game}", f"wl_cat_tier_{game}", f"wl_unique_tier_{game}", f"wl_block_tier_{game}",
+                f"wl_gear_tier_{game}"):
+        if isinstance(fg.get(key), dict):
+            out[key] = tiers_of(fg[key])
+    for key in (f"wl_rarity_rows_{game}", f"wl_equip_rows_{game}"):
+        raw = fg.get(key)
+        if isinstance(raw, dict):
+            rows = {}
+            for rid, row in raw.items():
+                if isinstance(row, dict) and isinstance(row.get("tiers"), dict):
+                    row = dict(row, tiers=tiers_of(row["tiers"]))
+                rows[rid] = row
+            out[key] = rows
+    legacy = fg.get(f"wl_rarity_tier_{game}")
+    if isinstance(legacy, dict):
+        out[f"wl_rarity_tier_{game}"] = {k: tiers_of(v) if isinstance(v, dict) else v for k, v in legacy.items()}
+    if fg.get("whitelist_gem_tier") == "C":
+        out["whitelist_gem_tier"] = conv("C")
+    custom = fg.get(f"whitelist_custom_{game}")
+    if isinstance(custom, list):
+        out[f"whitelist_custom_{game}"] = [dict(e, tier=conv(e.get("tier"))) if isinstance(e, dict) else e
+                                           for e in custom]
+    return out, n
+
+
+def _fill_custom(row: dict, choices) -> None:
+    """A row set "myself" has a tier (S / A / B / C / D) for every rarity: the missing ones start at B."""
+    if row.get("custom"):
+        for r in choices:
+            row["tiers"].setdefault(r, DEFAULT_CUSTOM_TIER)
+
+
 class WlModel:
     def __init__(self, game: str):
         self.game = game
         self.item_tier: dict = {}
         self.cat_tier: dict = {}
-        self.class_tier: dict = {}
         self.unique_tier: dict = {}
         self.block_tier: dict = {}
-        self.rarity_tier: dict = {}          # {category id: {Normal|Magic|Rare: S|A|B|C}} (absent = by NeverSink)
+        self.rarity_rows: dict = {}          # {"Flask"|"Charm": {"custom": bool, "tiers": {Normal|Magic|Rare: S|A|B|C|D}}}
+        self.equip_rows: dict = {}           # {class: {"custom": bool, "tiers": {Normal|Magic|Rare: S|A|B|C|D}}}
         self.tier_stack: dict = {}
         self.item_stack: dict = {}
         self.tier_style: dict = {}
@@ -107,7 +174,7 @@ class WlModel:
         self._gear_items = w.gear_block_items(self.game, self.base_text) if self.base_text else []
         self._unique_defaults = w.unique_base_defaults(self.base_text)
         real = w.known_names(self.base_text) | self.extra_names
-        self._entries = [(n, b) for n, b in w.unique_entries(hub) if b in real]
+        self._entries = [(n, b) for n, b in w.unique_entries(hub) if b in real and not w.bad_name(b)]
         self._default_lines = w.default_tier_lines(self.base_text) if self.base_text else {}
         self._loaded = True
         if self._settle_pending:
@@ -116,41 +183,38 @@ class WlModel:
     # ------------------------------------------------------------------ lists newer than the settings
 
     def lists_now(self) -> list:
-        """Every list the tab offers: the category ids, plus the name-fragment rows of the special category."""
-        return [c for c, _l in self.categories()] + [w.BASE_PREFIX + f for f in w.SPECIAL_BASE.get(self.game, [])]
+        """Every list the tab offers (the category ids)."""
+        return [c for c, _l in self.categories()]
 
     def _new_list_ids(self) -> list:
-        """The lists that appeared after v0.10.2: the name categories, the generic-gem group, the fragment rows."""
+        """The lists that appeared after v0.10.2: the name categories and the generic-gem group."""
         return ([c for c, _p in w.NAMED_CATEGORIES.get(self.game, [])]
-                + [w.gear_cat(g) for g in w.NEW_GEAR_GROUPS if any(g == x for x, _n, _d in w.GEAR_GROUPS.get(self.game, []))]
-                + [w.BASE_PREFIX + f for f in w.SPECIAL_BASE.get(self.game, [])])
+                + [w.gear_cat(g) for g in w.NEW_GEAR_GROUPS if any(g == x for x, _n, _d in w.listed_gear_groups(self.game))])
 
     def _list_rows(self, lst: str) -> list:
         """[(store, key)] of what the player's setting for a list is made of."""
-        if lst.startswith(w.BASE_PREFIX):
-            return [(self.class_tier, lst)]
         if self.is_gear(lst):
             return [(self.block_tier, k) for k in self._gear_keys(lst)]
         return [(self.item_tier, n) for n in self._names_of(lst)]
 
     def _list_is_all_c(self, lst: str) -> bool:
-        """True when every row of the list is C (by its own tier or the whole category's)."""
+        """True when every row of the list is hidden (D; by its own tier or the whole category's)."""
         rows = self._list_rows(lst)
-        whole = self.cat_tier.get(lst) == "C"
-        return bool(rows) and all(st.get(k) == "C" or (whole and k not in st) for st, k in rows)
+        whole = self.cat_tier.get(lst) == HIDE
+        return bool(rows) and all(st.get(k) == HIDE or (whole and k not in st) for st, k in rows)
 
     def _clear_list(self, lst: str) -> None:
         for st, k in self._list_rows(lst):
             st.pop(k, None)
         self.cat_tier.pop(lst, None)
-        if not lst.startswith(w.BASE_PREFIX) and not self.is_gear(lst):
+        if not self.is_gear(lst):
             for n in self._names_of(lst):
                 self.item_stack.pop(n, None)
 
     def _settle(self) -> None:
         """Lists newer than the settings hold values the player never chose. A file that recorded its lists
         (known_lists) simply lacks the new ones -> NeverSink's defaults. A file from v0.10.0 - v0.10.2 recorded
-        nothing, and its old-file import filled every new list with C: a new list that is C all through is taken
+        nothing, and its old-file import filled every new list with hidden (C then, D now): a new list hidden all through is taken
         as filled by the program (a list the player emptied on purpose is told apart by known_lists, which every
         file since then carries)."""
         self._settle_pending = False
@@ -166,9 +230,8 @@ class WlModel:
         self.known_lists = self.lists_now()
         if fresh:
             labels = dict(self.categories())
-            names = [labels.get(c) or (f'ชื่อที่มีคำว่า "{c[len(w.BASE_PREFIX):]}"' if c.startswith(w.BASE_PREFIX) else c)
-                     for c in fresh]
-            self._notes.append("หมวดที่ไฟล์/ค่าที่เปิดมายังไม่มี หรือเป็น C ทั้งหมวดที่โปรแกรมเติมให้เอง ใช้ค่าเริ่มต้น"
+            names = [labels.get(c) or c for c in fresh]
+            self._notes.append("หมวดที่ไฟล์/ค่าที่เปิดมายังไม่มี หรือซ่อน (D) ทั้งหมวดที่โปรแกรมเติมให้เอง ใช้ค่าเริ่มต้น"
                                "ของ NeverSink แทน: " + ", ".join(names))
 
     def adopt_known_lists(self, known: Optional[list]) -> None:
@@ -195,22 +258,34 @@ class WlModel:
     def from_config(cls, fg: dict, game: str) -> "WlModel":
         m = cls(game)
         g = game
+        fg, hidden_n = _migrate_hidden(fg, g)
+        if hidden_n:
+            m._notes.append(_HIDDEN_NOTE.format(n=hidden_n))
+        fg, sound_notes = filter_core.migrate_sounds(fg)         # the S / A / B files of the NeverSink tab -> tier sounds
+        m._notes += sound_notes
         m.item_tier = dict(fg.get(f"wl_item_tier_{g}") or {})
         m.cat_tier = dict(fg.get(f"wl_cat_tier_{g}") or {})
-        m.class_tier = dict(fg.get(f"wl_class_tier_{g}") or {})
         m.unique_tier = dict(fg.get(f"wl_unique_tier_{g}") or {})
         m.block_tier = dict(fg.get(f"wl_block_tier_{g}") or {})
-        m.rarity_tier = {c: {r: t for r, t in (v or {}).items() if r in w.RARITY_CHOICES and t in ALL_CHOICES}
-                         for c, v in (fg.get(f"wl_rarity_tier_{g}") or {}).items()
-                         if c in w.RARITY_CATEGORIES.get(g, {}) and isinstance(v, dict)}
-        m.rarity_tier = {c: v for c, v in m.rarity_tier.items() if v}
+        m.rarity_rows = cls._read_rarity_rows(fg.get(f"wl_rarity_rows_{g}"), g)
+        m.equip_rows = cls._read_equip_rows(fg.get(f"wl_equip_rows_{g}"), g)
+        if (any(r.get("custom") and any(x not in r["tiers"] for x in w.RARITY_CHOICES) for r in m.rarity_rows.values())
+                or any(r.get("custom") and any(x not in r["tiers"] for x in w.EQUIP_CHOICES) for r in m.equip_rows.values())):
+            m._notes.append(_AUTO_NOTE)                         # an old "set myself" row with a rarity left on NeverSink
+        for r in m.rarity_rows.values():
+            _fill_custom(r, w.RARITY_CHOICES)
+        for r in m.equip_rows.values():
+            _fill_custom(r, w.EQUIP_CHOICES)
+        if any(isinstance(r, dict) and w.RARITY_REMOVED in (r.get("tiers") or {})
+               for rid, r in (fg.get(f"wl_rarity_rows_{g}") or {}).items()):
+            m._notes.append(_RARE_NOTE)
         m.tier_stack = {k: n for k, n in ((k, _count(v)) for k, v in (fg.get("wl_tier_stack") or {}).items())
                         if k in TIER_CHOICES and n > 1}
         m.item_stack = {str(k): _count(v) for k, v in (fg.get(f"wl_item_stack_{g}") or {}).items()}
         # the old equipment settings (one tier per group / for all gear) become the gear categories' tiers
         legacy_groups = fg.get(f"wl_gear_tier_{g}") or {}
         whole = m.cat_tier.pop(w.GEAR_CATEGORY, None)
-        for gid, _name, _d in w.GEAR_GROUPS.get(g, []):
+        for gid, _name, _d in w.listed_gear_groups(g):
             tier = legacy_groups.get(gid) if legacy_groups.get(gid) in ALL_CHOICES else whole
             if tier in ALL_CHOICES and w.gear_cat(gid) not in m.cat_tier:
                 m.cat_tier[w.gear_cat(gid)] = tier
@@ -221,6 +296,7 @@ class WlModel:
             m.gold_min = max(0, int(fg.get("whitelist_gold_min") or 0))
         except (TypeError, ValueError):
             m.gold_min = 0
+        m._drop_removed_settings(fg)
         m.known_lists = fg.get(f"wl_lists_{g}") if isinstance(fg.get(f"wl_lists_{g}"), list) else None
         m._settle_pending = True
         m.map_on = bool(fg.get("wl_map_on"))
@@ -243,16 +319,86 @@ class WlModel:
                                  "tier": e.get("tier") if e.get("tier") in ALL_CHOICES else "B"})
         return m
 
+    @staticmethod
+    def _read_rarity_rows(raw, game: str) -> dict:
+        ids = {rid for rid, _l, _c in w.rarity_rows(game)}
+        out: dict = {}
+        for rid, row in (raw or {}).items():
+            if rid not in ids or not isinstance(row, dict):
+                continue
+            tiers = {r: t for r, t in (row.get("tiers") or {}).items() if r in w.RARITY_CHOICES and t in ALL_CHOICES}
+            if tiers or row.get("custom"):
+                out[rid] = {"custom": bool(row.get("custom")), "tiers": tiers}
+        return out
+
+    @staticmethod
+    def _read_equip_rows(raw, game: str) -> dict:
+        ids = set(w.equip_classes(game))
+        out: dict = {}
+        for cid, row in (raw or {}).items():
+            if cid not in ids or not isinstance(row, dict):
+                continue
+            tiers = {r: t for r, t in (row.get("tiers") or {}).items() if r in w.EQUIP_CHOICES and t in ALL_CHOICES}
+            if tiers or row.get("custom"):
+                out[cid] = {"custom": bool(row.get("custom")), "tiers": tiers}
+        return out
+
+    def _drop_removed_settings(self, fg: dict) -> None:
+        """Settings of categories the tab no longer has (the file now carries NeverSink's own blocks for them) are
+        dropped once, with a note; the old Flask / Charm rarity values become the new "set myself" rows."""
+        g = self.game
+        removed: list = []
+        names = {gid: n for gid, n, _d in w.GEAR_GROUPS.get(g, [])}
+        cut = [gid for gid in names if gid not in w.GEAR_LISTED.get(g, ())]
+        for gid in cut:
+            if self.cat_tier.pop(w.gear_cat(gid), None) is not None:
+                removed.append(names[gid] if gid != w.FLASK_GROUP else "Flask / Charm (ทั้งหมวด)")
+        for key in list(self.block_tier):
+            gid = w.gear_group_of(g, key.split("|")[0])
+            if gid in cut:
+                del self.block_tier[key]
+                label = names.get(gid, gid) if gid != w.FLASK_GROUP else "Flask / Charm (ราย block)"
+                if label not in removed:
+                    removed.append(label)
+        if fg.get(f"wl_class_tier_{g}"):
+            removed.append("กุญแจ/ของพิเศษ (class)")
+        legacy = fg.get(f"wl_rarity_tier_{g}") or {}
+        if isinstance(legacy, dict):
+            if legacy.get("gear:jewel"):
+                removed.append("Jewel (rarity)")
+            old_flask = legacy.get("gear:flask")
+            if isinstance(old_flask, dict) and old_flask and not self.rarity_rows:
+                tiers = {r: t for r, t in old_flask.items() if r in w.RARITY_CHOICES and t in ALL_CHOICES}
+                if w.RARITY_REMOVED in old_flask:
+                    self._notes.append(_RARE_NOTE)
+                if tiers:
+                    for rid, _l, _c in w.rarity_rows(g):          # the old box covered flasks and charms together
+                        self.rarity_rows[rid] = {"custom": True, "tiers": dict(tiers)}
+                        if any(x not in tiers for x in w.RARITY_CHOICES) and _AUTO_NOTE not in self._notes:
+                            self._notes.append(_AUTO_NOTE)
+                        _fill_custom(self.rarity_rows[rid], w.RARITY_CHOICES)
+                    self._notes.append("rarity ของ Flask/Charm เดิมถูกแปลงเป็น \"ตั้งค่าเอง\" พร้อมค่าเดิมแล้ว")
+        if removed:
+            self._notes.append("ข้ามค่าที่เคยตั้งของหมวดที่ตัดออกแล้ว (ใช้ NeverSink แทน): " + ", ".join(removed))
+
     def to_config(self, fg: dict) -> dict:
         g = self.game
         fg["wl_v2"] = True
+        fg["wl_tier_format"] = w.TIER_FORMAT
+        fg["sound_format"] = filter_core.SOUND_FORMAT
+        for k in ("sound_s", "sound_a", "sound_b", "sound_c"):     # now sound_1 .. sound_3 (NeverSink tab) / tier styles
+            fg.pop(k, None)
         fg[f"wl_item_tier_{g}"] = dict(self.item_tier)
         fg[f"wl_cat_tier_{g}"] = dict(self.cat_tier)
-        fg[f"wl_class_tier_{g}"] = dict(self.class_tier)
+        fg.pop(f"wl_class_tier_{g}", None)               # special classes are NeverSink's blocks now
+        fg.pop(f"wl_rarity_tier_{g}", None)              # old jewel / flask rarity: see wl_rarity_rows
         fg[f"wl_unique_tier_{g}"] = dict(self.unique_tier)
         fg.pop(f"wl_gear_tier_{g}", None)               # folded into wl_cat_tier_<g>["gear:<id>"]
         fg[f"wl_block_tier_{g}"] = dict(self.block_tier)
-        fg[f"wl_rarity_tier_{g}"] = {c: dict(v) for c, v in self.rarity_tier.items() if v}
+        fg[f"wl_rarity_rows_{g}"] = {r: {"custom": bool(v.get("custom")), "tiers": dict(v.get("tiers") or {})}
+                                     for r, v in self.rarity_rows.items() if v.get("custom") or v.get("tiers")}
+        fg[f"wl_equip_rows_{g}"] = {c: {"custom": bool(v.get("custom")), "tiers": dict(v.get("tiers") or {})}
+                                    for c, v in self.equip_rows.items() if v.get("custom") or v.get("tiers")}
         lists = self.lists_now() if self._loaded else self.known_lists      # unknown stays unknown (not written)
         if lists is None:
             fg.pop(f"wl_lists_{g}", None)
@@ -286,10 +432,12 @@ class WlModel:
         out.append((UNIQUE, "Unique"))
         if self.game == "poe2":
             out.append((TABLET_CATEGORY, "Tablet"))
-        if self._special_keys():
-            out.append((SPECIAL_CATEGORY, "กุญแจ/ของพิเศษ (class)"))
-        for gid, name, _d in w.GEAR_GROUPS.get(self.game, []):      # every gear group is a category of its own
+        for gid, name, _d in w.listed_gear_groups(self.game):       # the gear groups the tab lists block by block
             out.append((w.gear_cat(gid), name))
+        if w.rarity_rows(self.game):
+            out.append((FLASK_CATEGORY, w.FLASK_LABEL[self.game]))
+        if w.equip_classes(self.game):
+            out.append((EQUIP_CATEGORY, w.EQUIP_LABEL))
         return out
 
     @staticmethod
@@ -299,9 +447,6 @@ class WlModel:
     def _gear_keys(self, cat: str) -> list:
         gid = cat[len(GEAR_PREFIX):]
         return [k for k, g, _ty, _tag, _c in self._gear_items if g == gid]
-
-    def _special_keys(self) -> list:
-        return list(w.SPECIAL_CLASSES.get(self.game, [])) + [w.BASE_PREFIX + f for f in w.SPECIAL_BASE.get(self.game, [])]
 
     def _names_of(self, cat: str) -> list:
         tab = lambda n: w.is_tablet(self.game, n)
@@ -334,18 +479,7 @@ class WlModel:
                     continue
                 out.append(Row(key, label, block_tiers[key], group_tier, key in self.block_tier))
             return out
-        if cat == SPECIAL_CATEGORY:
-            for c in w.SPECIAL_CLASSES.get(self.game, []):
-                if q and q not in c.lower():
-                    continue
-                t = self.class_tier.get(c) if self.class_tier.get(c) in ALL_CHOICES else "B"
-                out.append(Row(c, c, t, "B", c in self.class_tier))
-            for f in w.SPECIAL_BASE.get(self.game, []):
-                key, label = w.BASE_PREFIX + f, f'ชื่อที่มีคำว่า "{f}" (ที่ยังไม่อยู่ในรายการ)'
-                if q and q not in label.lower():
-                    continue
-                t = self.class_tier.get(key) if self.class_tier.get(key) in ALL_CHOICES else "B"
-                out.append(Row(key, label, t, "B", key in self.class_tier))
+        if cat in (FLASK_CATEGORY, EQUIP_CATEGORY):    # no list: rows with their own controls (flask_rows / equip_groups)
             return out
         if cat == UNIQUE:
             base_tier, conflicts = w.resolve_unique_tiers(self.game, self.cfg(), self._entries, self._unique_defaults)
@@ -379,7 +513,7 @@ class WlModel:
     def _store(self, cat: str) -> dict:
         if self.is_gear(cat):
             return self.block_tier
-        return {SPECIAL_CATEGORY: self.class_tier, UNIQUE: self.unique_tier}.get(cat, self.item_tier)
+        return {UNIQUE: self.unique_tier}.get(cat, self.item_tier)
 
     def set_row(self, cat: str, key: str, tier: str) -> None:
         if tier in ALL_CHOICES:
@@ -394,24 +528,91 @@ class WlModel:
         for k in keys:
             self.item_stack[k] = max(1, int(n))
 
-    def has_rarity(self, cat: str) -> bool:
-        """The category can also be tiered by rarity (jewels, flasks / charms)."""
-        return cat in w.RARITY_CATEGORIES.get(self.game, {})
+    def has_flask(self) -> bool:
+        return bool(w.rarity_rows(self.game))
 
-    def get_rarity(self, cat: str, rarity: str) -> Optional[str]:
-        """The player's tier for this rarity of the category, None = by NeverSink's blocks."""
-        t = (self.rarity_tier.get(cat) or {}).get(rarity)
-        return t if t in ALL_CHOICES else None
+    def flask_rows(self) -> list:
+        """[{"id", "label", "custom", "tiers": {Normal|Magic|Rare: tier or None}}] of the Flask / Charm category: the
+        default (custom False) is NeverSink's blocks; "set myself" shows the three rarities, each NeverSink until set."""
+        out = []
+        for rid, label, _classes in w.rarity_rows(self.game):
+            row = self.rarity_rows.get(rid) or {}
+            tiers = row.get("tiers") or {}
+            out.append({"id": rid, "label": label, "custom": bool(row.get("custom")),
+                        "tiers": {r: (tiers.get(r) if tiers.get(r) in ALL_CHOICES else DEFAULT_CUSTOM_TIER)
+                                  for r in w.RARITY_CHOICES}})
+        return out
 
-    def set_rarity(self, cat: str, rarity: str, tier: Optional[str]) -> None:
-        if not self.has_rarity(cat) or rarity not in w.RARITY_CHOICES:
+    def set_flask_custom(self, row_id: str, custom: bool) -> None:
+        """Default <-> set myself. Going back to the default keeps the values (not written) for the way back."""
+        if row_id not in {r for r, _l, _c in w.rarity_rows(self.game)}:
             return
-        if tier in ALL_CHOICES:
-            self.rarity_tier.setdefault(cat, {})[rarity] = tier
-        else:
-            self.rarity_tier.get(cat, {}).pop(rarity, None)
-            if not self.rarity_tier.get(cat):
-                self.rarity_tier.pop(cat, None)
+        row = self.rarity_rows.setdefault(row_id, {"custom": False, "tiers": {}})
+        row["custom"] = bool(custom)
+        _fill_custom(row, w.RARITY_CHOICES)
+        if not row["custom"] and not row["tiers"]:
+            self.rarity_rows.pop(row_id, None)
+
+    def set_flask_rarity(self, row_id: str, rarity: str, tier: Optional[str]) -> None:
+        if row_id not in {r for r, _l, _c in w.rarity_rows(self.game)} or rarity not in w.RARITY_CHOICES:
+            return
+        if tier not in ALL_CHOICES:
+            return
+        row = self.rarity_rows.setdefault(row_id, {"custom": True, "tiers": {}})
+        row["tiers"][rarity] = tier
+        row["custom"] = True
+        _fill_custom(row, w.RARITY_CHOICES)
+
+    # ---- equipment by class (EQUIP_CATEGORY)
+
+    def has_equip(self) -> bool:
+        return bool(w.equip_classes(self.game))
+
+    def equip_groups(self) -> list:
+        """[{"id", "label", "classes": [{"id", "label", "custom", "tiers": {Normal|Magic|Rare: tier or None}}]}] in
+        display order; a row is NeverSink's blocks (custom False) or "set myself" (each rarity NeverSink until set)."""
+        out = []
+        for gid, gname, classes in w.equip_groups(self.game):
+            rows = []
+            for c in classes:
+                row = self.equip_rows.get(c) or {}
+                tiers = row.get("tiers") or {}
+                rows.append({"id": c, "label": c, "custom": bool(row.get("custom")),
+                             "tiers": {r: (tiers.get(r) if tiers.get(r) in ALL_CHOICES else DEFAULT_CUSTOM_TIER)
+                                       for r in w.EQUIP_CHOICES}})
+            out.append({"id": gid, "label": gname, "classes": rows})
+        return out
+
+    def set_equip_custom(self, cls_id: str, custom: bool) -> None:
+        """Default <-> set myself; going back keeps the values (not written) for the way back."""
+        if cls_id not in set(w.equip_classes(self.game)):
+            return
+        row = self.equip_rows.setdefault(cls_id, {"custom": False, "tiers": {}})
+        row["custom"] = bool(custom)
+        _fill_custom(row, w.EQUIP_CHOICES)
+        if not row["custom"] and not row["tiers"]:
+            self.equip_rows.pop(cls_id, None)
+
+    def set_equip_rarity(self, cls_id: str, rarity: str, tier: Optional[str]) -> None:
+        if cls_id not in set(w.equip_classes(self.game)) or rarity not in w.EQUIP_CHOICES:
+            return
+        if tier not in ALL_CHOICES:
+            return
+        row = self.equip_rows.setdefault(cls_id, {"custom": True, "tiers": {}})
+        row["tiers"][rarity] = tier
+        row["custom"] = True
+        _fill_custom(row, w.EQUIP_CHOICES)
+
+    def set_equip_group(self, group_id: str, rarity: str, tier: Optional[str]) -> None:
+        """One rarity of every class of the group at once, written into each row (no separate group value): every row
+        becomes "set myself" with that tier (its other rarities keep their value, B when new). tier None = every row of
+        the group back to the default (NeverSink); the values stay for the way back."""
+        classes = next((c for g, _n, c in w.equip_groups(self.game) if g == group_id), [])
+        for c in classes:
+            if tier is None:
+                self.set_equip_custom(c, False)
+            else:
+                self.set_equip_rarity(c, rarity, tier)
 
     def set_tier_stack(self, tier: str, n: int) -> None:
         if tier in TIER_CHOICES:
@@ -421,11 +622,11 @@ class WlModel:
                 self.tier_stack.pop(tier, None)
 
     def toggle_row(self, cat: str, key: str, active: str) -> None:
-        """Tick = into the active tier, untick = C (hidden)."""
+        """Tick = into the active tier, untick = D (hidden)."""
         row = next((r for r in self.rows(cat) if r.key == key), None)
         if row is None:
             return
-        self.set_row(cat, key, "C" if row.tier != "C" else active)
+        self.set_row(cat, key, HIDE if row.tier != HIDE else active)
 
     def set_category(self, cat: str, tier: str) -> None:
         """Every row of the category to `tier`; rows the player set one by one are cleared (the whole-category
@@ -434,15 +635,13 @@ class WlModel:
             return
         if self.is_gear(cat):
             self.cat_tier[cat] = tier
-            self.rarity_tier.pop(cat, None)              # a rarity tier would win over the whole-category tier
             for k in self._gear_keys(cat):
                 self.block_tier.pop(k, None)
         elif cat == UNIQUE:
             self.cat_tier[cat] = tier
             self._store(cat).clear()
-        elif cat == SPECIAL_CATEGORY:
-            for c in self._special_keys():
-                self.class_tier[c] = tier
+        elif cat in (FLASK_CATEGORY, EQUIP_CATEGORY):
+            return                                       # nothing to tier as a whole: the rows have their own controls
         elif cat == TABLET_CATEGORY:
             for n in self._names_of(cat):
                 self.item_tier[n] = tier
@@ -455,15 +654,15 @@ class WlModel:
         """Back to NeverSink's values for the whole category."""
         if self.is_gear(cat):
             self.cat_tier.pop(cat, None)
-            self.rarity_tier.pop(cat, None)
             for k in self._gear_keys(cat):
                 self.block_tier.pop(k, None)
         elif cat == UNIQUE:
             self.cat_tier.pop(cat, None)
             self._store(cat).clear()
-        elif cat == SPECIAL_CATEGORY:
-            for c in self._special_keys():
-                self.class_tier.pop(c, None)
+        elif cat == FLASK_CATEGORY:
+            self.rarity_rows.clear()
+        elif cat == EQUIP_CATEGORY:
+            self.equip_rows.clear()
         else:
             self.cat_tier.pop(cat, None)
             for n in self._names_of(cat):
@@ -476,12 +675,18 @@ class WlModel:
     def changed_count(self, cat: str) -> int:
         """How many rows of the category differ from the starting values (list header hint)."""
         n = sum(1 for r in self.rows(cat) if r.user_set)
-        return n + (1 if self.category_tier(cat) else 0) + len(self.rarity_tier.get(cat) or {})
+        if cat == FLASK_CATEGORY:
+            return sum(1 for v in self.rarity_rows.values() if v.get("custom"))
+        if cat == EQUIP_CATEGORY:
+            return sum(1 for v in self.equip_rows.values() if v.get("custom"))
+        return n + (1 if self.category_tier(cat) else 0)
 
     # ------------------------------------------------------------------ styles
 
     def base_style(self, label: str) -> dict:
-        """NeverSink's own look of a tier (or our preset for G / Tablet / Map)."""
+        """NeverSink's own look of a tier (or our preset for G / Tablet / Map). Gem: the look of the tier the gems are in."""
+        if label == "Gem":
+            return self.effective_style(self.gem_tier if self.gem_tier in TIER_CHOICES else "B")
         default_lines = (getattr(self, "_default_lines", {}) or {}).get(label)
         return (filter_style.lines_to_style(default_lines) if default_lines
                 else filter_style.normalize_style(filter_style.DEFAULT_STYLES.get(label)))
@@ -493,7 +698,7 @@ class WlModel:
     def set_style_from_editor(self, label: str, style: dict) -> None:
         """Keep only what differs from the base look: a part equal to the base keeps following NeverSink, a
         part with another value is stored, a part the editor has unticked while the base has it is stored as
-        OFF (it must not come back). The S / A / B sound is shared with the NeverSink tab and never stored."""
+        OFF (it must not come back). The sound is stored like the rest (each label has its own)."""
         base, new = self.base_style(label), filter_style.normalize_style(style)
         out: dict = {}
         off: list = []
@@ -503,12 +708,11 @@ class WlModel:
                     off.append(k)
             elif new[k] != base[k]:
                 out[k] = new[k]
-        if label not in TIER_CHOICES:
-            if new["sound"]["kind"] == "none":
-                if base["sound"]["kind"] != "none":
-                    off.append("sound")
-            elif new["sound"] != base["sound"]:
-                out["sound"] = new["sound"]
+        if new["sound"]["kind"] == "none":
+            if base["sound"]["kind"] != "none":
+                off.append("sound")
+        elif new["sound"] != base["sound"]:
+            out["sound"] = new["sound"]
         if off:
             out["off"] = off
         self.set_style(label, out or None)
@@ -535,23 +739,24 @@ class WlModel:
                                  f"wl_block_tier_{game}")):
             return {f"wl_converted_{game}": True}, []
         cats = set(fg.get(f"whitelist_cats_{game}") or [])
-        cat_tier = {c: "C" for c in filter_gen.WHITELIST_CATEGORIES.get(game, []) if c not in cats}
-        cat_tier[w.OTHER_CATEGORY] = "C"                  # the old whitelist never showed these
+        cat_tier = {c: HIDE for c in filter_gen.WHITELIST_CATEGORIES.get(game, []) if c not in cats}
+        cat_tier[w.OTHER_CATEGORY] = HIDE                 # the old whitelist never showed these
         item_tier = {}
         for c, names in (fg.get(f"whitelist_cat_exclude_{game}") or {}).items():
             if c in cats:
                 for n in names or []:
-                    item_tier[str(n)] = "C"
+                    item_tier[str(n)] = HIDE
         if not fg.get("whitelist_unique_all"):
-            cat_tier[UNIQUE] = "C"
+            cat_tier[UNIQUE] = HIDE
         if game == "poe2" and "Fragment" not in cats:
-            cat_tier[TABLET_CATEGORY] = "C"
-        for gid, _name, _d in w.GEAR_GROUPS.get(game, []):
-            cat_tier[w.gear_cat(gid)] = "C"               # the old whitelist had no equipment
-        updates = {f"wl_cat_tier_{game}": cat_tier, f"wl_item_tier_{game}": item_tier, f"wl_converted_{game}": True}
-        notes = ["แปลง whitelist เดิมเข้าแบบใหม่แล้ว: หมวดที่ไม่ได้ติ๊ก = tier C (ซ่อน), ชื่อที่เอาออก = C, "
-                 "อุปกรณ์ทั้งหมวด = C เหมือนเดิม (ค่าเดิมไม่ถูกลบ)",
-                 "แปลงไม่ได้ตรงตัว: ชื่อที่ NeverSink ซ่อน (tier C) จะยังซ่อนต่อ แม้เคยติ๊กทั้งหมวด, "
+            cat_tier[TABLET_CATEGORY] = HIDE
+        for gid, _name, _d in w.listed_gear_groups(game):
+            cat_tier[w.gear_cat(gid)] = HIDE              # the old whitelist had no equipment
+        updates = {f"wl_cat_tier_{game}": cat_tier, f"wl_item_tier_{game}": item_tier, f"wl_converted_{game}": True,
+                   "wl_tier_format": w.TIER_FORMAT}
+        notes = ["แปลง whitelist เดิมเข้าแบบใหม่แล้ว: หมวดที่ไม่ได้ติ๊ก = tier D (ซ่อน), ชื่อที่เอาออก = D, "
+                 "อุปกรณ์ทั้งหมวด = D เหมือนเดิม (ค่าเดิมไม่ถูกลบ)",
+                 "แปลงไม่ได้ตรงตัว: ชื่อที่ NeverSink ซ่อน (tier D) จะยังซ่อนต่อ แม้เคยติ๊กทั้งหมวด, "
                  "map/waystone กลับเป็นโชว์ตามเกม (ตั้งใหม่ในส่วนแยก)"]
         return updates, notes
 

@@ -128,7 +128,7 @@ def name_classes(base_text: str) -> dict:
 
 # (name, class) of items that are in no list: NeverSink's catch-all ("restex") blocks decide them
 PROBES = {"poe1": [("Runegraft of Zzz Not Yet Listed", "Stackable Currency"), ("Vial of Zzz Not Yet Listed", "Stackable Currency"),
-                   ("Zzz Not Yet Listed", "Corpses"), ("Zzz Not Yet Listed Wombgift", "Wombgifts")],
+                   ("Zzz Not Yet Listed", "Corpses")],      # (an unknown Wombgift: NeverSink has no class-wide block, see history)
           "poe2": []}
 
 

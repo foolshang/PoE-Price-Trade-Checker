@@ -100,7 +100,7 @@ def test_gem_uncut_alone_is_not_empty_but_all_empty_is():
 
 def test_gem_uncut_constants_poe2_three_types_poe1_none():
     assert filter_gen.WHITELIST_GEM_UNCUT["poe2"] == [
-        "Uncut Skill Gem", "Uncut Support Gem", "Uncut Spirit Gem"]
+        "Uncut Skill Gem", "Uncut Spirit Gem", "Uncut Support Gem"]
     assert filter_gen.WHITELIST_GEM_UNCUT["poe1"] == []
 
 
@@ -239,45 +239,48 @@ def _block(text, name):
 
 
 def test_no_sounds_means_the_text_is_returned_untouched():
-    for sm in (None, {}, {"S": None, "A": "", "B": None}, {"C": "c.mp3"}):
-        assert filter_gen.apply_ladder_sounds(_SOUND_BASE, sm) == (_SOUND_BASE, 0)
+    for sm in (None, {}, {"1": None, "2": "", "3": None}, {"S": "s.mp3"}, {"7": "x.mp3"}):
+        assert filter_gen.apply_numbered_sounds(_SOUND_BASE, sm) == (_SOUND_BASE, {})
 
 
-def test_s_only_touches_the_value_ladders_that_use_sound_6():
-    out, n = filter_gen.apply_ladder_sounds(_SOUND_BASE, {"S": "poe-checker-S.mp3"})
-    want = 'CustomAlertSoundOptional "poe-checker-S.mp3" 300'
-    for name in ("Divine Orb", "Fertile Catalyst", "Top Scarab", "Top Rune", "Glorious Plate"):
+def test_every_show_block_with_the_id_gets_the_slot_not_only_the_ladders():
+    """Slot 1 <- id 6: ladders, gear, leveling, unique specials - every Show block that plays sound 6."""
+    out, done = filter_gen.apply_numbered_sounds(_SOUND_BASE, {"1": "poe-checker-1.mp3"})
+    want = 'CustomAlertSoundOptional "poe-checker-1.mp3" 300'
+    six = ["Divine Orb", "Fertile Catalyst", "Top Scarab", "Top Rune", "Glorious Plate", "Fancy Base", "Strapped Mitts"]
+    for name in six:
         blk = _block(out, name)
         assert blk.rstrip().endswith(want), name                 # appended after the block's own lines
         assert "PlayAlertSound 6 300" in blk                     # NeverSink's sound stays as the fallback
-    assert n == 5
-    for name in ("Exalted Orb", "Chaos Orb", "Orb of Chance", "Scroll of Wisdom",     # sound 1/2, none, Hide
-                 "Fancy Base", "Lesser Thing", "Strapped Mitts", "Plain Base"):         # gear, leveling, unique special/t3
-        assert "CustomAlertSound" not in _block(out, name), name
-    assert "CustomAlertSound" not in "\n".join(b for b in out.split("Show") if "$type->6l" in b)   # 6-link: sound 1, other type
+    assert done == {"1": len(six)}
+    for name in ("Exalted Orb", "Chaos Orb", "Orb of Chance", "Scroll of Wisdom", "Lesser Thing", "Plain Base"):
+        assert "CustomAlertSound" not in _block(out, name), name        # sound 1 / 2 / 3 / none / Hide
 
 
-def test_a_and_b_follow_sounds_1_and_2_and_tier_c_never_gets_one():
-    out, n = filter_gen.apply_ladder_sounds(_SOUND_BASE, {"S": "s.mp3", "A": "a.wav", "B": "b.ogg", "C": "c.mp3"})
-    assert 'CustomAlertSoundOptional "a.wav" 300' in _block(out, "Exalted Orb")
-    assert 'CustomAlertSoundOptional "b.ogg" 300' in _block(out, "Chaos Orb")
-    assert 'CustomAlertSoundOptional "s.mp3" 300' in _block(out, "Divine Orb")
-    assert "c.mp3" not in out and n == 7
+def test_each_slot_follows_its_neversink_number():
+    sm = {"1": "s1.mp3", "2": "s2.wav", "3": "s3.ogg", "4": "s4.mp3", "5": "s5.mp3", "6": "s6.mp3"}
+    out, done = filter_gen.apply_numbered_sounds(_SOUND_BASE, sm)
+    assert 'CustomAlertSoundOptional "s2.wav" 300' in _block(out, "Exalted Orb")        # id 1 -> slot 2
+    assert 'CustomAlertSoundOptional "s3.ogg" 300' in _block(out, "Chaos Orb")          # id 2 -> slot 3
+    assert 'CustomAlertSoundOptional "s1.mp3" 300' in _block(out, "Divine Orb")         # id 6 -> slot 1
+    assert 'CustomAlertSoundOptional "s3.ogg" 300' in _block(out, "Lesser Thing")       # the leveling block: id 2 too
+    assert 'CustomAlertSoundOptional "s4.mp3" 300' in _block(out, "Plain Base")         # id 3 -> slot 4
     assert "CustomAlertSound" not in _block(out, "Orb of Chance") and "CustomAlertSound" not in _block(out, "Scroll of Wisdom")
+    assert filter_gen.SOUND_SLOT_OF_ID == {"6": "1", "1": "2", "2": "3", "3": "4", "4": "5", "5": "6"}
+    assert sum(done.values()) == sum(filter_gen.sound_block_counts(_SOUND_BASE).get(i, 0) for i in "612345")
 
 
 def test_block_order_and_everything_else_stay_byte_identical():
-    out, _n = filter_gen.apply_ladder_sounds(_SOUND_BASE, {"S": "s.mp3", "A": "a.wav", "B": "b.ogg"})
+    out, _n = filter_gen.apply_numbered_sounds(_SOUND_BASE, {"1": "s.mp3", "2": "a.wav", "3": "b.ogg", "4": "c.mp3"})
     stripped = "\n".join(l for l in out.split("\n") if "CustomAlertSoundOptional" not in l)
     assert stripped == _SOUND_BASE                                # only added lines, nothing moved or rewritten
-    assert [b.start for b in filter_gen._parse_blocks(_SOUND_BASE.split("\n"))] != []
     h = lambda t: [l for l in t.split("\n") if l.startswith(("Show", "Hide"))]
     assert h(out) == h(_SOUND_BASE)
 
 
 def test_existing_custom_sound_line_is_replaced_not_duplicated():
     base = _SOUND_BASE.replace("\tBaseType == \"Exalted Orb\"\n", "\tBaseType == \"Exalted Orb\"\n\tCustomAlertSound \"old.mp3\" 200\n")
-    out, _n = filter_gen.apply_ladder_sounds(base, {"A": "a.wav"})
+    out, _n = filter_gen.apply_numbered_sounds(base, {"2": "a.wav"})
     blk = _block(out, "Exalted Orb")
     assert "old.mp3" not in blk and blk.count("CustomAlertSound") == 1
 
@@ -287,42 +290,33 @@ def _real_base(game):
     return (Path(__file__).parent / "sample_data" / name).read_text(encoding="utf-8")
 
 
-def test_real_base_files_sound_s_only_lands_on_value_ladders_with_sound_6():
+def test_real_base_files_every_slot_lands_on_exactly_the_blocks_of_its_number():
     for game in ("poe1", "poe2"):
         base = _real_base(game)
-        out, n = filter_gen.apply_ladder_sounds(base, {"S": "poe-checker-S.mp3"})
+        counts = filter_gen.sound_block_counts(base)
+        assert set(counts) <= set("123456"), counts                # NeverSink uses no other number: nothing to leave alone
+        sm = {slot: f"snd{slot}.mp3" for slot in filter_gen.SOUND_SLOTS}
+        out, done = filter_gen.apply_numbered_sounds(base, sm)
+        assert done == {filter_gen.SOUND_SLOT_OF_ID[i]: n for i, n in counts.items()}
         lines = out.split("\n")
-        found = 0
         for b in filter_gen._parse_blocks(lines):
             body = lines[b.start + 1:b.end]
-            if not any(l.strip().startswith("CustomAlertSoundOptional") for l in body):
-                continue
-            found += 1
-            ty, tier = filter_gen._header_tags(lines, b)
-            assert filter_gen._sound_type_ok(ty or "", tier), ty
-            assert any(l.strip().startswith("PlayAlertSound 6 ") for l in body)
-        assert found == n and n >= 5
+            have = [l for l in body if l.strip().startswith("CustomAlertSoundOptional")]
+            i = filter_gen.sound_id_of(body)
+            if b.block_type == "Show" and i in filter_gen.SOUND_SLOT_OF_ID:
+                assert len(have) == 1 and f"snd{filter_gen.SOUND_SLOT_OF_ID[i]}.mp3" in have[0]
+            else:
+                assert not have
         assert "\n".join(l for l in lines if "CustomAlertSoundOptional" not in l) == base   # nothing but added lines
+        one, only = filter_gen.apply_numbered_sounds(base, {"4": "four.mp3"})              # an empty slot writes nothing
+        assert only == {"4": counts.get("3", 0)} and one.count("CustomAlertSoundOptional") == counts.get("3", 0)
 
 
-# ---- _override_sound directly (the helper every custom sound goes through) -------------------
-
-def test_override_sound_keeps_play_alert_sound_and_appends_optional_after_it():
+def test_the_custom_sound_helper_keeps_play_alert_sound_replaces_old_custom_lines_and_uses_the_indent():
     style = ["    SetBorderColor 0 0 0 255", "    PlayAlertSound 6 300", "    PlayEffect Red"]
-    out = filter_gen._override_sound(style, "S", {"S": "poe-checker-S.mp3"})
-    assert out[:3] == style and out[3] == '    CustomAlertSoundOptional "poe-checker-S.mp3" 300' and len(out) == 4
-
-
-def test_override_sound_adds_nothing_extra_when_block_has_no_sound_line():
-    out = filter_gen._override_sound(["    SetBorderColor 0 0 0 255"], "A", {"A": "a.mp3"})
-    assert out == ["    SetBorderColor 0 0 0 255", '    CustomAlertSoundOptional "a.mp3" 300']
-
-
-def test_override_sound_replaces_existing_custom_lines_ignores_tier_c_and_uses_the_given_indent():
-    style = ['    CustomAlertSound "old.mp3" 100', '    CustomAlertSoundOptional "older.mp3"', "    PlayAlertSound 1 100"]
-    out = filter_gen._override_sound(style, "B", {"B": "new.mp3"})
-    assert out == ["    PlayAlertSound 1 100", '    CustomAlertSoundOptional "new.mp3" 300']
-    assert filter_gen._override_sound(style, "C", {"C": "c.mp3"}) == style
-    assert filter_gen._override_sound(style, "S", {}) == style
-    assert filter_gen._override_sound(["\tPlayAlertSound 6 300"], "S", {"S": "s.mp3"}, indent="\t")[-1] == \
+    out = filter_gen._custom_sound_lines(style, "poe-checker-1.mp3")
+    assert out[:3] == style and out[3] == '    CustomAlertSoundOptional "poe-checker-1.mp3" 300' and len(out) == 4
+    old = ['    CustomAlertSound "old.mp3" 100', '    CustomAlertSoundOptional "older.mp3"', "    PlayAlertSound 1 100"]
+    assert filter_gen._custom_sound_lines(old, "new.mp3") == ["    PlayAlertSound 1 100", '    CustomAlertSoundOptional "new.mp3" 300']
+    assert filter_gen._custom_sound_lines(["\tPlayAlertSound 6 300"], "s.mp3", indent="\t")[-1] == \
         '\tCustomAlertSoundOptional "s.mp3" 300'

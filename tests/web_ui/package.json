@@ -1,0 +1,1 @@
+{ "name": "web-ui-tests", "private": true, "type": "module", "dependencies": { "playwright": "1.49.1", "pyodide": "0.27.7" } }

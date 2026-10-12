@@ -55,7 +55,7 @@ def test_no_price_threshold_or_auto_regen_rows_any_more(root, cfg):
                    or "Divine" in t for t in texts)
     assert [w._nb.tab(i, "text") for i in (0, 1)] == ["NeverSink", "Whitelist"]       # the two tabs
     assert texts.count("ชื่อ filter:") == 2
-    assert any("tier สูงสุด/รอง/กลาง ของ NeverSink" in t for t in texts)
+    assert {f"เสียง {n}" for n in "123456"} <= set(texts) and not any("Tier S sound" in t for t in texts)     # six numbered sounds
     assert "Close" in texts and isinstance(w._win, tk.Toplevel)
     fg = w._save()
     assert not any(k.startswith("tier_") for k in w._vars)

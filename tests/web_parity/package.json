@@ -1,0 +1,1 @@
+{ "name": "web-parity", "private": true, "type": "module", "dependencies": { "pyodide": "0.27.7" } }
