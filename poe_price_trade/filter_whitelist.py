@@ -159,6 +159,14 @@ EQUIP_GROUPS = {
 }
 
 
+# Names shown in the tab for the classes whose game name reads badly; the file always writes the game's own class name.
+EQUIP_DISPLAY = {"Foci": "Focus"}
+
+
+def equip_label(cls: str) -> str:
+    return EQUIP_DISPLAY.get(cls, cls)
+
+
 def equip_groups(game: str) -> list:
     """[(group id, Thai name, [class])] of the equipment-by-class category."""
     return [(g, n, list(c)) for g, n, c in EQUIP_GROUPS.get(game, [])]

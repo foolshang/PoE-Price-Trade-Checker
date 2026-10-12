@@ -5,6 +5,21 @@
 
 ---
 
+## 2026-10-13 (night, 9) — equipment by class: one sub tab per group, "Focus" (v0.13.2, NOT committed / deployed / tagged)
+
+- **Layout (desktop + web):** the category is split into sub tabs [อาวุธ] [เกราะ] [เครื่องประดับ] [อื่นๆ] (a group with no class in the
+  game has no tab - both games have all four today). Each tab: the "ตั้งทั้งกลุ่ม" boxes (Normal / Magic / Rare) on top, then the class rows.
+  What D means is said once, above the tabs; the per-row D warning is gone. Desktop: `ttk.Notebook` inside the category, a scrolling
+  canvas per tab. Web: tab buttons (`#equip-tab-<group>`), every pane stays in the DOM and the others are `hidden`.
+- **Names:** `EQUIP_DISPLAY = {"Foci": "Focus"}` / `equip_label()`; the model's row `label` is the display name, the id (and the file:
+  `Class == "Foci"`) is unchanged. Settings and generated files are identical to v0.13.1 (parity + golden tests untouched).
+- **Also found:** `ui_theme.calm` adds its pick binding with `add="+"`, but the panel / style editor re-bound `<<ComboboxSelected>>`
+  without `add` and replaced it (v0.13.1 only worked through the FocusIn binding and the direct clear in `_refresh_equip`); every such
+  bind now appends.
+- **Tests:** `test_wl_equip` (tabs, Focus label, no per-row warning), `ui.mjs` (tabs, one visible pane, D said once, Focus aria label).
+
+---
+
 ## 2026-10-13 (night, 8) — Thai prompt fell apart in a picked Combobox (v0.13.1, NOT committed / deployed / tagged)
 
 - **Symptom:** after picking a tier in a group header box of the equipment category ("ตั้งทั้งกลุ่ม…"), the box showed "ต◌ั◌้งทั้งกลุ่ม…".

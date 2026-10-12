@@ -7,7 +7,6 @@
 const P = window.PFG;
 const { h, esc } = P;
 const TIER_LABELS = { S: "S", A: "A", B: "B", C: "C" };
-const EQUIP_D_WARNING = "D = ซ่อนทุกชิ้นของ class+rarity นี้ รวมของดีที่ NeverSink โชว์";
 const EQUIP_GROUP_AUTO = "ทั้งกลุ่ม…";
 const EQUIP_GROUP_DEFAULT = "ค่าเริ่มต้น";
 const RARITY_WARNING = "ตั้ง D = ซ่อนทุกชิ้นของ rarity นั้น รวมตัวที่ mod ดีในหมวดอื่นด้วย";
@@ -15,7 +14,7 @@ const ABBR = { Normal: "N", Magic: "M", Rare: "R", Unique: "U" };
 const J = (s) => JSON.parse(s);
 
 P.tabWl = {
-  active: "", cat: "", query: "", selected: new Set(), lastIdx: -1, rows: [], parts: null, subtab: "items",
+  active: "", cat: "", query: "", selected: new Set(), lastIdx: -1, rows: [], parts: null, subtab: "items", equipGroup: "",
 
   mount(pane, ctx) {
     this.ctx = ctx;
@@ -212,9 +211,11 @@ P.tabWl = {
     this.flaskBox.hidden = true;
     this.equipBox.hidden = false;
     this.info.textContent = res.info.changed ? `ตั้งค่าเองแล้ว ${res.info.changed} class` : "ตั้งค่าเองแล้ว ไม่มี — ใช้ NeverSink ทั้งหมด";
-    const groups = res.equip.map((g) => {
-      // the group header: one select per rarity (same width), each fills every row of the group
-      const head = h("div", { class: "equip-head" }, h("span", { class: "t" }, g.label),
+    const groups = res.equip.filter((g) => g.classes.length);          // a group with no class in this game has no tab
+    if (!groups.some((g) => g.id === this.equipGroup)) this.equipGroup = groups.length ? groups[0].id : "";
+    const panes = groups.map((g) => {
+      // "set the whole group": one select per rarity (same width), each fills every row of the group
+      const head = h("div", { class: "equip-head" }, h("span", { class: "t" }, "ตั้งทั้งกลุ่ม"),
         h("div", { class: "tier-grid" }, ...["Normal", "Magic", "Rare"].map((r) => {
           const s = h("select", { "aria-label": `${g.label} ตั้งทั้งกลุ่ม ${r}`, onchange: () => {
             if (s.value === EQUIP_GROUP_AUTO) return;
@@ -232,18 +233,26 @@ P.tabWl = {
             ["S", "A", "B", "C", "D"].map((v) => h("option", { value: v, selected: v === (c.tiers[r] || "B") }, v)));
           return h("label", {}, r, s);
         });
-        const hasC = c.custom && Object.values(c.tiers).includes("D");
         return h("div", { class: "equip-row", "data-class": c.id },
           h("span", { class: "cls" }, c.label),
           h("div", { class: "equip-modes" }, mode("default", "ค่าเริ่มต้น"), mode("custom", "ตั้งค่าเอง")),
-          h("div", { class: "tier-grid" }, ...sels),
-          hasC ? h("span", { class: "warnline equip-warning" }, EQUIP_D_WARNING) : null);
+          h("div", { class: "tier-grid" }, ...sels));
       });
-      return h("div", { class: "equip-group", "data-group": g.id }, head, ...rows);
+      return h("div", { class: "equip-group", id: `equip-pane-${g.id}`, "data-group": g.id, hidden: g.id !== this.equipGroup }, head, ...rows);
     });
+    const tabs = h("div", { class: "subtabs equip-tabs", role: "tablist" }, ...groups.map((g) =>
+      h("button", { type: "button", role: "tab", id: `equip-tab-${g.id}`, "aria-selected": String(g.id === this.equipGroup),
+        onclick: () => { this.equipGroup = g.id; this.drawEquipSelection(); } }, g.label)));
+    this.equipTabs = tabs;
     this.equipBox.replaceChildren(h("div", { class: "hint" },
-      "ค่าเริ่มต้น = block ของ NeverSink · ตั้งค่าเอง = ทุก rarity เป็น S/A/B/C/D (เริ่มที่ B) ชนะทุกชิ้นของ class+rarity นั้น รวมของดีที่ NeverSink จัดไว้ · D = ซ่อนทั้งหมด · Unique ตั้งที่หมวด Unique · Flask/Charm/Tincture มีหมวดของตัวเอง"), ...groups);
+      "ค่าเริ่มต้น = block ของ NeverSink · ตั้งค่าเอง = ทุก rarity เป็น S/A/B/C/D (เริ่มที่ B) ชนะทุกชิ้นของ class+rarity นั้น รวมของดีที่ NeverSink จัดไว้ · D = ซ่อนทั้งหมด · Unique ตั้งที่หมวด Unique · Flask/Charm/Tincture มีหมวดของตัวเอง"),
+      tabs, ...panes);
     this.equipBox.scrollTop = keep;
+  },
+  /** show the pane of the picked equipment group (no redraw: nothing changed) */
+  drawEquipSelection() {
+    for (const b of this.equipTabs.querySelectorAll("button")) b.setAttribute("aria-selected", String(b.id === `equip-tab-${this.equipGroup}`));
+    for (const p of this.equipBox.querySelectorAll(".equip-group")) p.hidden = p.dataset.group !== this.equipGroup;
   },
   drawFlask(res) {
     this.listBox.hidden = true;

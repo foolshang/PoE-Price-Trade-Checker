@@ -53,7 +53,7 @@ class StyleEditor(tk.Frame):
     def _combo(self, parent, values, var, width=10):
         cb = ui_theme.calm(ttk.Combobox(parent, textvariable=var, values=values, width=width, state="readonly",
                                         font=_FONT))
-        cb.bind("<<ComboboxSelected>>", lambda _e: self._changed())
+        cb.bind("<<ComboboxSelected>>", lambda _e: self._changed(), add="+")
         return cb
 
     def _build(self) -> None:

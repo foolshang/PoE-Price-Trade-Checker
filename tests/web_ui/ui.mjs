@@ -167,17 +167,22 @@ await page.locator('input[aria-label="Flask ตั้งค่าเอง"]').c
 await page.selectOption("#pane-whitelist select[aria-label=หมวด]", { label: "อุปกรณ์ตาม class" });
 await page.waitForSelector("#equip-box:not([hidden])");
 check("equipment: no block list, flask box hidden", await page.locator("#list-box").isHidden() && await page.locator("#flask-box").isHidden());
-check("equipment: four groups in order", JSON.stringify(await page.locator("#equip-box .equip-head .t").allInnerTexts()) === JSON.stringify(["อาวุธ", "เกราะ", "เครื่องประดับ", "อื่นๆ"]));
+check("equipment: one sub tab per group, in order", JSON.stringify(await page.locator("#equip-box .equip-tabs button").allInnerTexts()) === JSON.stringify(["อาวุธ", "เกราะ", "เครื่องประดับ", "อื่นๆ"]));
+check("equipment: only the first group's rows are shown, each has the whole-group boxes on top",
+  (await page.locator("#equip-box .equip-group:not([hidden])").count()) === 1 && (await page.locator("#equip-pane-weapon .equip-head").count()) === 1);
+check("equipment: what D means is said once, above the tabs", (await page.locator("#equip-box").innerText()).split("D = ซ่อนทั้งหมด").length === 2 && (await page.locator("#equip-box .equip-warning").count()) === 0);
+check("equipment: Foci is shown as Focus", (await page.locator('#equip-box [data-class=Foci] .cls').innerText()) === "Focus" && (await page.locator('input[aria-label="Focus ตั้งค่าเอง"]').count()) === 1);
 const eqClasses = await page.locator("#equip-box .equip-row .cls").allInnerTexts();
 check("equipment: Quivers are in the weapons group, 22 classes in poe2", eqClasses.length === 22 && (await page.locator('#equip-box [data-group=weapon] [data-class=Quivers]').count()) === 1, String(eqClasses.length));
 check("equipment: every row starts as the default", (await page.locator('#equip-box input[type=radio][value=default]:checked').count()) === 22 &&
   (await page.locator('#equip-box .equip-row select:not([disabled])').count()) === 0);
 check("equipment: the row boxes offer S / A / B / C / D only", await page.locator('#equip-box .equip-row select').first().evaluate((e) => JSON.stringify([...e.options].map((o) => o.value)) === JSON.stringify(["S", "A", "B", "C", "D"])));
+await page.click("#equip-tab-armour");
+check("equipment: the armour tab shows only the armour group", (await page.locator("#equip-box .equip-group:not([hidden])").count()) === 1 && await page.locator("#equip-pane-armour").isVisible() && await page.locator("#equip-pane-weapon").isHidden());
 await page.locator('input[aria-label="Boots ตั้งค่าเอง"]').check();
 check("equipment: set myself starts every rarity at B", (await page.locator('#equip-box [data-class=Boots] select').evaluateAll((els) => els.length === 3 && els.every((e) => e.value === "B" && !e.disabled))));
 await page.selectOption('select[aria-label="Boots rarity Rare"]', "D");
-check("equipment: Boots Rare D reaches the model + shows the warning", JSON.stringify(((await model("wl_config")).wl_equip_rows_poe2 || {}).Boots) === JSON.stringify({ custom: true, tiers: { Normal: "B", Magic: "B", Rare: "D" } }) &&
-  (await page.locator('#equip-box [data-class=Boots] .equip-warning').innerText()).includes("ซ่อนทุกชิ้นของ class+rarity นี้ รวมของดีที่ NeverSink โชว์"));
+check("equipment: Boots Rare D reaches the model", JSON.stringify(((await model("wl_config")).wl_equip_rows_poe2 || {}).Boots) === JSON.stringify({ custom: true, tiers: { Normal: "B", Magic: "B", Rare: "D" } }));
 await page.selectOption('select[aria-label="เกราะ ตั้งทั้งกลุ่ม Magic"]', "A");
 const eqCfg = (await model("wl_config")).wl_equip_rows_poe2 || {};
 const ARMOUR = ["Body Armours", "Boots", "Gloves", "Helmets", "Shields", "Bucklers", "Foci"];
@@ -202,7 +207,7 @@ check("the list is back for Currency", await page.locator("#list-box").isVisible
 await shot("06_currency_after_flask");
 
 // the other parts: one sub tab each, each with its own style editor (no pop-up)
-check("PoE2 sub tabs: items, Gold, Waystone, Tablet, Gem, typed names", JSON.stringify(await page.locator(".subtabs button").allInnerTexts()) ===
+check("PoE2 sub tabs: items, Gold, Waystone, Tablet, Gem, typed names", JSON.stringify(await page.locator("#pane-whitelist > .subtabs button").allInnerTexts()) ===
   JSON.stringify(["ไอเท็ม / หมวด", "Gold", "Waystone", "Tablet", "Gem", "พิมพ์เอง"]));
 await page.click("#subtab-gem");
 {
@@ -337,7 +342,7 @@ await page.selectOption("#pane-whitelist select[aria-label=หมวด]", { lab
 check("Runegraft rows start at NeverSink's tiers", (await page.locator('table.items tr[data-key="Runegraft of Gemcraft"]').getAttribute("data-tier")) === "S");
 await page.selectOption("#pane-whitelist select[aria-label=หมวด]", { label: "Unique" });
 check("Unique list is big and renders", (await page.locator("table.items tbody tr").count()) > 1000);
-check("PoE1 has no Tablet sub tab", JSON.stringify(await page.locator(".subtabs button").allInnerTexts()) ===
+check("PoE1 has no Tablet sub tab", JSON.stringify(await page.locator("#pane-whitelist > .subtabs button").allInnerTexts()) ===
   JSON.stringify(["ไอเท็ม / หมวด", "Gold", "Map", "Gem", "พิมพ์เอง"]));
 await page.click("#subtab-gem");
 check("PoE1 gem names input + autocomplete", await page.locator("#gem-input").isVisible());
@@ -351,6 +356,7 @@ await page.click("#tab-wl");
 await shot("16_mobile_whitelist");
 await page.selectOption("#pane-whitelist select[aria-label=หมวด]", { label: "อุปกรณ์ตาม class" });
 await page.waitForSelector("#equip-box:not([hidden])");
+await page.click("#equip-tab-armour");
 await page.locator('input[aria-label="Boots ตั้งค่าเอง"]').check();
 await page.selectOption('select[aria-label="Boots rarity Rare"]', "D");
 await page.locator('#equip-box [data-class=Boots]').scrollIntoViewIfNeeded();

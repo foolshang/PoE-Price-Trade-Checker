@@ -16,7 +16,8 @@ _INPUT_BG, _BUTTON_BG = ui_theme.INPUT_BG, ui_theme.BUTTON_BG
 TIER_BOX_WIDTH = 5                       # the S / A / B / C boxes of a row: one width for Normal / Magic / Rare
 GROUP_BOX_WIDTH = 13                     # ... and the three at a group header (the prompt + "ค่าเริ่มต้น" must fit)
 RARITY_WARNING = "ตั้ง D = ซ่อนทุกชิ้นของ rarity นั้น รวมตัวที่ mod ดีในหมวดอื่นด้วย"
-EQUIP_C_WARNING = "D = ซ่อนทุกชิ้นของ class+rarity นี้ รวมของดีที่ NeverSink โชว์"
+EQUIP_HINT = ("ค่าเริ่มต้น = block ของ NeverSink · ตั้งค่าเอง = ทุก rarity เป็น S/A/B/C/D (เริ่มที่ B) ชนะทุกชิ้นของ class+rarity นั้น "
+              "รวมของดีที่ NeverSink จัดไว้ · D = ซ่อนทั้งหมด · Unique ตั้งที่หมวด Unique · Flask/Charm/Tincture มีหมวดของตัวเอง")
 EQUIP_GROUP_AUTO = "ตั้งทั้งกลุ่ม…"
 EQUIP_GROUP_DEFAULT = "ค่าเริ่มต้น"      # every row of the group back to NeverSink
 _FONT = ("Segoe UI", 9)
@@ -121,7 +122,7 @@ class WhitelistPanel(tk.Frame):
         self.cat_var = tk.StringVar()
         self._cat_combo = self._combo(r, self.cat_var, [], width=30)
         self._cat_combo.pack(side=tk.LEFT)
-        self._cat_combo.bind("<<ComboboxSelected>>", lambda _e: self.refresh_list())
+        self._cat_combo.bind("<<ComboboxSelected>>", lambda _e: self.refresh_list(), add="+")
         self.query = tk.StringVar()
         self._label(r, " ค้นหา:", font=_SMALL).pack(side=tk.LEFT)
         self._search = self._entry(r, self.query, width=16)
@@ -154,7 +155,7 @@ class WhitelistPanel(tk.Frame):
                 self.v_flask_rar[rid][rar] = tk.StringVar(value="B")
                 c = self._combo(line, self.v_flask_rar[rid][rar], list(ALL_CHOICES), width=TIER_BOX_WIDTH)
                 c.pack(side=tk.LEFT, padx=(0, 8))
-                c.bind("<<ComboboxSelected>>", lambda _e, r=rid, q=rar: self._flask_rarity(r, q))
+                c.bind("<<ComboboxSelected>>", lambda _e, r=rid, q=rar: self._flask_rarity(r, q), add="+")
             self._label(cf, RARITY_WARNING, fg="#d9a441", font=_SMALL, anchor="w").pack(fill=tk.X, padx=14, pady=(0, 3))
         self._label(self._flask_box, "Unique ตั้งที่หมวด Unique · แถวที่เป็น \"ค่าเริ่มต้น\" ใช้ block ของ NeverSink ตามเดิม",
                     fg="#777", font=_SMALL, anchor="w").pack(fill=tk.X)
@@ -268,7 +269,7 @@ class WhitelistPanel(tk.Frame):
         self.v_map_rar = tk.StringVar(value=m.map_rarity)
         c = self._combo(mp2, self.v_map_rar, list(RARITIES), 8)
         c.pack(side=tk.LEFT)
-        c.bind("<<ComboboxSelected>>", lambda _e: self._parts_changed())
+        c.bind("<<ComboboxSelected>>", lambda _e: self._parts_changed(), add="+")
         self._label(F["map"], "   (ไม่ติ๊ก = โชว์ตามเกม · poe1: map พิเศษผ่านเสมอ)", fg="#777", font=_SMALL).pack(anchor="w")
         self._style_editor(F["map"], "Map", name)
         # tablet (poe2)
@@ -297,7 +298,7 @@ class WhitelistPanel(tk.Frame):
         self._label(f, "tier").grid(row=0, column=1, sticky="e")
         c = self._combo(f, self.v_gem_tier, list(ALL_CHOICES), 3)
         c.grid(row=0, column=2, sticky="w", padx=3)
-        c.bind("<<ComboboxSelected>>", lambda _e: self._parts_changed())
+        c.bind("<<ComboboxSelected>>", lambda _e: self._parts_changed(), add="+")
         self.v_gem_on = {}
         self.v_gem_lv = {}
         from . import filter_gen
@@ -513,33 +514,43 @@ class WhitelistPanel(tk.Frame):
         self.refresh_list()
 
     def _build_equip(self, f) -> None:
-        """"อุปกรณ์ตาม class": groups (weapon / armour / jewellery / other) with one row per class - default = NeverSink's
-        blocks, or "set myself" = Normal / Magic / Rare each NeverSink or S / A / B / C. Scrolls (many rows)."""
+        """"อุปกรณ์ตาม class": one sub tab per group (weapon / armour / jewellery / other; a group with no class in this game
+        has no tab). Each tab has the "set the whole group" boxes (Normal / Magic / Rare) on top and one row per class below
+        it - default = NeverSink's blocks, or "set myself" = Normal / Magic / Rare each S / A / B / C / D. What D means is
+        said once, above the tabs. Each tab scrolls (many rows)."""
         self._equip_box = tk.Frame(f, bg=_BG)
-        self._label(self._equip_box, "ช่องที่ตั้ง S/A/B/C/D ชนะทุกชิ้นของ class+rarity นั้น รวมของดีที่ NeverSink จัดไว้ · D = ซ่อนทั้งหมด · "
-                    "Unique ตั้งที่หมวด Unique · Flask/Charm/Tincture มีหมวดของตัวเอง", fg="#777", font=_SMALL,
-                    anchor="w", wraplength=700, justify=tk.LEFT).pack(fill=tk.X)
-        wrap = tk.Frame(self._equip_box, bg=_BG)
-        wrap.pack(fill=tk.BOTH, expand=True)
-        canvas = tk.Canvas(wrap, bg=_BG, highlightthickness=0, height=250)
-        sb = ttk.Scrollbar(wrap, orient=tk.VERTICAL, command=canvas.yview)
-        inner = tk.Frame(canvas, bg=_BG)
-        win = canvas.create_window((0, 0), window=inner, anchor="nw")
-        inner.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(win, width=e.width))
-        canvas.configure(yscrollcommand=sb.set)
-        sb.pack(side=tk.RIGHT, fill=tk.Y)
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        wheel = lambda e: canvas.yview_scroll(-1 if e.delta > 0 else 1, "units")
-        canvas.bind("<Enter>", lambda _e: canvas.bind_all("<MouseWheel>", wheel))
-        canvas.bind("<Leave>", lambda _e: canvas.unbind_all("<MouseWheel>"))
-        self._equip_canvas = canvas
-        self.v_eq_mode, self.v_eq_rar, self._eq_combos, self._eq_warn, self.v_eq_grp = {}, {}, {}, {}, {}
+        self._label(self._equip_box, EQUIP_HINT, fg="#777", font=_SMALL, anchor="w", wraplength=760,
+                    justify=tk.LEFT).pack(fill=tk.X)
+        self._equip_nb = ttk.Notebook(self._equip_box)
+        self._equip_nb.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
+        self.v_eq_mode, self.v_eq_rar, self._eq_combos, self.v_eq_grp = {}, {}, {}, {}
         self._eq_grp_combos: dict = {}
+        self._equip_canvases: dict = {}
+        self._equip_canvas = None
         for g in self.model.equip_groups():
+            if not g["classes"]:
+                continue
+            tab = tk.Frame(self._equip_nb, bg=_BG, padx=2, pady=4)
+            self._equip_nb.add(tab, text=g["label"])
+            wrap = tk.Frame(tab, bg=_BG)
+            wrap.pack(fill=tk.BOTH, expand=True)
+            canvas = tk.Canvas(wrap, bg=_BG, highlightthickness=0, height=250)
+            sb = ttk.Scrollbar(wrap, orient=tk.VERTICAL, command=canvas.yview)
+            inner = tk.Frame(canvas, bg=_BG)
+            win = canvas.create_window((0, 0), window=inner, anchor="nw")
+            inner.bind("<Configure>", lambda _e, c=canvas: c.configure(scrollregion=c.bbox("all")))
+            canvas.bind("<Configure>", lambda e, c=canvas, w_=win: c.itemconfigure(w_, width=e.width))
+            canvas.configure(yscrollcommand=sb.set)
+            sb.pack(side=tk.RIGHT, fill=tk.Y)
+            canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            wheel = lambda e, c=canvas: c.yview_scroll(-1 if e.delta > 0 else 1, "units")
+            canvas.bind("<Enter>", lambda _e, c=canvas, fn=wheel: c.bind_all("<MouseWheel>", fn))
+            canvas.bind("<Leave>", lambda _e, c=canvas: c.unbind_all("<MouseWheel>"))
+            self._equip_canvases[g["id"]] = canvas
+            self._equip_canvas = self._equip_canvas or canvas
             head = tk.Frame(inner, bg=_BG)
-            head.pack(fill=tk.X, pady=(8, 2))
-            self._label(head, g["label"], fg="#c9b37a", font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT, padx=(2, 10))
+            head.pack(fill=tk.X, pady=(4, 4))
+            self._label(head, "ตั้งทั้งกลุ่ม", fg="#c9b37a", font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT, padx=(2, 10))
             self.v_eq_grp[g["id"]] = {}
             for rar in w.EQUIP_CHOICES:
                 self._label(head, rar, font=_SMALL).pack(side=tk.LEFT, padx=(0, 2))
@@ -548,13 +559,11 @@ class WhitelistPanel(tk.Frame):
                 c = self._combo(head, var, [EQUIP_GROUP_AUTO, EQUIP_GROUP_DEFAULT] + list(ALL_CHOICES), width=GROUP_BOX_WIDTH)
                 c.pack(side=tk.LEFT, padx=(0, 8))
                 self._eq_grp_combos.setdefault(g["id"], {})[rar] = c
-                c.bind("<<ComboboxSelected>>", lambda _e, gid=g["id"], r=rar: self._equip_group(gid, r))
+                c.bind("<<ComboboxSelected>>", lambda _e, gid=g["id"], r=rar: self._equip_group(gid, r), add="+")
             for fr in g["classes"]:
                 cid = fr["id"]
-                blk = tk.Frame(inner, bg=_BG)
-                blk.pack(fill=tk.X, padx=6)
-                line = tk.Frame(blk, bg=_BG)
-                line.pack(fill=tk.X)
+                line = tk.Frame(inner, bg=_BG)
+                line.pack(fill=tk.X, padx=6)
                 self._label(line, fr["label"], width=25, anchor="w").pack(side=tk.LEFT)
                 self.v_eq_mode[cid] = tk.StringVar(value="default")
                 for val, text in (("default", "ค่าเริ่มต้น"), ("custom", "ตั้งค่าเอง")):
@@ -568,27 +577,21 @@ class WhitelistPanel(tk.Frame):
                     self.v_eq_rar[cid][rar] = var
                     c = self._combo(line, var, list(ALL_CHOICES), width=TIER_BOX_WIDTH)
                     c.pack(side=tk.LEFT)
-                    c.bind("<<ComboboxSelected>>", lambda _e, cc=cid, r=rar: self._equip_rarity(cc, r))
+                    c.bind("<<ComboboxSelected>>", lambda _e, cc=cid, r=rar: self._equip_rarity(cc, r), add="+")
                     self._eq_combos[cid].append(c)
-                self._eq_warn[cid] = self._label(blk, "", fg="#d9a441", font=_SMALL, anchor="w")     # its own line: never wider
 
     def _refresh_equip(self) -> None:
         for g in self.model.equip_groups():
             for fr in g["classes"]:
                 cid = fr["id"]
+                if cid not in self.v_eq_mode:
+                    continue
                 self.v_eq_mode[cid].set("custom" if fr["custom"] else "default")
                 for rar, var in self.v_eq_rar[cid].items():
                     var.set(fr["tiers"].get(rar) or "B")
                 for c in self._eq_combos[cid]:
                     c.configure(state="readonly" if fr["custom"] else "disabled")
-                has_c = fr["custom"] and w.HIDE_TIER in fr["tiers"].values()
-                if has_c:
-                    self._eq_warn[cid].configure(text=EQUIP_C_WARNING)
-                    if not self._eq_warn[cid].winfo_manager():
-                        self._eq_warn[cid].pack(fill=tk.X, padx=(20, 0))
-                else:
-                    self._eq_warn[cid].pack_forget()
-            for var in self.v_eq_grp[g["id"]].values():
+            for var in self.v_eq_grp.get(g["id"], {}).values():
                 var.set(EQUIP_GROUP_AUTO)
             for c in self._eq_grp_combos.get(g["id"], {}).values():       # the prompt is shown, never highlighted
                 c.selection_clear()

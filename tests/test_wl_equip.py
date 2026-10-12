@@ -306,7 +306,10 @@ def test_the_panel_lists_groups_rows_radios_group_setters_and_the_warning(root, 
     assert all(p.v_eq_rar["Boots"][r].get() == "B" for r in ("Normal", "Magic", "Rare"))   # starts at B
     p.v_eq_rar["Boots"]["Rare"].set("D"); p._equip_rarity("Boots", "Rare")
     assert win._model.equip_rows["Boots"]["tiers"]["Rare"] == "D"
-    assert p._eq_warn["Boots"].cget("text") and p._eq_warn["Boots"].winfo_manager() and not p._eq_warn["Gloves"].winfo_manager()
+    assert not hasattr(p, "_eq_warn")                      # what D means is said once, above the tabs (no per-row warning)
+    assert [p._equip_nb.tab(i, "text") for i in range(len(p._equip_nb.tabs()))] == ["อาวุธ", "เกราะ", "เครื่องประดับ", "อื่นๆ"]
+    focus = next(r for g in win._model.equip_groups() for r in g["classes"] if r["id"] == "Foci")
+    assert focus["label"] == "Focus"                      # shown as Focus, the file keeps the game's class name
     assert list(p._eq_grp_combos["armour"]["Magic"].cget("values"))[:2] == ["ตั้งทั้งกลุ่ม…", "ค่าเริ่มต้น"]
     p.v_eq_grp["armour"]["Magic"].set("A"); p._equip_group("armour", "Magic")
     assert all(win._model.equip_rows[c]["custom"] and win._model.equip_rows[c]["tiers"]["Magic"] == "A"

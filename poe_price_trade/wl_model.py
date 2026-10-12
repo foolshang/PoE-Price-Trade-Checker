@@ -577,7 +577,7 @@ class WlModel:
             for c in classes:
                 row = self.equip_rows.get(c) or {}
                 tiers = row.get("tiers") or {}
-                rows.append({"id": c, "label": c, "custom": bool(row.get("custom")),
+                rows.append({"id": c, "label": w.equip_label(c), "custom": bool(row.get("custom")),
                              "tiers": {r: (tiers.get(r) if tiers.get(r) in ALL_CHOICES else DEFAULT_CUSTOM_TIER)
                                        for r in w.EQUIP_CHOICES}})
             out.append({"id": gid, "label": gname, "classes": rows})
