@@ -5,6 +5,27 @@
 
 ---
 
+## 2026-10-13 (night, 15) — survey (read only): fork EE2 (PoE2) + APT (PoE1) instead of F5; nothing created / changed
+
+- Upstreams cloned to the scratchpad only (nothing forked / pushed): Kvan7/Exiled-Exchange-2 (v0.16.3, master cca3066) and
+  SnosMe/awakened-poe-trade (v3.29.108, master 3188208). Both MIT, "Copyright (c) 2020 Alexander Drozdov" (LICENSE of both).
+- **One game each:** EE2 = PoE2 only (`/api/trade2/*`, `windowTitle` default "Path of Exile 2", README), APT = PoE1 only
+  (`/api/trade/*`, windowTitle "Path of Exile"). Two forks, two exes.
+- **Releases:** EE2 11 releases since 2026-04-13 (v0.15.0 .. v0.16.3, last 2026-09-06, tags `vX.Y.Z`); APT 7 since July
+  (v3.28.104 .. v3.29.108, last 2026-09-09, tags `vX.Y.Z`). Releases are made by a version bump on master + electron-builder
+  `-p onTagOrDraft` (draft, then published by hand). Both unsigned. Windows exe ~100 MB, upstream CI 2.5-3 min.
+- **Trade API:** no POESESSID anywhere; requests go through the main process `net.request` (Chromium network stack, session
+  cookies kept, `proxy.ts`) with client-side rate limiter fed by `x-rate-limit-*` headers. Our removed `trade_client.py` used urllib
+  + a spoofed Chrome/124 UA + POESESSID + fixed 0.5 s sleep. No record in history.md of an actual Cloudflare block (only
+  "not tested with a real POESESSID").
+- **Hub match:** hub `meta/latest.json` `stat_id` = `explicit.stat_<n>` = EE2/APT `StatFilter.tradeId[]` (same GGG namespace).
+  Both games have meta now (poe1 Allflame 1343 rows, poe2 Forbidden Rites 1036 rows, generated 2026-10-12). Hub has no tier;
+  both overlays already show tiers themselves (`FilterModifierTiers.vue`).
+- **Collisions:** both overlays bind chat commands F5 = "/hideout", F9 = "/exit" by default (= our F5); price check Ctrl+D,
+  overlay toggle Shift+Space; F4 is free. EE2/APT prices come from poe.ninja / api.exiledexchange2.dev / poeprices.info, not the hub.
+- EE2 has AI_POLICY.md ("do not use agents or copy-paste blocks from LLMs") - relevant only for pull requests to them.
+- Plan, phases and open decisions: see the report of this round. Waiting for Winai.
+
 ## 2026-10-13 (night, 14) — v0.13.5 released: exe + web on GitHub Pages
 
 - Tag `v0.13.5` on 75a5a0d; Actions run 38377842014 succeeded (web / deploy-web, build-release). Release has
