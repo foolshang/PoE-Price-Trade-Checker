@@ -5,6 +5,16 @@
 
 ---
 
+## 2026-10-13 (night, 14) — v0.13.5 released: exe + web on GitHub Pages
+
+- Tag `v0.13.5` on 75a5a0d; Actions run 38377842014 succeeded (web / deploy-web, build-release). Release has
+  `PoE-Filter-Generator.exe` (12.2 MB, not a prerelease); the exe downloaded from it shows "PoE1 & PoE2 Filter Generator v0.13.5".
+- Pages already served `gh-pages` / root (status built) after the first deploy - no API call was needed. Live site reports
+  `__version__ = "0.13.5"`, page shows "เวอร์ชัน web-0.13.5".
+- Public README updated by the workflow (6f5f0c4, "docs: README for v0.13.5") with the web link.
+- `tests/web_ui/live.mjs`: Playwright against the real URL (no stubs): page loads, Generate + download (poe-checker.filter,
+  428 Show blocks), switch to PoE1; 0 console errors, 0 failed / 4xx requests.
+
 ## 2026-10-13 (night, 13) — v0.13.5 committed (896e00b); web deploy to GitHub Pages prepared (NOT deployed / tagged)
 
 - **v0.13.5:** all 36 test files run one by one (607 passed, 1 skipped), exes built and started (checker + standalone title bar
