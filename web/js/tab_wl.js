@@ -22,7 +22,7 @@ P.tabWl = {
     this.name = h("input", { type: "text", class: "grow", "aria-label": "ชื่อ filter", oninput: () => ctx.changed() });
     this.openInput = h("input", { type: "file", accept: ".filter,.txt", hidden: true, id: "open-filter-input",
       onchange: async (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) await ctx.openFile(f); } });
-    this.openBtn = h("button", { type: "button", id: "btn-open", class: "secondary", onclick: () => this.openInput.click() }, "เปิด filter…");
+    this.openBtn = h("button", { type: "button", id: "btn-open", class: "secondary", onclick: () => (ctx.openFilter ? ctx.openFilter(() => this.openInput.click()) : this.openInput.click()) }, "เปิด filter…");
 
     // 1) tier
     this.tierBtns = {};

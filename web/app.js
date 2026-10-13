@@ -194,6 +194,49 @@ async function openFile(file) {
 }
 
 // ---------------------------------------------------------------- folder (File System Access)
+/** The folder of the game picked now: the picker (called straight from the click), then the name check - PoE1 expects
+ *  "Path of Exile", PoE2 "Path of Exile 2". Another name is asked about: pick again, or keep it (a player's own folder).
+ *  Returns true when a folder was adopted for the game. */
+async function chooseFolder() {
+  const g = game;
+  for (;;) {
+    let handle;
+    try { handle = await P.FS.choose(g); }
+    catch (e) {
+      if (!(e && e.name === "AbortError")) P.log(`⚠ เลือกโฟลเดอร์ไม่ได้: ${e && e.message ? e.message : e}`, "warn");
+      return false;
+    }
+    let keep = P.FS.nameOk(g, handle.name);
+    if (!keep) {
+      const answer = await askFolderName(g, handle.name);
+      if (answer === "again") continue;                 // (the picker is called from the click of that button)
+      keep = answer === "keep";
+    }
+    if (!keep) return false;
+    await P.FS.adopt(g, handle);
+    if (g === game) refreshFolder();
+    return true;
+  }
+}
+
+function askFolderName(g, picked) {
+  return new Promise((resolve) => {
+    const dlg = $("#dlg-folder");
+    const done = (v) => { dlg.close(); resolve(v); };
+    dlg.replaceChildren(
+      h("h3", {}, "ชื่อโฟลเดอร์ไม่ตรงกับเกม"),
+      h("p", {}, `โฟลเดอร์ที่เลือกชื่อ "${picked}" แต่โฟลเดอร์ของ ${g === "poe2" ? "PoE2" : "PoE1"} ปกติชื่อ "${P.FS.folderName(g)}" `
+        + `(${DIRS[g]})`),
+      h("p", { class: "hint" }, "ถ้าตั้งใจใช้โฟลเดอร์ชื่อนี้ (เช่น ใช้โฟลเดอร์ของตัวเอง) เลือก \"ใช้โฟลเดอร์นี้ต่อ\""),
+      h("div", { class: "actions" },
+        h("button", { type: "button", id: "btn-folder-again", onclick: () => done("again") }, "เลือกใหม่"),
+        h("button", { type: "button", id: "btn-folder-keep", class: "secondary", onclick: () => done("keep") }, "ใช้โฟลเดอร์นี้ต่อ"),
+        h("button", { type: "button", id: "btn-folder-cancel", class: "secondary", onclick: () => done("cancel") }, "ยกเลิก")));
+    dlg.addEventListener("cancel", () => resolve("cancel"), { once: true });
+    dlg.showModal();
+  });
+}
+
 function refreshFolder() {
   const box = $("#folder-box");
   box.hidden = !P.FS.supported;
@@ -204,7 +247,9 @@ function refreshFolder() {
   else { name.textContent = "ยังไม่ได้เลือก — จะดาวน์โหลดเป็นไฟล์แทน"; name.className = "muted"; }
   $("#btn-folder-grant").hidden = P.FS.state !== "prompt";
   $("#btn-folder-forget").hidden = P.FS.state === "none";
-  $("#folder-hint").textContent = `Chrome / Edge: เลือกโฟลเดอร์ ${DIRS[game]} แล้วโปรแกรมเขียน .filter และไฟล์เสียงลงไปให้เลย`;
+  const odd = P.FS.state !== "none" && !P.FS.nameOk(game, P.FS.name);
+  $("#folder-hint").textContent = `Chrome / Edge: เลือกโฟลเดอร์ ${DIRS[game]} แล้วโปรแกรมเขียน .filter และไฟล์เสียงลงไปให้เลย`
+    + (odd ? ` · โฟลเดอร์ที่ใช้อยู่ชื่อ "${P.FS.name}" ไม่ใช่ "${P.FS.folderName(game)}" (ใช้ต่อได้)` : "");
 }
 
 // ---------------------------------------------------------------- tabs / game
@@ -240,7 +285,7 @@ async function boot() {
     if (typeof loadPyodide !== "function") throw new Error("โหลด Pyodide ไม่ได้ (ต้องต่ออินเทอร์เน็ต)");
     py = await loadPyodide({ indexURL: `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/` });
     py.FS.mkdirTree("/home/pyodide/poe_price_trade");
-    const get = async (p) => { const r = await fetch(p); if (!r.ok) throw new Error(`โหลด ${p} ไม่ได้ (HTTP ${r.status})`); return r.text(); };
+    const get = async (p) => { const r = await fetch(p, { cache: "no-cache" }); if (!r.ok) throw new Error(`โหลด ${p} ไม่ได้ (HTTP ${r.status})`); return r.text(); };
     const manifest = JSON.parse(await get("py/manifest.json"));
     for (const f of manifest.files) py.FS.writeFile(`/home/pyodide/poe_price_trade/${f}`, await get(`py/${f}`));
     py.FS.writeFile("/home/pyodide/glue.py", await get("glue.py"));
@@ -254,6 +299,20 @@ async function boot() {
   P.cfg = P.loadCfg();
   const ctx = {
     cfg: P.cfg, changed, generate, openFile, gotoNsTab: () => showTab("tier"), reloadLists: () => loadLists(true), game: () => game,
+    // "เปิด filter…": the folder's list / the file picker; `fallback` is the plain file input. Nothing may fail silently here:
+    // a page whose files come from the browser cache in two versions has no P.openFilter - say so and use the plain input
+    // (called straight from the click, so the browser lets it open)
+    openFilter: async (fallback) => {
+      if (typeof P.openFilter !== "function" || P.openFilterBroken) {
+        if (typeof P.openFilter !== "function") P.log("⚠ หน้านี้ยังเป็นรุ่นเก่าที่ค้างใน cache (ไม่มีตัวเปิดรายการไฟล์) — กด Ctrl+F5 เพื่อโหลดใหม่ · ตอนนี้ใช้ช่องเลือกไฟล์แทน", "warn");
+        return fallback();
+      }
+      try { await P.openFilter({ game, openFile, fallback, log: P.log, chooseFolder, dirHint: DIRS[game] }); }
+      catch (e) {
+        P.openFilterBroken = true;                // the next click goes straight to the plain input (it needs the click itself)
+        P.log(`⚠ เปิดรายการไฟล์ไม่ได้: ${e && e.message ? e.message : e} — กด "เปิด filter…" อีกครั้งเพื่อเลือกไฟล์ด้วยช่องเลือกไฟล์`, "err");
+      }
+    },
   };
   P.ctx = ctx;
   P.tabNs.mount($("#pane-tier"), ctx);
@@ -264,10 +323,7 @@ async function boot() {
   $("#btn-copy").addEventListener("click", async () => {
     try { await navigator.clipboard.writeText(lastText); P.log("คัดลอกแล้ว", "ok"); } catch (e) { P.log("คัดลอกไม่ได้ (เบราว์เซอร์ไม่อนุญาต)", "warn"); }
   });
-  $("#btn-folder").addEventListener("click", async () => {
-    try { await P.FS.pick(game); } catch (e) { if (e && e.name !== "AbortError") P.log(`⚠ เลือกโฟลเดอร์ไม่ได้: ${e.message || e}`, "warn"); }
-    refreshFolder();
-  });
+  $("#btn-folder").addEventListener("click", async () => { await chooseFolder(); refreshFolder(); });
   $("#btn-folder-grant").addEventListener("click", async () => {
     try { if (!(await P.FS.grant())) P.log("⚠ ไม่ได้รับสิทธิ์เขียนโฟลเดอร์", "warn"); } catch (e) { P.log(`⚠ ${e.message || e}`, "warn"); }
     refreshFolder();

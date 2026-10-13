@@ -244,6 +244,17 @@ def wl_custom_remove(index: int) -> str:
     return "{}"
 
 
+def filter_kind(head: str) -> str:
+    """"whitelist" (made by the Whitelist tab - the tab can open and edit it) | "tier" (the NeverSink tab's) | "other",
+    from the first lines of a .filter file (the header comment each of our files starts with)."""
+    head = (head or "")[:600]
+    if wl_embed.WL_HEADER in head:
+        return "whitelist"
+    if wl_embed.TIER_HEADER_START in head:
+        return "tier"
+    return "other"
+
+
 def wl_open(text: str, filename: str, game: str, current_sounds_json: str, folder_files_json: str) -> str:
     """Open the text of a whitelist filter file (settings embedded, or an older file read back block by block).
     `current_sounds` = {S|A|B: file name now}; `folder_files` = the names of the files next to it (when the page can

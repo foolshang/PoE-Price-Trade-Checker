@@ -5,6 +5,56 @@
 
 ---
 
+## 2026-10-13 (night, 12) — web: one game folder per game, picked at once from "เปิด filter…" (v0.13.5, NOT committed / deployed / tagged)
+
+- **Per game:** the folder handle of PoE1 and PoE2 are separate (IndexedDB keys "poe1" / "poe2"; the file list, Generate and
+  "เลือกโฟลเดอร์เกม" all use the game picked now; switching game switches folder at once). A handle an older page kept under another key
+  is moved to the game its folder name says ("Path of Exile" -> poe1, "Path of Exile 2" -> poe2; any other name stays, not guessed;
+  a game that already has a handle keeps it) - `FS.migrateLegacy`, `P.idb.keys`.
+- **"เปิด filter…" with no folder for the game:** `showDirectoryPicker({startIn: "documents", id: "poe-filter-<game>"})` is called straight
+  from the click, the Status says "เลือกโฟลเดอร์ Documents\My Games\Path of Exile [2]"; what was picked is adopted and its file list
+  follows. A picker the player closes changes nothing.
+- **Name check:** PoE1 expects "Path of Exile", PoE2 "Path of Exile 2" (any case). Another name opens a dialog: "เลือกใหม่" (the picker
+  again, from that click) / "ใช้โฟลเดอร์นี้ต่อ" (the player's own folder; the folder hint notes the odd name) / "ยกเลิก" (nothing adopted). The
+  same check runs for "เลือกโฟลเดอร์เกม".
+- **Unchanged:** an expired permission is one button before the list; a browser without `showDirectoryPicker` (Firefox / Safari) keeps
+  the old way (`showOpenFilePicker` in Documents, or the plain input).
+- **Tests:** `ui.mjs` 120 checks (new: no folder -> picker + Status + list, wrong name -> again / keep / cancel, closed picker, per-game
+  folders and switching, legacy single handle moved, no folder API).
+
+---
+
+## 2026-10-13 (night, 11) — web: "เปิด filter…" did nothing on Winai's browser (v0.13.4, NOT committed / deployed / tagged)
+
+- **Report:** the button shows no folder / list and nothing happens. Playwright (fresh load) passed all checks, so the page code is
+  fine when its files are current; the suspect is a browser holding an older copy of some of the page's files.
+- **Why that can happen here:** `python -m http.server` sends `Last-Modified` but no `Cache-Control`; browsers then keep a file for
+  ~10% of its age without asking again, so after several releases in one day `index.html` / `app.js` / `tab_wl.js` can be kept in
+  two versions. With a new `tab_wl.js` (calls `ctx.openFilter`) next to an old `index.html` (no `open_filter.js`) the click throws a
+  TypeError in the console and nothing is shown. NOT proven on Winai's machine (needs the console / a hard reload to confirm).
+- **Fixes:** (1) the click can no longer fail silently: no list code -> the Status says "หน้านี้ยังเป็นรุ่นเก่าที่ค้างใน cache ... Ctrl+F5"
+  and the plain file chooser opens; a list that throws -> the Status gives the error and the next click goes straight to the plain
+  chooser. (2) `tools/sync_web_py.py` stamps every own script / stylesheet in `index.html` with `?v=<version>` (test in test_web_glue).
+  (3) `app.js` fetches the Python files with `cache: "no-cache"`. (4) `tools/serve_web.py`: local server with `Cache-Control: no-store`
+  (the one on :8000 was replaced by it).
+- **Tests:** `ui.mjs` (stale page, failing list, next click) 108 checks; `test_web_glue` (index.html stamped).
+
+---
+
+## 2026-10-13 (night, 10) — web: "เปิด filter…" lists the game folder (v0.13.3, NOT committed / deployed / tagged)
+
+- **With the game folder connected** the button opens a list of that folder's `.filter` files, each marked "เปิดแก้ได้ — สร้างจากแท็บ
+  Whitelist" / "สร้างจากแท็บ NeverSink — เปิดแก้ไม่ได้" / "ไม่ได้สร้างจากโปรแกรมนี้"; only the editable ones have an enabled "เปิด" button; the
+  kind comes from the first 600 characters (`glue.filter_kind`: our header comments). "เลือกไฟล์อื่น…" = `showOpenFilePicker` with
+  `startIn` = the folder handle.
+- **Folder permission expired after a reload:** the dialog shows one button ("ให้สิทธิ์โฟลเดอร์อีกครั้ง") before any list.
+- **No folder:** `showOpenFilePicker({startIn: "documents"})`. No `showOpenFilePicker` (Firefox / Safari): the plain file input as before.
+- Files: `web/js/open_filter.js` (new), `P.FS.list()` / `getFile()`, `#dlg-open`, glue `filter_kind`. The desktop is unchanged.
+- **Tests:** `ui.mjs` (OPFS handle + a stubbed `showOpenFilePicker`): list contents / order / enabled state, open from the list, picker
+  `startIn` = "game" / "documents", expired permission, no picker -> file chooser; `test_web_glue::test_filter_kind...`.
+
+---
+
 ## 2026-10-13 (night, 9) — equipment by class: one sub tab per group, "Focus" (v0.13.2, NOT committed / deployed / tagged)
 
 - **Layout (desktop + web):** the category is split into sub tabs [อาวุธ] [เกราะ] [เครื่องประดับ] [อื่นๆ] (a group with no class in the

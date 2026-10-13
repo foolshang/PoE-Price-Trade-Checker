@@ -49,13 +49,36 @@ P.sounds = {
 };
 
 // ---- the game folder (File System Access API) ----
+// The folder of each game has its own handle (IndexedDB key = "poe1" / "poe2") and its own name in Documents\My Games.
+const FOLDER_NAME = { poe1: "Path of Exile", poe2: "Path of Exile 2" };
+const sameName = (a, b) => String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
+
 const FS = {
   supported: typeof window.showDirectoryPicker === "function",
   handle: null,
   state: "none",                                   // none | granted | prompt (remembered, permission must be confirmed)
+  folderName(game) { return FOLDER_NAME[game] || ""; },
+  /** true when the picked folder is called what the game's own folder is called (a player's own folder name is allowed too,
+   *  after a question - see app.js chooseFolder) */
+  nameOk(game, name) { return sameName(name, FOLDER_NAME[game]); },
+  /** A handle kept under another key (an older page kept one handle for both games) goes to the game its folder name says;
+   *  one with another name stays where it is (it is not guessed). A game that already has its own handle keeps it. */
+  async migrateLegacy() {
+    let keys = [];
+    try { keys = await P.idb.keys("handles"); } catch (e) { return; }
+    for (const k of keys) {
+      if (k === "poe1" || k === "poe2") continue;
+      const h = await P.idb.get("handles", k);
+      const target = h && Object.keys(FOLDER_NAME).find((g) => sameName(h.name, FOLDER_NAME[g]));
+      if (!target) continue;
+      if (!(await P.idb.get("handles", target))) await P.idb.put("handles", target, h);
+      await P.idb.del("handles", k);
+    }
+  },
   async init(game) {
     this.handle = null; this.state = "none";
     if (!this.supported) return this.state;
+    await this.migrateLegacy();
     const h = await P.idb.get("handles", game);
     if (h && typeof h.queryPermission === "function") {
       this.handle = h;
@@ -64,11 +87,16 @@ const FS = {
     }
     return this.state;
   },
-  async pick(game) {
-    const h = await window.showDirectoryPicker({ id: `poe-filter-${game}`, mode: "readwrite" });
+  /** the folder picker of a game (starts in Documents, remembers where it was per game); returns the handle, stores nothing */
+  choose(game) {
+    return window.showDirectoryPicker({ id: `poe-filter-${game}`, mode: "readwrite", startIn: "documents" });
+  },
+  /** make `h` the folder of `game` (this one is the current one) */
+  async adopt(game, h) {
     this.handle = h; this.state = "granted";
     await P.idb.put("handles", game, h);
   },
+  async pick(game) { await this.adopt(game, await this.choose(game)); },
   async grant() {                                  // must run from a click
     if (!this.handle) return false;
     this.state = (await this.handle.requestPermission({ mode: "readwrite" })) === "granted" ? "granted" : "prompt";
@@ -82,6 +110,17 @@ const FS = {
     for await (const [name, h] of this.handle.entries()) if (h.kind === "file") out.push(name);
     return out;
   },
+  /** the .filter files of the folder: [{name, size, head}] (head = the first 600 characters, enough to tell who made it) */
+  async list() {
+    const out = [];
+    for await (const [name, h] of this.handle.entries()) {
+      if (h.kind !== "file" || !/\.filter$/i.test(name)) continue;
+      const f = await h.getFile();
+      out.push({ name, size: f.size, head: await f.slice(0, 600).text() });
+    }
+    return out;
+  },
+  async getFile(name) { return (await this.handle.getFileHandle(name)).getFile(); },
   async exists(name) {
     try { await this.handle.getFileHandle(name); return true; } catch (e) { return false; }
   },

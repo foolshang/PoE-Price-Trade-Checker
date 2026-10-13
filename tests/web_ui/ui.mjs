@@ -33,7 +33,24 @@ const browser = await chromium.launch({ executablePath: findChrome(), headless: 
 const context = await browser.newContext({ viewport: { width: 900, height: 1100 }, acceptDownloads: true });
 await routeNetwork(context, calls);
 await context.addInitScript(() => {            // a real directory handle (origin private file system) stands in for the folder picker
-  window.showDirectoryPicker = async () => (await navigator.storage.getDirectory()).getDirectoryHandle("game", { create: true });
+  // the folder picker: a real handle of the origin private file system, named like the game's folder unless a test says otherwise
+  window.__dirPicks = [];
+  window.__dirName = null;
+  window.__dirAbort = false;
+  window.showDirectoryPicker = async (o) => {
+    window.__dirPicks.push({ startIn: typeof o.startIn === "string" ? o.startIn : (o.startIn && o.startIn.name), id: o.id });
+    if (window.__dirAbort) throw new DOMException("closed", "AbortError");
+    const name = window.__dirName || (String(o.id).endsWith("poe1") ? "Path of Exile" : "Path of Exile 2");
+    return (await navigator.storage.getDirectory()).getDirectoryHandle(name, { create: true });
+  };
+  // the file picker: remembers how it was asked (startIn) and hands back a file of the same origin private folder
+  window.__picks = [];
+  window.__pickName = "wl-made.filter";
+  window.showOpenFilePicker = window.__stubPick = async (o) => {
+    window.__picks.push({ startIn: typeof o.startIn === "string" ? o.startIn : (o.startIn && o.startIn.name), id: o.id, multiple: o.multiple });
+    const d = await (await navigator.storage.getDirectory()).getDirectoryHandle("Path of Exile 2", { create: true });
+    return [await d.getFileHandle(window.__pickName, { create: true })];
+  };
 });
 const page = await context.newPage();
 page.on("console", (m) => { if (m.type() === "error" && !/favicon|Failed to load resource/.test(m.text())) consoleErrors.push(m.text()); });
@@ -42,6 +59,11 @@ page.on("dialog", (d) => d.accept());
 
 const shot = (name) => page.screenshot({ path: path.join(OUT, name + ".png"), fullPage: true });
 const logText = () => page.locator("#log").innerText();
+const waitFor = async (fn, ms = 10000) => {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) { if (await fn()) return true; await wait(100); }
+  return false;
+};
 const waitLog = async (needle, ms = 60000) => {
   const t0 = Date.now();
   while (Date.now() - t0 < ms) { if ((await logText()).includes(needle)) return true; await wait(150); }
@@ -293,9 +315,9 @@ await shot("11_after_open");
 check("folder box is shown (browser supports it)", await page.locator("#folder-box").isVisible());
 await page.click("#btn-folder");
 await wait(500);
-check("folder connected", (await page.locator("#folder-name").innerText()).includes("game"), await page.locator("#folder-name").innerText());
+check("folder connected", (await page.locator("#folder-name").innerText()).includes("Path of Exile 2"), await page.locator("#folder-name").innerText());
 await page.evaluate(async () => {               // the folder already holds a DIFFERENT file with the sound's name
-  const d = await (await navigator.storage.getDirectory()).getDirectoryHandle("game", { create: true });
+  const d = await (await navigator.storage.getDirectory()).getDirectoryHandle("Path of Exile 2", { create: true });
   const w = await (await d.getFileHandle("snd_1.mp3", { create: true })).createWritable();
   await w.write(new Uint8Array([1, 2, 3])); await w.close();
 });
@@ -308,7 +330,7 @@ await shot("12_ask_conflict");
 await page.click("#ask-ok");                    // default: keep the old file, new one gets -2
 await waitLog("เขียนลงโฟลเดอร์");
 const listing = await page.evaluate(async () => {
-  const d = await (await navigator.storage.getDirectory()).getDirectoryHandle("game");
+  const d = await (await navigator.storage.getDirectory()).getDirectoryHandle("Path of Exile 2");
   const out = {};
   for await (const [n, h] of d.entries()) out[n] = (await (await h.getFile()).size);
   return out;
@@ -322,14 +344,175 @@ await shot("13_written");
 // the folder is remembered after a reload
 await page.reload();
 await page.waitForSelector("#app:not([hidden])", { timeout: 120000 });
-check("folder remembered after reload", (await page.locator("#folder-name").innerText()).includes("game"), await page.locator("#folder-name").innerText());
+check("folder remembered after reload", (await page.locator("#folder-name").innerText()).includes("Path of Exile 2"), await page.locator("#folder-name").innerText());
 // open the file from the folder's content: sound found next to it
 await page.click("#tab-wl");
 const written = await page.evaluate(async () => {
-  const d = await (await navigator.storage.getDirectory()).getDirectoryHandle("game");
+  const d = await (await navigator.storage.getDirectory()).getDirectoryHandle("Path of Exile 2");
   return await (await (await d.getFileHandle("my-ns.filter")).getFile()).text();
 });
 check("the file written to the folder is a complete filter", written.length > 100000 && written.includes("\r\n"));
+
+// ---------------------------------------------------------------- "เปิด filter…" with the folder connected
+await page.evaluate(async (text) => {
+  const d = await (await navigator.storage.getDirectory()).getDirectoryHandle("Path of Exile 2", { create: true });
+  const put = async (name, body) => { const w = await (await d.getFileHandle(name, { create: true })).createWritable(); await w.write(body); await w.close(); };
+  await put("wl-made.filter", text);
+  await put("foreign.filter", 'Show\n    Class "Gems"\n');
+  await put("not-a-filter.txt", "x");
+}, wlText);
+await page.click("#btn-open");
+await page.waitForSelector("#dlg-open[open]");
+const rowsOpen = await page.locator("#open-list li").evaluateAll((li) => li.map((x) => ({ f: x.dataset.file, k: x.dataset.kind, dis: x.querySelector("button").disabled })));
+check("the folder's .filter files are listed (no other files), editable ones first",
+  rowsOpen.map((r) => r.f).join("|") === "wl-made.filter|foreign.filter|my-ns.filter" && rowsOpen[0].k === "whitelist", JSON.stringify(rowsOpen));
+check("only the file made by the Whitelist tab can be opened", rowsOpen[0].dis === false && rowsOpen[1].dis === true && rowsOpen[2].k === "tier" && rowsOpen[2].dis === true, JSON.stringify(rowsOpen));
+check("the list says which ones can be edited", (await page.locator("#dlg-open").innerText()).includes("เปิดแก้ได้") && (await page.locator("#dlg-open").innerText()).includes("เปิดแก้ไม่ได้"));
+await shot("11b_open_list");
+await page.locator('#open-list li[data-file="wl-made.filter"] button').click();
+check("a file of the list opens at once, no picker", await page.locator("#dlg-open").evaluate((d) => !d.open) &&
+  (await page.inputValue('#pane-whitelist input[aria-label="ชื่อ filter"]')) === "wl-made" && (await page.evaluate(() => window.__picks.length)) === 0);
+// "เลือกไฟล์อื่น…": showOpenFilePicker starting in the game folder
+await page.click("#btn-open");
+await page.waitForSelector("#dlg-open[open]");
+await page.click("#btn-open-other");
+check("'เลือกไฟล์อื่น…' starts the picker in the game folder", await waitFor(() => page.evaluate(() => window.__picks.length === 1)) &&
+  (await page.evaluate(() => window.__picks[0])).startIn === "Path of Exile 2", JSON.stringify(await page.evaluate(() => window.__picks)));
+// the permission expired after a reload: one button first, then the list
+await page.evaluate(() => { window.PFG.FS.state = "prompt"; });
+await page.click("#btn-open");
+await page.waitForSelector("#dlg-open[open]");
+check("an expired folder permission asks once, before any list", await page.locator("#btn-open-grant").isVisible() && (await page.locator("#open-list").count()) === 0);
+await page.click("#btn-open-grant");
+await page.waitForSelector("#open-list");
+check("after the permission the list is shown", (await page.locator("#open-list li").count()) === 3);
+await page.click("#btn-open-close");
+// ---- a folder for each game
+const folderText = () => page.locator("#folder-name").innerText();
+const dirPicks = () => page.evaluate(() => window.__dirPicks);
+// no folder for this game: the folder picker opens at once (Documents), the Status says which folder, then the list follows
+await page.click("#btn-folder-forget");
+await page.evaluate(() => { window.__dirPicks = []; });
+await page.click("#btn-open");
+await page.waitForSelector("#open-list");
+check("no folder: the folder picker opens at once, starting in Documents (one per game)", JSON.stringify(await dirPicks()) ===
+  JSON.stringify([{ startIn: "documents", id: "poe-filter-poe2" }]), JSON.stringify(await dirPicks()));
+check("the Status names the folder to choose", (await logText()).includes("เลือกโฟลเดอร์ Documents\\My Games\\Path of Exile 2"));
+check("what was picked is listed at once and adopted", (await page.locator("#open-list li").count()) === 3 && (await folderText()).includes("Path of Exile 2"));
+await page.click("#btn-open-close");
+// a name that is not the game's: asked, "again" opens the picker again
+await page.click("#btn-folder-forget");
+await page.evaluate(() => { window.__dirName = "My Own Folder"; window.__dirPicks = []; });
+await page.click("#btn-open");
+await page.waitForSelector("#dlg-folder[open]");
+check("another folder name is asked about (both names shown)", (await page.locator("#dlg-folder").innerText()).includes("My Own Folder") &&
+  (await page.locator("#dlg-folder").innerText()).includes("Path of Exile 2") && (await folderText()).includes("ยังไม่ได้เลือก"));
+await page.evaluate(() => { window.__dirName = "Path of Exile 2"; });
+await page.click("#btn-folder-again");
+await page.waitForSelector("#open-list");
+check("'เลือกใหม่' opens the picker again and the right folder is adopted", (await dirPicks()).length === 2 && (await folderText()).includes("Path of Exile 2"));
+await page.click("#btn-open-close");
+// ... "keep" uses the player's own folder
+await page.click("#btn-folder-forget");
+await page.evaluate(() => { window.__dirName = "My Own Folder"; });
+await page.click("#btn-open");
+await page.waitForSelector("#dlg-folder[open]");
+await page.click("#btn-folder-keep");
+await page.waitForSelector("#dlg-open[open]");                 // (the folder is empty: the list says so)
+check("'ใช้โฟลเดอร์นี้ต่อ' keeps the own folder and says the name is odd", (await folderText()).includes("My Own Folder") &&
+  (await page.locator("#folder-hint").innerText()).includes("ไม่ใช่"));
+await page.click("#btn-open-close");
+// ... "cancel" adopts nothing; a picker closed by the player says nothing
+await page.click("#btn-folder-forget");
+await page.click("#btn-open");
+await page.waitForSelector("#dlg-folder[open]");
+await page.click("#btn-folder-cancel");
+check("'ยกเลิก' adopts nothing", (await folderText()).includes("ยังไม่ได้เลือก") && (await page.locator("#dlg-open").evaluate((d) => !d.open)));
+await page.evaluate(() => { window.__dirAbort = true; });
+await page.click("#btn-open");
+await wait(400);
+check("a picker the player closed leaves everything as it was", (await folderText()).includes("ยังไม่ได้เลือก") &&
+  (await page.locator("#dlg-open").evaluate((d) => !d.open)) && (await page.locator("#dlg-folder").evaluate((d) => !d.open)));
+await page.evaluate(() => { window.__dirAbort = false; window.__dirName = null; });
+// the button "เลือกโฟลเดอร์เกม" checks the name the same way
+await page.evaluate(() => { window.__dirName = "Wrong"; });
+await page.click("#btn-folder");
+await page.waitForSelector("#dlg-folder[open]");
+await page.click("#btn-folder-cancel");
+check("'เลือกโฟลเดอร์เกม' asks about a wrong name too", (await folderText()).includes("ยังไม่ได้เลือก"));
+await page.evaluate(() => { window.__dirName = null; });
+await page.click("#btn-folder");
+await page.waitForFunction(() => document.querySelector("#folder-name").textContent.includes("Path of Exile 2"));
+// each game has its own folder: PoE1 has none yet, PoE2 keeps its own
+await page.evaluate(() => { window.__dirPicks = []; });
+await page.click("#game-poe1");
+await page.waitForFunction(() => document.querySelector("#folder-name").textContent.includes("ยังไม่ได้เลือก"));
+check("another game has its own folder (PoE1 has none yet)", true);
+await page.click("#btn-open");
+await page.waitForSelector("#dlg-open[open]");
+check("PoE1's picker is PoE1's (folder 'Path of Exile', empty), PoE2's folder was not touched", (await dirPicks())[0].id === "poe-filter-poe1" &&
+  (await folderText()).includes("Path of Exile") && !(await folderText()).includes("Exile 2") && (await page.locator("#dlg-open").innerText()).includes("ไม่มีไฟล์ .filter"));
+await page.click("#btn-open-close");
+await page.click("#game-poe2");
+await page.waitForFunction(() => document.querySelector("#folder-name").textContent.includes("Path of Exile 2"));
+await page.click("#btn-open");
+await page.waitForSelector("#open-list");
+check("back to PoE2: its own folder is used at once, no picker", (await page.locator("#open-list li").count()) >= 3 && (await dirPicks()).length === 1);
+await page.click("#btn-open-close");
+// a handle an older page kept without a game (key "folder"): moved to the game its folder name says
+await page.evaluate(async () => {
+  const root = await navigator.storage.getDirectory();
+  const d = await root.getDirectoryHandle("Path of Exile", { create: true });
+  await new Promise((res, rej) => {
+    const rq = indexedDB.open("poe-filter-gen", 2);
+    rq.onsuccess = () => {
+      const db = rq.result;
+      const tx = db.transaction("handles", "readwrite");
+      const st = tx.objectStore("handles");
+      st.delete("poe1");
+      st.put(d, "folder");
+      tx.oncomplete = () => { db.close(); res(); };
+      tx.onerror = () => rej(tx.error);
+    };
+    rq.onerror = () => rej(rq.error);
+  });
+});
+await page.reload();
+await page.waitForSelector("#app:not([hidden])", { timeout: 120000 });
+await page.click("#game-poe1");
+await page.waitForFunction(() => document.querySelector("#folder-name").textContent.includes("Path of Exile"));
+const keysNow = await page.evaluate(() => new Promise((res) => {
+  const rq = indexedDB.open("poe-filter-gen", 2);
+  rq.onsuccess = () => { const db = rq.result; const q = db.transaction("handles").objectStore("handles").getAllKeys();
+    q.onsuccess = () => { db.close(); res(q.result); }; };
+}));
+check("an older single handle goes to the game its folder name says (and its old key is gone)", !(await folderText()).includes("ยังไม่ได้เลือก") &&
+  JSON.stringify([...keysNow].sort()) === JSON.stringify(["poe1", "poe2"]), JSON.stringify(keysNow));
+await page.click("#game-poe2");
+await page.waitForFunction(() => document.querySelector("#folder-name").textContent.includes("Path of Exile 2"));
+await page.click("#tab-wl");
+// no showDirectoryPicker (Firefox / Safari): the old way - showOpenFilePicker, or the plain file input
+await page.click("#btn-folder-forget");
+await page.waitForFunction(() => document.querySelector("#folder-name").textContent.includes("ยังไม่ได้เลือก"));
+await page.evaluate(() => { window.PFG.FS.supported = false; window.showOpenFilePicker = undefined; });
+const [chooser] = await Promise.all([page.waitForEvent("filechooser"), page.click("#btn-open")]);
+check("no folder API: the plain file chooser opens", !!chooser);
+await page.evaluate(() => { window.PFG.FS.supported = true; window.showOpenFilePicker = window.__stubPick; });
+await page.click("#btn-folder");
+await page.waitForFunction(() => document.querySelector("#folder-name").textContent.includes("Path of Exile 2"));
+// a page whose files came from the browser cache in two versions (no P.openFilter) / a list that throws: never silent
+await page.evaluate(() => { window.__keepOpen = window.PFG.openFilter; window.PFG.openFilter = undefined; });
+const [stale] = await Promise.all([page.waitForEvent("filechooser"), page.click("#btn-open")]);
+check("a stale page (no list code) says so and still opens the file chooser", !!stale && (await logText()).includes("รุ่นเก่าที่ค้างใน cache"));
+await page.evaluate(() => { window.PFG.openFilter = async () => { throw new Error("boom"); }; });
+await page.click("#btn-open");
+await wait(300);
+check("a list that fails says why in the Status", (await logText()).includes("เปิดรายการไฟล์ไม่ได้: boom"));
+const [afterFail] = await Promise.all([page.waitForEvent("filechooser"), page.click("#btn-open")]);
+check("... and the next click goes straight to the plain file chooser", !!afterFail);
+await page.evaluate(() => { window.PFG.openFilter = window.__keepOpen; window.PFG.openFilterBroken = false; });
+await page.click("#btn-folder");                // the folder is back for what follows
+await wait(500);
 
 // ---------------------------------------------------------------- PoE1
 await page.click("#game-poe1");

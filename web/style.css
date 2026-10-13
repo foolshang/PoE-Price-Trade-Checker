@@ -55,6 +55,10 @@ input[type=checkbox], input[type=radio] { accent-color: var(--accent); }
 .tier-btns button { min-width: 3.2em; font-weight: 700; background: #2a2a2a; border: 1px solid transparent; }
 .tier-btns button[data-t=S] { color: var(--S); } .tier-btns button[data-t=A] { color: var(--A); } .tier-btns button[data-t=B] { color: var(--B); } .tier-btns button[data-t=C] { color: var(--Cs); }
 .tier-btns button[aria-pressed=true] { background: #6a5528; border-color: var(--accent); }
+.open-list { list-style: none; margin: 8px 0; padding: 0; display: grid; gap: 4px; max-height: 50vh; overflow-y: auto; }
+.open-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 4px 12px; align-items: center; padding: 4px 6px; border: 1px solid var(--line); border-radius: 4px; }
+.open-list .nm { overflow-wrap: anywhere; }
+@media (max-width: 640px) { .open-list li { grid-template-columns: minmax(0, 1fr) auto; } .open-list li > span:nth-child(2) { grid-column: 1 / -1; } }
 .style-box { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; margin: 6px 0; }
 .style-box .style-grid { flex: 1 1 22em; max-width: 36em; }
 .row.top { align-items: flex-start; }

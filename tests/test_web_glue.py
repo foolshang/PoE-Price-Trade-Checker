@@ -97,3 +97,23 @@ def test_make_zip_contains_filter_and_untouched_sound_bytes():
     z = zipfile.ZipFile(io.BytesIO(raw))
     assert z.namelist() == ["my-filter.filter", "poe-checker-S.mp3"]
     assert z.read("my-filter.filter") == b"a\r\nb\r\n" and z.read("poe-checker-S.mp3") == snd
+
+
+def test_filter_kind_tells_who_made_a_file_from_its_first_lines():
+    from poe_price_trade import wl_embed
+    wl = "# === PoE Checker - Whitelist (own tiers, starting tiers from NeverSink strictness 2) ===\n\n# tier S\n"
+    assert glue.filter_kind(wl) == "whitelist"
+    assert glue.filter_kind(wl_embed.WL_HEADER + " (show only) ===") == "whitelist"          # an older file of the tab too
+    assert glue.filter_kind(filter_core.TIER_HEADER + "\n# ===== base filter below =====") == "tier"
+    assert glue.filter_kind('Show\n    Class "Gems"\n') == "other" and glue.filter_kind("") == "other"
+
+
+def test_the_pages_own_files_carry_the_program_version_in_index_html():
+    """A static server sends no Cache-Control, so a browser may keep an older copy of one script next to a new one: every own
+    script / stylesheet in index.html is stamped `?v=<version>` by tools/sync_web_py.py."""
+    import re
+    from pathlib import Path
+    from poe_price_trade import __version__
+    html = (Path(__file__).resolve().parent.parent / "web" / "index.html").read_text(encoding="utf-8")
+    own = re.findall(r'(?:src|href)="((?:js/\w+\.js)|app\.js|style\.css)(\?v=[^"]*)?"', html)
+    assert len(own) >= 9 and all(v == f"?v={__version__}" for _f, v in own), own

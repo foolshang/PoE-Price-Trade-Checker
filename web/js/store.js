@@ -72,6 +72,14 @@ P.idb = {
     if (!idbOk) return;
     try { await idbDo(storeName, "readwrite", (s) => s.delete(key)); } catch (e) { idbOk = false; }
   },
+  /** every key of a store (the in-memory fallback included) */
+  async keys(storeName) {
+    const out = new Set(memIdb[storeName].keys());
+    if (idbOk) {
+      try { (await idbDo(storeName, "readonly", (s) => s.getAllKeys())).forEach((k) => out.add(k)); } catch (e) { idbOk = false; }
+    }
+    return [...out];
+  },
   get ok() { return idbOk; },
 };
 })();
