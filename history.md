@@ -24,7 +24,28 @@
 - **Collisions:** both overlays bind chat commands F5 = "/hideout", F9 = "/exit" by default (= our F5); price check Ctrl+D,
   overlay toggle Shift+Space; F4 is free. EE2/APT prices come from poe.ninja / api.exiledexchange2.dev / poeprices.info, not the hub.
 - EE2 has AI_POLICY.md ("do not use agents or copy-paste blocks from LLMs") - relevant only for pull requests to them.
-- Plan, phases and open decisions: see the report of this round. Waiting for Winai.
+- **Proposed structure:** one public repo holding only patches + workflow (not full GitHub forks; name proposal
+  `foolshang/poe-overlay-patches`: `ee2/patches`, `apt/patches`, `follow-upstream.yml`). Daily cron + dispatch: compare upstream
+  `releases/latest` with our last tag (`ee2-vX.Y.Z-wN`) -> checkout tag -> apply patches -> npm ci / lint / build / vitest ->
+  electron-builder (windows only, `-p never`) -> Release with portable exe + `latest.yml` (sha512). Any failure -> no release,
+  an automatic GitHub Issue (no extra secret; no Discord webhook exists in Checker or Poe_Hub); older release stays usable.
+- **Patch size (estimate):** per fork 2 new files (~120 line `ModMeta.ts`, ~60 line `FilterModifierBadge.vue`) + ~10 changed
+  lines (`FilterModifier.vue`, `proxy.ts` `PROXY_HOSTS` + storage.googleapis.com, optional settings switch). Hub meta cached
+  in localStorage; missing meta = no badge. Some mods carry several trade ids -> match on any.
+- **Checker side:** fetch `latest.yml`, verify sha512, keep portable exe in `%LOCALAPPDATA%\PoePriceTrade\fork\<game>\`, start with
+  `--no-updates` (flag exists in `AppUpdater.ts`), single-instance lock in both -> detect a running fork first; config via
+  `userData/apt-data/config.json` only while the fork is closed; `use_fork` setting, off = our F5 again; our F5 must be off
+  while the fork runs (its F5 = /hideout).
+- **Phases:** 0 decisions + empty repo 0.5 d; 1 EE2 badge patch + tests 1-2 d (risk: ItemCategory -> hub slot map, multi-id mods);
+  2 port to APT 1 d (no vitest there); 3 follow-upstream workflow + release + alert 1-2 d (risk: patch conflicts); 4 Checker
+  install / start / stop / switch / config 2-3 d (risk: single instance, file permissions, hash).
+- **Decisions for Winai:** (1) "tier from hub" = hub has none, use overlay's own tier + hub TOP/NICHE badge?; (2) repo name,
+  public (needed for download + updater) vs private; (3) alert channel: GitHub Issue vs new Discord webhook; (4) fork prices come
+  from poe.ninja etc., against Checker's "no direct poe.ninja" rule - accept?; (5) ~100 MB download per game ok?; (6) start with
+  PoE2/EE2 first (recommended).
+- **Not done / not verified:** no fork built or run, patch sizes are estimates, `ItemCategory` vs hub slots not compared yet.
+  CLAUDE.md of Checker still says PoE1 has no meta (stale: both games have it now) - not edited this round.
+- Waiting for Winai's decisions; no repo created, nothing forked, no code changed.
 
 ## 2026-10-13 (night, 14) — v0.13.5 released: exe + web on GitHub Pages
 
