@@ -1,0 +1,85 @@
+name: Deploy web to GitHub Pages
+
+# Builds the browser page (tools/build_web.py: only the files the page needs) and publishes it to the gh-pages branch of
+# the public repo, which GitHub Pages serves at https://foolshang.github.io/PoE-Filter-Generator/.
+# Called by release.yml for a real release; run it by hand to deploy the web alone again.
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v0.13.5)'
+        required: true
+        type: string
+    secrets:
+      RELEASE_TOKEN:
+        required: true
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to deploy (e.g. v0.13.5); it must match poe_price_trade/__init__.py of the ref you run this on'
+        required: true
+
+env:
+  PUBLIC_REPO: foolshang/PoE-Filter-Generator
+  SITE_URL: https://foolshang.github.io/PoE-Filter-Generator
+
+jobs:
+  deploy-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      # the names snapshot the page ships: refreshed from GGG's trade data; a list that shrank by more than 20% (or a
+      # failed download) is not written - the committed snapshot stays and the log says so
+      - name: Refresh trade names snapshot
+        shell: bash
+        run: |
+          if python tools/refresh_web_names.py; then
+            echo "names snapshot refreshed"
+          else
+            echo "::warning::trade names snapshot not refreshed (shrank by more than 20% or download failed) - the committed snapshot is deployed"
+          fi
+
+      - name: Build the site (version must match the tag)
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+        run: python tools/build_web.py --out _site --tag "$TAG"
+
+      - name: Publish to gh-pages of the public repo
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          cd _site
+          git init -q -b gh-pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "web $TAG"
+          # one commit, no history: the branch only ever holds what is live
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${PUBLIC_REPO}.git" gh-pages
+
+      # The live page must report the tag's version (Pages needs a minute or two to publish)
+      - name: Verify the live site
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          want="${TAG#v}"; want="${want%%-*}"
+          for i in $(seq 1 30); do
+            got=$(curl -fsS -H 'Cache-Control: no-cache' "$SITE_URL/py/__init__.py?t=$(date +%s)" 2>/dev/null | sed -n 's/.*__version__ *= *"\([^"]*\)".*/\1/p') || got=""
+            echo "try $i: live version '$got' (want '$want')"
+            if [ "$got" = "$want" ]; then
+              curl -fsS "$SITE_URL/" | grep -q "app.js?v=$want" && { echo "site is live: $SITE_URL/"; exit 0; }
+            fi
+            sleep 10
+          done
+          echo "::error::$SITE_URL did not serve $want after 5 minutes (is Pages enabled: Settings -> Pages -> Branch gh-pages / root?)"
+          exit 1

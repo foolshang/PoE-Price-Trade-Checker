@@ -16,6 +16,15 @@
 
 > **Windows เท่านั้น** · ไฟล์เดียวจบ ดับเบิลคลิกรันได้เลย
 
+### ใช้บนเว็บ (ไม่ต้องโหลดอะไร)
+
+👉 **[เปิดเวอร์ชันเว็บ](https://foolshang.github.io/PoE-Filter-Generator/)** — ฟังก์ชันเดียวกับโปรแกรม (แท็บ NeverSink และ Whitelist)
+
+- **Chrome / Edge:** เลือกโฟลเดอร์เกมได้ โปรแกรมเขียนไฟล์ `.filter` และไฟล์เสียงลงโฟลเดอร์ให้เลย
+  ครั้งแรกต้องเลือกโฟลเดอร์ filter ของแต่ละภาคเองหนึ่งครั้ง
+  (PoE1 = `Documents\My Games\Path of Exile` · PoE2 = `Documents\My Games\Path of Exile 2`)
+- **Firefox / Safari:** เลือกโฟลเดอร์ไม่ได้ ใช้การดาวน์โหลดไฟล์แล้วนำไปวางในโฟลเดอร์เกมเอง
+
 ### ครั้งแรกที่รัน Windows อาจเตือน
 ไฟล์ไม่ได้ sign ดิจิทัล → Windows SmartScreen จะขึ้น "Windows protected your PC"
 กด **More info → Run anyway** ครั้งเดียว ครั้งต่อไปไม่ถามอีก

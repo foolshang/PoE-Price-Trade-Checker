@@ -10,7 +10,19 @@ on:
         required: true
 
 jobs:
+  # The web page goes to GitHub Pages first (a prerelease tag such as v0.13.5-test never deploys). A failed deploy does not
+  # stop the exe release below, but the README (which links the web page) is then not updated.
+  web:
+    if: ${{ !contains(github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name, '-') }}
+    uses: ./.github/workflows/deploy-web.yml
+    with:
+      tag: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+    secrets:
+      RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+
   build-release:
+    needs: web
+    if: ${{ !cancelled() }}          # runs also when the web job failed or was skipped (prerelease)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -94,9 +106,14 @@ jobs:
       # The public README lives in this repo (release/README_public.md). A real release also puts it into the public
       # repo; a prerelease (tag with "-", e.g. v0.11.0-test) never touches it. No change = no commit.
       - name: Update README in public repo
-        if: ${{ !contains(steps.ver.outputs.tag, '-') }}
+        if: ${{ !contains(steps.ver.outputs.tag, '-') && needs.web.result == 'success' }}
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           TAG: ${{ steps.ver.outputs.tag }}
         shell: bash
         run: bash release/update_public_readme.sh
+
+      - name: README not updated (web deploy failed)
+        if: ${{ !contains(steps.ver.outputs.tag, '-') && needs.web.result != 'success' }}
+        shell: bash
+        run: echo "::warning::the web deploy did not succeed (${{ needs.web.result }}) - the README (with the link to the web page) was NOT updated; fix the deploy and run Deploy web + update the README by hand"

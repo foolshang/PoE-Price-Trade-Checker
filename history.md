@@ -5,6 +5,21 @@
 
 ---
 
+## 2026-10-13 (night, 13) — v0.13.5 committed (896e00b); web deploy to GitHub Pages prepared (NOT deployed / tagged)
+
+- **v0.13.5:** all 36 test files run one by one (607 passed, 1 skipped), exes built and started (checker + standalone title bar
+  v0.13.5), committed and pushed to master (896e00b), no tag.
+- **Deploy (B4 part A):** `tools/build_web.py` builds the site into a folder from an allow-list of `web/` (24 files, ~570 KB: the page,
+  `glue.py`, `js/*.js`, `data/trade_names_*.json`, `py/*.py` + manifest, `.nojekyll`) and refuses a version that is not the tag's.
+  `.github/workflows/deploy-web.yml` (reusable + `workflow_dispatch`): refresh names (a shrunk list keeps the committed snapshot, warning
+  in the log) -> build -> force-push one commit to `gh-pages` of foolshang/PoE-Filter-Generator with `RELEASE_TOKEN` -> poll the live
+  `py/__init__.py` until it says the tag's version. `release.yml`: job `web` first (skipped for a tag with "-"), `build-release` runs
+  after it also when it failed, the README step only when the web job succeeded (else a warning in the log).
+- **README:** "ใช้บนเว็บ" section (link, Chrome / Edge folder pick, Firefox / Safari download).
+- **Tests:** `tests/test_build_web.py` (4); `ui.mjs` 120 checks against the built site served under `/PoE-Filter-Generator/`
+  (`WEB_ROOT` / `WEB_PREFIX` of `harness.mjs`).
+- **Waiting for Winai:** enable Pages (Settings -> Pages -> gh-pages / root) of the public repo, then say when to tag.
+
 ## 2026-10-13 (night, 12) — web: one game folder per game, picked at once from "เปิด filter…" (v0.13.5, NOT committed / deployed / tagged)
 
 - **Per game:** the folder handle of PoE1 and PoE2 are separate (IndexedDB keys "poe1" / "poe2"; the file list, Generate and

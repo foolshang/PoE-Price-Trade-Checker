@@ -8,7 +8,9 @@ import { fileURLToPath } from "url";
 
 export const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const REPO = path.resolve(HERE, "..", "..");
-export const WEB = path.join(REPO, "web");
+// WEB_ROOT: test a built site (tools/build_web.py) instead of web/; WEB_PREFIX: serve it under a sub-path like GitHub Pages does
+export const WEB = process.env.WEB_ROOT ? path.resolve(process.env.WEB_ROOT) : path.join(REPO, "web");
+const PREFIX = (process.env.WEB_PREFIX || "").replace(/\/+$/, "");
 const SAMPLE = path.join(REPO, "tests", "sample_data");
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".json": "application/json", ".py": "text/plain; charset=utf-8",
   ".wasm": "application/wasm", ".zip": "application/zip", ".mjs": "text/javascript" };
@@ -17,13 +19,17 @@ export function startServer(port = 0) {
   return new Promise((resolve) => {
     const srv = http.createServer((req, res) => {
       let p = decodeURIComponent(new URL(req.url, "http://x").pathname);
+      if (PREFIX) {
+        if (p !== PREFIX && !p.startsWith(PREFIX + "/")) { res.writeHead(404); res.end("not found"); return; }
+        p = p.slice(PREFIX.length) || "/";
+      }
       if (p.endsWith("/")) p += "index.html";
       const file = path.join(WEB, p);
       if (!file.startsWith(WEB) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404); res.end("not found"); return; }
       res.writeHead(200, { "Content-Type": MIME[path.extname(file)] || "application/octet-stream", "Cache-Control": "no-store" });
       fs.createReadStream(file).pipe(res);
     });
-    srv.listen(port, "127.0.0.1", () => resolve({ srv, url: `http://127.0.0.1:${srv.address().port}` }));
+    srv.listen(port, "127.0.0.1", () => resolve({ srv, url: `http://127.0.0.1:${srv.address().port}${PREFIX}` }));
   });
 }
 
