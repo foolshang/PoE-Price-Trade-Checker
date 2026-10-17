@@ -5,6 +5,17 @@
 
 ---
 
+## 2026-10-17 — deploy-web.yml writes only legacy/ of gh-pages (the TypeScript page now owns the root)
+
+- `.github/workflows/deploy-web.yml`: instead of `git init` + `push --force` of a single commit (which replaced the whole
+  gh-pages branch), the job clones gh-pages, replaces `legacy/` with the built page and pushes a normal commit; the root and
+  every other path are untouched. The verify step checks `/legacy/`. `release.yml` is unchanged.
+- Why: the TypeScript web page (foolshang/PoE-Price-Trade-Checker-TS) is served at the root since today and this page lives
+  in `/legacy/`; the old force push would have removed both. Patch reviewed and approved by Winai.
+- No code of the program changed; no tag. Status: tested by a manual run of the workflow (see the next entry if it failed).
+
+---
+
 ## 2026-10-13 (night, 15) — survey (read only): fork EE2 (PoE2) + APT (PoE1) instead of F5; nothing created / changed
 
 - Upstreams cloned to the scratchpad only (nothing forked / pushed): Kvan7/Exiled-Exchange-2 (v0.16.3, master cca3066) and
