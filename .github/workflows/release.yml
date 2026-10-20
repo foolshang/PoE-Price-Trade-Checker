@@ -13,7 +13,7 @@ jobs:
   # The web page goes to GitHub Pages first (a prerelease tag such as v0.13.5-test never deploys). A failed deploy does not
   # stop the exe release below, but the README (which links the web page) is then not updated.
   web:
-    if: ${{ !contains(github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name, '-') }}
+    if: ${{ false }}                 # the TypeScript repo owns the web page now (its deploy-web.yml); this one only keeps /legacy/
     uses: ./.github/workflows/deploy-web.yml
     with:
       tag: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
@@ -87,6 +87,8 @@ jobs:
         run: ls -la dist/PoE-Filter-Generator.exe
 
       - name: Publish release to public repo
+        # the TypeScript release owns "Latest" now: this old build is only published on purpose (Run workflow with a tag like v0.99.0-legacy)
+        if: ${{ github.event_name == 'workflow_dispatch' && contains(inputs.version, 'legacy') }}
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           TAG: ${{ steps.ver.outputs.tag }}
@@ -106,7 +108,7 @@ jobs:
       # The public README lives in this repo (release/README_public.md). A real release also puts it into the public
       # repo; a prerelease (tag with "-", e.g. v0.11.0-test) never touches it. No change = no commit.
       - name: Update README in public repo
-        if: ${{ !contains(steps.ver.outputs.tag, '-') && needs.web.result == 'success' }}
+        if: ${{ false }}                 # the README of the public repo is the TypeScript one now
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           TAG: ${{ steps.ver.outputs.tag }}
@@ -114,6 +116,6 @@ jobs:
         run: bash release/update_public_readme.sh
 
       - name: README not updated (web deploy failed)
-        if: ${{ !contains(steps.ver.outputs.tag, '-') && needs.web.result != 'success' }}
+        if: ${{ false }}
         shell: bash
         run: echo "::warning::the web deploy did not succeed (${{ needs.web.result }}) - the README (with the link to the web page) was NOT updated; fix the deploy and run Deploy web + update the README by hand"
